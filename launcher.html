@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>BIOSVIZ — Launch</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --bg: #050a0f;
+            --panel: #090e14;
+            --panel2: #0d1520;
+            --border: #1a2535;
+            --accent: #00d4ff;
+            --accent2: #0099cc;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --green: #00ff9f;
+            --red: #f87171;
+            --yellow: #fbbf24;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-image:
+                radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0, 212, 255, .08) 0%, transparent 70%),
+                repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(26, 37, 53, .4) 39px, rgba(26, 37, 53, .4) 40px),
+                repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(26, 37, 53, .4) 39px, rgba(26, 37, 53, .4) 40px);
+            padding: 24px;
+        }
+
+        /* ── Hero ── */
+        .hero {
+            text-align: center;
+            margin-bottom: 40px
+        }
+
+        .logo-big {
+            font-size: 48px;
+            font-weight: 700;
+            letter-spacing: 2px
+        }
+
+        .logo-big span {
+            color: var(--accent)
+        }
+
+        .logo-big em {
+            color: #fff;
+            font-style: normal
+        }
+
+        .tagline {
+            color: var(--muted);
+            margin-top: 8px;
+            font-size: 15px;
+            font-weight: 300
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(0, 212, 255, .12);
+            border: 1px solid rgba(0, 212, 255, .25);
+            color: var(--accent);
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            margin-top: 12px
+        }
+
+        /* ── Card ── */
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            width: 100%;
+            max-width: 600px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+        }
+
+        /* ── Input area ── */
+        .input-label {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 8px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: .6px
+        }
+
+        .path-wrap {
+            position: relative;
+            display: flex;
+            gap: 8px
+        }
+
+        #path-input {
+            flex: 1;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+            outline: none;
+            transition: border-color .2s;
+        }
+
+        #path-input:focus {
+            border-color: var(--accent)
+        }
+
+        #path-input::placeholder {
+            color: var(--muted)
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all .15s;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000
+        }
+
+        .btn-primary:hover {
+            background: var(--accent2);
+            transform: translateY(-1px)
+        }
+
+        .btn-primary:disabled {
+            background: var(--muted);
+            cursor: not-allowed;
+            transform: none
+        }
+
+        .btn-ghost {
+            background: var(--panel2);
+            color: var(--muted);
+            border: 1px solid var(--border)
+        }
+
+        .btn-ghost:hover {
+            border-color: var(--accent);
+            color: var(--accent)
+        }
+
+        /* ── Recents ── */
+        .recents {
+            margin-top: 12px
+        }
+
+        .recents-label {
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 6px
+        }
+
+        .recent-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px
+        }
+
+        .recent-chip {
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            cursor: pointer;
+            font-family: monospace;
+            transition: all .12s;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .recent-chip:hover {
+            border-color: var(--accent);
+            color: var(--accent)
+        }
+
+        .recent-chip .rm {
+            margin-left: 4px;
+            opacity: .5
+        }
+
+        .recent-chip .rm:hover {
+            opacity: 1;
+            color: var(--red)
+        }
+
+        /* ── Progress ── */
+        #progress-wrap {
+            margin-top: 20px;
+            display: none
+        }
+
+        #progress-wrap.show {
+            display: block
+        }
+
+        .prog-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 10px
+        }
+
+        .prog-label {
+            font-size: 13px;
+            color: var(--text);
+            font-weight: 500
+        }
+
+        .prog-right {
+            display: flex;
+            gap: 12px;
+            align-items: center
+        }
+
+        .prog-pct {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--accent);
+            min-width: 36px;
+            text-align: right
+        }
+
+        .prog-eta {
+            font-size: 11px;
+            color: var(--muted)
+        }
+
+        .prog-elapsed {
+            font-size: 11px;
+            color: var(--muted)
+        }
+
+        .prog-bar-bg {
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            height: 10px;
+            overflow: hidden;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, .4);
+        }
+
+        .prog-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent2), var(--accent), var(--green));
+            background-size: 200% 100%;
+            border-radius: 6px;
+            width: 0%;
+            transition: width .5s cubic-bezier(.4, 0, .2, 1);
+            animation: shimmer 2s linear infinite;
+            position: relative;
+        }
+
+        @keyframes shimmer {
+            0% {
+                background-position: 200% 0
+            }
+
+            100% {
+                background-position: -200% 0
+            }
+        }
+
+        .prog-bar.done {
+            animation: none;
+            background: var(--green)
+        }
+
+        .prog-steps {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            padding: 0 2px
+        }
+
+        .prog-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            opacity: .35;
+            transition: opacity .3s
+        }
+
+        .prog-step.active {
+            opacity: 1
+        }
+
+        .prog-step.done {
+            opacity: .7
+        }
+
+        .prog-step-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border);
+            border: 2px solid var(--border);
+            transition: all .3s;
+        }
+
+        .prog-step.active .prog-step-dot {
+            background: var(--accent);
+            border-color: var(--accent);
+            box-shadow: 0 0 6px var(--accent)
+        }
+
+        .prog-step.done .prog-step-dot {
+            background: var(--green);
+            border-color: var(--green)
+        }
+
+        .prog-step-lbl {
+            font-size: 9px;
+            color: var(--muted);
+            white-space: nowrap
+        }
+
+        .prog-msg {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 8px;
+            font-family: monospace;
+            min-height: 16px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 4px 10px;
+            background: var(--panel2);
+            border-radius: 4px;
+            border-left: 2px solid var(--accent)44;
+        }
+
+        /* ── Stats Row ── */
+        #stats-row {
+            display: none;
+            margin-top: 20px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            display: none;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        #stats-row.visible {
+            display: grid
+        }
+
+        .stat-box {
+            text-align: center
+        }
+
+        .stat-box .val {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--accent)
+        }
+
+        .stat-box .lbl {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 2px
+        }
+
+        /* ── Error / Done ── */
+        #msg-area {
+            margin-top: 16px;
+            min-height: 28px
+        }
+
+        .msg-error {
+            color: var(--red);
+            font-size: 13px;
+            padding: 10px 14px;
+            background: rgba(248, 113, 113, .08);
+            border: 1px solid rgba(248, 113, 113, .2);
+            border-radius: 8px
+        }
+
+        .msg-done {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 16px;
+            background: rgba(0, 255, 159, .06);
+            border: 1px solid rgba(0, 255, 159, .2);
+            border-radius: 8px;
+        }
+
+        .msg-done span {
+            color: var(--green);
+            font-size: 13px;
+            font-weight: 500
+        }
+
+        /* ── How-to ── */
+        .howto {
+            margin-top: 32px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.8
+        }
+
+        .howto code {
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--text);
+        }
+
+        .howto a {
+            color: var(--accent);
+            text-decoration: none
+        }
+
+        .howto a:hover {
+            text-decoration: underline
+        }
+
+        /* ── Footer ── */
+        footer {
+            margin-top: 24px;
+            font-size: 11px;
+            color: var(--muted);
+            text-align: center
+        }
+
+        /* ── Animations ── */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .card {
+            animation: fadeIn .4s ease both
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="hero">
+        <div class="logo-big">BIOS<em>VIZ</em><span> V2</span></div>
+        <div class="tagline">BIOS Codebase Visualizer — module · file · function drill-down</div>
+        <div class="badge">⚡ Cytoscape Canvas · Max 200 nodes · &lt;50MB RAM</div>
+    </div>
+
+    <div class="card">
+
+        <div class="input-label">BIOS Codebase Path</div>
+        <div class="path-wrap">
+            <input id="path-input" type="text" placeholder="D:\Code\ADL\B1403CTA_SMR\" value="" autocomplete="off"
+                spellcheck="false">
+            <button class="btn btn-primary" id="analyze-btn" onclick="startAnalysis()">
+                ▶ Analyze
+            </button>
+        </div>
+
+        <div class="recents" id="recents-wrap" style="display:none">
+            <div class="recents-label">Recent paths</div>
+            <div class="recent-list" id="recent-list"></div>
+        </div>
+
+        <div id="progress-wrap">
+            <div class="prog-header">
+                <div class="prog-label" id="prog-label">Analyzing...</div>
+                <div class="prog-right">
+                    <span class="prog-elapsed" id="prog-elapsed"></span>
+                    <span class="prog-eta" id="prog-eta"></span>
+                    <span class="prog-pct" id="prog-pct">0%</span>
+                </div>
+            </div>
+            <div class="prog-bar-bg">
+                <div class="prog-bar" id="prog-bar"></div>
+            </div>
+            <div class="prog-steps">
+                <div class="prog-step" id="step-scan">
+                    <div class="prog-step-dot"></div>
+                    <div class="prog-step-lbl">Scan</div>
+                </div>
+                <div class="prog-step" id="step-analyze">
+                    <div class="prog-step-dot"></div>
+                    <div class="prog-step-lbl">Analyze</div>
+                </div>
+                <div class="prog-step" id="step-index">
+                    <div class="prog-step-dot"></div>
+                    <div class="prog-step-lbl">Index</div>
+                </div>
+                <div class="prog-step" id="step-edges">
+                    <div class="prog-step-dot"></div>
+                    <div class="prog-step-lbl">Edges</div>
+                </div>
+                <div class="prog-step" id="step-funcs">
+                    <div class="prog-step-dot"></div>
+                    <div class="prog-step-lbl">Funcs</div>
+                </div>
+                <div class="prog-step" id="step-html">
+                    <div class="prog-step-dot"></div>
+                    <div class="prog-step-lbl">HTML</div>
+                </div>
+            </div>
+            <div class="prog-msg" id="prog-msg">Starting...</div>
+        </div>
+
+        <div id="stats-row">
+            <div class="stat-box">
+                <div class="val" id="s-files">—</div>
+                <div class="lbl">Files</div>
+            </div>
+            <div class="stat-box">
+                <div class="val" id="s-mods">—</div>
+                <div class="lbl">Modules</div>
+            </div>
+            <div class="stat-box">
+                <div class="val" id="s-funcs">—</div>
+                <div class="lbl">Functions</div>
+            </div>
+            <div class="stat-box">
+                <div class="val" id="s-calls">—</div>
+                <div class="lbl">Calls</div>
+            </div>
+        </div>
+
+        <div id="msg-area"></div>
+
+    </div>
+
+    <div class="howto">
+        Run: <code>python server.py</code> &nbsp;|&nbsp;
+        Or standalone: <code>python analyze_bios.py &lt;path&gt; -o out.html</code>
+        <br>Keyboard: <code>Esc</code> = back &nbsp; <code>/</code> = search &nbsp; <code>M</code> = modules
+    </div>
+
+    <footer>BIOSVIZ V2 · ASUS BIOS Code Visualizer · Canvas Renderer · No SVG</footer>
+
+    <script>
+        // ─── State ────────────────────────────────────────────────────────────────────
+        let currentJob = null;
+        let pollTimer = null;
+        let startTime = null;
+        let etaTimer = null;
+        let lastPct = 0;
+        let pctHistory = []; // [{t, pct}] for ETA estimation
+
+        // Step thresholds: [pct_start, step_id]
+        const STEPS = [
+            [0, 'step-scan'],
+            [10, 'step-analyze'],
+            [60, 'step-index'],
+            [70, 'step-edges'],
+            [85, 'step-funcs'],
+            [98, 'step-html'],
+        ];
+
+        // ─── Recents (localStorage) ───────────────────────────────────────────────────
+        function getRecents() {
+            try { return JSON.parse(localStorage.getItem('biosviz_recents') || '[]'); }
+            catch { return []; }
+        }
+        function addRecent(path) {
+            let r = getRecents().filter(p => p !== path);
+            r.unshift(path);
+            r = r.slice(0, 6);
+            localStorage.setItem('biosviz_recents', JSON.stringify(r));
+            renderRecents();
+        }
+        function removeRecent(path) {
+            let r = getRecents().filter(p => p !== path);
+            localStorage.setItem('biosviz_recents', JSON.stringify(r));
+            renderRecents();
+        }
+        function renderRecents() {
+            const r = getRecents();
+            const wrap = document.getElementById('recents-wrap');
+            const list = document.getElementById('recent-list');
+            wrap.style.display = r.length ? '' : 'none';
+            list.innerHTML = r.map(p => `
+    <span class="recent-chip" onclick="useRecent(${JSON.stringify(p)})">
+      ${p}
+      <span class="rm" onclick="event.stopPropagation();removeRecent(${JSON.stringify(p)})">✕</span>
+    </span>`).join('');
+        }
+        function useRecent(path) {
+            document.getElementById('path-input').value = path;
+        }
+
+        // ─── Analysis ─────────────────────────────────────────────────────────────────
+        async function startAnalysis() {
+            const path = document.getElementById('path-input').value.trim();
+            if (!path) { showMsg('error', 'Please enter a path'); return; }
+
+            setAnalyzing(true);
+            showMsg('', '');
+            document.getElementById('stats-row').classList.remove('visible');
+            startTime = Date.now();
+            pctHistory = [];
+            lastPct = 0;
+            setProgress(0, 'Sending request...');
+            startElapsedTimer();
+
+            try {
+                const res = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path }),
+                });
+                const data = await res.json();
+
+                if (data.error) { showMsg('error', data.error); setAnalyzing(false); return; }
+
+                currentJob = data.job_id;
+                addRecent(path);
+                pollProgress();
+
+            } catch (e) {
+                showMsg('error', 'Cannot connect to server. Is server.py running?');
+                setAnalyzing(false);
+            }
+        }
+
+        async function pollProgress() {
+            if (!currentJob) return;
+            try {
+                const res = await fetch(`/progress?job=${currentJob}`);
+                const job = await res.json();
+
+                setProgress(job.pct, job.msg);
+
+                if (job.error) {
+                    showMsg('error', job.error);
+                    stopTimers(); setAnalyzing(false);
+                    currentJob = null;
+                    return;
+                }
+                if (job.done) {
+                    setProgress(100, 'Done!');
+                    if (job.stats) showStats(job.stats);
+                    showMsg('done', `${job.size_kb || '?'}KB HTML ready`, currentJob);
+                    stopTimers(); setAnalyzing(false);
+                    currentJob = null;
+                    return;
+                }
+            } catch (e) {
+                // server busy, retry
+            }
+            pollTimer = setTimeout(pollProgress, 600);
+        }
+
+        // ─── UI Helpers ───────────────────────────────────────────────────────────────
+        function setAnalyzing(v) {
+            const btn = document.getElementById('analyze-btn');
+            const pw = document.getElementById('progress-wrap');
+            btn.disabled = v;
+            btn.textContent = v ? '⏳ Analyzing...' : '▶ Analyze';
+            if (v) pw.classList.add('show');
+            else pw.classList.remove('show');
+            if (!v) { // reset steps
+                STEPS.forEach(([, id]) => {
+                    const el = document.getElementById(id);
+                    if (el) el.classList.remove('active', 'done');
+                });
+                document.getElementById('prog-bar').classList.remove('done');
+            }
+        }
+
+        function startElapsedTimer() {
+            clearInterval(etaTimer);
+            etaTimer = setInterval(() => {
+                if (!startTime) return;
+                const sec = Math.floor((Date.now() - startTime) / 1000);
+                document.getElementById('prog-elapsed').textContent = `${fmtSec(sec)} elapsed`;
+            }, 1000);
+        }
+
+        function stopTimers() {
+            clearTimeout(pollTimer);
+            clearInterval(etaTimer);
+        }
+
+        function fmtSec(s) {
+            if (s < 60) return s + 's';
+            return Math.floor(s / 60) + 'm' + (s % 60).toString().padStart(2, '0') + 's';
+        }
+
+        function setProgress(pct, msg) {
+            const bar = document.getElementById('prog-bar');
+            bar.style.width = pct + '%';
+            document.getElementById('prog-pct').textContent = pct + '%';
+            document.getElementById('prog-msg').textContent = msg || '';
+
+            // ETA estimation
+            const now = Date.now();
+            if (startTime && pct > 0 && pct < 100) {
+                pctHistory.push({ t: now, pct });
+                if (pctHistory.length > 6) pctHistory.shift();
+                if (pctHistory.length >= 2) {
+                    const dt = now - pctHistory[0].t;
+                    const dp = pct - pctHistory[0].pct;
+                    if (dp > 0) {
+                        const remaining = (100 - pct) / dp * dt / 1000;
+                        document.getElementById('prog-eta').textContent =
+                            remaining < 3600 ? `ETA ~${fmtSec(Math.ceil(remaining))}` : '';
+                    }
+                }
+            } else if (pct === 0) {
+                document.getElementById('prog-eta').textContent = '';
+            } else if (pct === 100) {
+                document.getElementById('prog-eta').textContent = '';
+                document.getElementById('prog-label').textContent = 'Complete ✓';
+                bar.classList.add('done');
+            }
+
+            if (pct > 0 && pct < 100) {
+                document.getElementById('prog-label').textContent = 'Analyzing...';
+            }
+
+            // Update step indicators
+            let activeSet = false;
+            for (let i = STEPS.length - 1; i >= 0; i--) {
+                const [threshold, id] = STEPS[i];
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (pct >= 100) { el.classList.remove('active'); el.classList.add('done'); }
+                else if (pct >= threshold && !activeSet) {
+                    el.classList.add('active'); el.classList.remove('done');
+                    activeSet = true;
+                } else if (pct > threshold) {
+                    el.classList.remove('active'); el.classList.add('done');
+                } else {
+                    el.classList.remove('active', 'done');
+                }
+            }
+        }
+
+        function showStats(s) {
+            const row = document.getElementById('stats-row');
+            document.getElementById('s-files').textContent = s.files?.toLocaleString() || '—';
+            document.getElementById('s-mods').textContent = s.modules || '—';
+            document.getElementById('s-funcs').textContent = s.functions?.toLocaleString() || '—';
+            document.getElementById('s-calls').textContent = s.calls?.toLocaleString() || '—';
+            row.classList.add('visible');
+        }
+
+        function showMsg(type, text, jobId) {
+            const area = document.getElementById('msg-area');
+            if (!type || !text) { area.innerHTML = ''; return; }
+            if (type === 'error') {
+                area.innerHTML = `<div class="msg-error">⚠ ${text}</div>`;
+            } else if (type === 'done') {
+                area.innerHTML = `
+      <div class="msg-done">
+        <span>✓ Analysis complete</span>
+        <a href="/result?job=${jobId}" target="_blank" class="btn btn-primary" style="font-size:12px;padding:8px 14px">
+          Open Visualization →
+        </a>
+      </div>`;
+            }
+        }
+
+        // ─── Enter key ────────────────────────────────────────────────────────────────
+        document.getElementById('path-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') startAnalysis();
+        });
+
+        // ─── Init ─────────────────────────────────────────────────────────────────────
+        renderRecents();
+
+        // Pre-fill last used path
+        const recents = getRecents();
+        if (recents[0] && !document.getElementById('path-input').value) {
+            document.getElementById('path-input').value = recents[0];
+        }
+    </script>
+</body>
+
+</html>
