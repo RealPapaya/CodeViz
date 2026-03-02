@@ -51,6 +51,7 @@ EDGE_TYPES = {
     'cif_own':    {'label': 'owns',      'color': '#34d399', 'style': 'solid'},
     'component':  {'label': 'Component', 'color': '#60a5fa', 'style': 'solid'},
     'depex':      {'label': 'Depex',     'color': '#f472b6', 'style': 'dotted'},
+    'guid_ref':   {'label': 'GUID',      'color': '#fb923c', 'style': 'dashed'},
 }
 
 C_KEYWORDS = {
@@ -466,6 +467,32 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
             return stem_to_paths[stem]
         return []
 
+    # ── Phase B: Build GUID name → .dec file index ───────────────────────────
+    # .dec files declare: gXxxGuid  =  { ... }   under [Guids]/[Ppis]/[Protocols]
+    # We parse these names so .inf [Guids/Ppis] references can link to their .dec
+    _cb(66, 'Building GUID index...')
+    guid_name_to_dec = defaultdict(list)   # guid_var_name (lower) → [dec_rel_path]
+
+    RE_GUID_DECL = re.compile(r'\b(g[A-Za-z_]\w+Guid|g[A-Za-z_]\w+Ppi|g[A-Za-z_]\w+Protocol)\b')
+
+    for rel, extra in file_extra.items():
+        if file_meta[rel]['ext'] != '.dec' or extra is None:
+            continue
+        src_text = ''
+        try:
+            src_text = Path(os.path.join(root, rel)).read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+        for m in RE_GUID_DECL.finditer(src_text):
+            name_lower = m.group(1).lower()
+            if rel not in guid_name_to_dec[name_lower]:
+                guid_name_to_dec[name_lower].append(rel)
+        # Also use names from the already-parsed extra data
+        for name in extra.get('guids', []) + extra.get('ppis', []) + extra.get('protocols', []):
+            name_lower = name.strip().lower()
+            if name_lower and rel not in guid_name_to_dec[name_lower]:
+                guid_name_to_dec[name_lower].append(rel)
+
     # Build per-module file lists + typed edges
     files_by_module      = defaultdict(list)
     file_edges_by_module = defaultdict(list)
@@ -532,6 +559,15 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
                 for tgt in resolve_ref(lib, src_dir):
                     if tgt != src_rel:
                         add_edge(src_rel, tgt, 'library')
+            # [Guids/Ppis/Protocols] → .dec that declares them (Phase B)
+            all_symbols = extra.get('guids', []) + extra.get('ppis', []) + extra.get('protocols', [])
+            seen_dec = set()
+            for sym in all_symbols:
+                sym_lower = sym.strip().lower()
+                for dec_rel in guid_name_to_dec.get(sym_lower, []):
+                    if dec_rel not in seen_dec and dec_rel != src_rel:
+                        seen_dec.add(dec_rel)
+                        add_edge(src_rel, dec_rel, 'guid_ref')
 
         elif ext == '.dsc' and extra:
             for comp in extra.get('components', []):

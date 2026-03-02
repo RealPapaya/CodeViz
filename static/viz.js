@@ -307,6 +307,7 @@ const EDGE_TYPE_STYLE = {
     'cif_own': { color: '#34d399', style: 'solid', label: 'owns' },
     'component': { color: '#60a5fa', style: 'solid', label: 'Comp' },
     'depex': { color: '#f472b6', style: 'dotted', label: 'Depex' },
+    'guid_ref': { color: '#fb923c', style: 'dashed', label: 'GUID' },
 };
 
 function fileNodeData(f, modColor) {
@@ -520,7 +521,7 @@ const CY_STYLE = [
     { selector: 'node[ft="package_dec"]', style: { 'border-width': 2.5 } },
     { selector: 'node[ft="ami_cif"]', style: { 'border-width': 2.5 } },
     { selector: 'node[ft="ami_sdl"]', style: { 'border-width': 2.5 } },
-    // Default edge (include)
+    // Default edge
     {
         selector: 'edge', style: {
             'width': 'data(w)',
@@ -529,12 +530,23 @@ const CY_STYLE = [
             'target-arrow-shape': 'triangle',
             'target-arrow-color': 'data(ec)',
             'curve-style': 'bezier',
-            'opacity': 0.55,
+            'opacity': 0.75,
+            // Edge label — floating badge, readable on dark background
             'label': 'data(el)',
-            'font-size': 8,
+            'font-size': 10,
+            'font-weight': '700',
+            'font-family': 'monospace',
             'color': 'data(ec)',
-            'text-opacity': 0.7,
+            'text-opacity': 1,
             'text-rotation': 'autorotate',
+            'text-margin-y': -11,
+            'text-background-color': '#020509',
+            'text-background-opacity': 0.92,
+            'text-background-padding': '3px',
+            'text-background-shape': 'round-rectangle',
+            'text-border-width': 1.5,
+            'text-border-color': 'data(ec)',
+            'text-border-opacity': 0.8,
         }
     },
     { selector: '.faded', style: { 'opacity': 0.06 } },
