@@ -265,11 +265,76 @@ async function loadFileInPanel(filePath, funcName) {
 
 function extColor(ext) {
     const map = {
+        // C/C++ / ASM
         '.c': '#3b82f6', '.cpp': '#06b6d4', '.cc': '#06b6d4',
         '.h': '#8b5cf6', '.hpp': '#7c3aed',
-        '.asm': '#f59e0b', '.s': '#f59e0b', '.S': '#f59e0b',
+        '.asm': '#f59e0b', '.s': '#f59e0b', '.S': '#f59e0b', '.nasm': '#f59e0b',
+        // UEFI / EDK2
+        '.inf': '#ffd700', '.dec': '#00d4ff', '.dsc': '#e2e8f0', '.fdf': '#c084fc',
+        // AMI 特有
+        '.sdl': '#34d399', '.cif': '#60a5fa', '.mak': '#94a3b8',
+        // HII / ACPI
+        '.vfr': '#f472b6', '.uni': '#fb923c', '.asl': '#a78bfa',
     };
     return map[ext] || '#64748b';
+}
+
+// ─── BIOS file type → cytoscape node shape ────────────────────────────────────
+const FILE_TYPE_SHAPE = {
+    'c_source': { sh: 'ellipse', w: 160, h: 48 },
+    'header': { sh: 'round-rectangle', w: 155, h: 44 },
+    'assembly': { sh: 'triangle', w: 120, h: 56 },
+    'module_inf': { sh: 'diamond', w: 190, h: 60 },
+    'package_dec': { sh: 'hexagon', w: 190, h: 58 },
+    'platform_dsc': { sh: 'star', w: 160, h: 60 },
+    'flash_desc': { sh: 'vee', w: 160, h: 56 },
+    'ami_sdl': { sh: 'octagon', w: 170, h: 56 },
+    'ami_cif': { sh: 'barrel', w: 160, h: 56 },
+    'makefile': { sh: 'tag', w: 150, h: 46 },
+    'hii_form': { sh: 'round-tag', w: 155, h: 46 },
+    'hii_string': { sh: 'round-rectangle', w: 150, h: 44 },
+    'acpi_asl': { sh: 'pentagon', w: 160, h: 56 },
+    'other': { sh: 'round-rectangle', w: 155, h: 46 },
+};
+
+// ─── Edge type → color + style ───────────────────────────────────────────────
+const EDGE_TYPE_STYLE = {
+    'include': { color: '#334155', style: 'solid', label: '' },
+    'sources': { color: '#ffd700', style: 'solid', label: 'Src' },
+    'package': { color: '#00d4ff', style: 'dashed', label: 'Pkg' },
+    'library': { color: '#a78bfa', style: 'dashed', label: 'Lib' },
+    'elink': { color: '#ff6b35', style: 'dotted', label: 'ELINK' },
+    'cif_own': { color: '#34d399', style: 'solid', label: 'owns' },
+    'component': { color: '#60a5fa', style: 'solid', label: 'Comp' },
+    'depex': { color: '#f472b6', style: 'dotted', label: 'Depex' },
+};
+
+function fileNodeData(f, modColor) {
+    const ft = f.file_type || 'other';
+    const shape = FILE_TYPE_SHAPE[ft] || FILE_TYPE_SHAPE['other'];
+    const baseColor = extColor(f.ext);
+
+    // Build tooltip with BIOS metadata
+    const bm = f.bios_meta || {};
+    let ttLines = [`${f.path}`, `${f.ext.toUpperCase()} · ${fmtSize(f.size)}`];
+    if (f.func_count > 0) ttLines.push(`${f.func_count} funcs`);
+    if (bm.MODULE_TYPE || bm.module_type) ttLines.push(`Type: ${bm.MODULE_TYPE || bm.module_type}`);
+    if (bm.BASE_NAME || bm.base_name) ttLines.push(`Module: ${bm.BASE_NAME || bm.base_name}`);
+    if (bm.ENTRY_POINT || bm.entry_point) ttLines.push(`Entry: ${bm.ENTRY_POINT || bm.entry_point}`);
+    if (bm.FILE_GUID || bm.file_guid) ttLines.push(`GUID: ${bm.FILE_GUID || bm.file_guid}`);
+
+    return {
+        id: `f${f.id}`, label: f.label,
+        bg: '#0a1520', bc: baseColor,
+        lvl: 1, w: shape.w, h: shape.h, sh: shape.sh,
+        ft,
+        tt: ttLines.join('\n'),
+        _t: 'file', _f: f,
+    };
+}
+
+function edgeTypeStyle(type) {
+    return EDGE_TYPE_STYLE[type] || EDGE_TYPE_STYLE['include'];
 }
 
 function showCpLoading(v) {
@@ -450,17 +515,29 @@ const CY_STYLE = [
     { selector: 'node[lvl=0]', style: { 'font-size': 12, 'font-weight': 'bold' } },
     { selector: 'node[lvl=1]', style: { 'font-size': 10 } },
     { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#00d4ff', 'overlay-opacity': 0.12 } },
+    // BIOS file type — highlighted border tint
+    { selector: 'node[ft="module_inf"]', style: { 'border-width': 2.5 } },
+    { selector: 'node[ft="package_dec"]', style: { 'border-width': 2.5 } },
+    { selector: 'node[ft="ami_cif"]', style: { 'border-width': 2.5 } },
+    { selector: 'node[ft="ami_sdl"]', style: { 'border-width': 2.5 } },
+    // Default edge (include)
     {
         selector: 'edge', style: {
             'width': 'data(w)',
-            'line-color': '#1a2535',
+            'line-color': 'data(ec)',
+            'line-style': 'data(es)',
             'target-arrow-shape': 'triangle',
-            'target-arrow-color': '#1a2535',
+            'target-arrow-color': 'data(ec)',
             'curve-style': 'bezier',
             'opacity': 0.55,
+            'label': 'data(el)',
+            'font-size': 8,
+            'color': 'data(ec)',
+            'text-opacity': 0.7,
+            'text-rotation': 'autorotate',
         }
     },
-    { selector: '.faded', style: { 'opacity': 0.08 } },
+    { selector: '.faded', style: { 'opacity': 0.06 } },
     { selector: '.hl', style: { 'opacity': 1, 'border-width': 2.5, 'border-color': '#e2e8f0' } },
     {
         selector: '.hl-edge-out', style: {
@@ -480,6 +557,64 @@ const CY_STYLE = [
     { selector: '.hl-node-in', style: { 'border-color': '#10b981', 'border-width': 3, 'opacity': 1 } },
 ];
 
+// ─── File Type Filter ────────────────────────────────────────────────────────
+const FT_GROUPS = [
+    { key: 'c_source', label: '.c/.cpp', exts: ['.c', '.cpp', '.cc'] },
+    { key: 'header', label: '.h/.hpp', exts: ['.h', '.hpp'] },
+    { key: 'assembly', label: '.asm/.s', exts: ['.asm', '.s', '.S', '.nasm'] },
+    { key: 'module_inf', label: '.inf', exts: ['.inf'] },
+    { key: 'package_dec', label: '.dec', exts: ['.dec'] },
+    { key: 'platform_dsc', label: '.dsc', exts: ['.dsc'] },
+    { key: 'flash_desc', label: '.fdf', exts: ['.fdf'] },
+    { key: 'ami_sdl', label: '.sdl', exts: ['.sdl'] },
+    { key: 'ami_cif', label: '.cif', exts: ['.cif'] },
+    { key: 'makefile', label: '.mak', exts: ['.mak'] },
+    { key: 'hii_form', label: '.vfr', exts: ['.vfr'] },
+    { key: 'acpi_asl', label: '.asl', exts: ['.asl'] },
+];
+const ftActiveFilter = new Set(['c_source', 'header', 'assembly', 'module_inf', 'package_dec',
+    'platform_dsc', 'flash_desc', 'ami_sdl', 'ami_cif']);
+
+function buildFtFilter() {
+    const wrap = document.getElementById('ft-filter');
+    if (!wrap) return;
+
+    // Detect which types actually exist in data
+    const presentTypes = new Set();
+    Object.values(DATA.files_by_module).forEach(files =>
+        files.forEach(f => presentTypes.add(f.file_type || 'other'))
+    );
+
+    const groups = FT_GROUPS.filter(g => presentTypes.has(g.key));
+    if (!groups.length) return;
+
+    wrap.innerHTML = '<div class="ft-filter-title">File Types</div>' +
+        groups.map(g => {
+            const col = extColor(g.exts[0]);
+            const checked = ftActiveFilter.has(g.key) ? 'checked' : '';
+            return `<label class="ft-chip" style="--ft-col:${col}">
+  <input type="checkbox" data-ft="${g.key}" ${checked}>
+  <span class="ft-dot" style="background:${col}"></span>
+  <span>${g.label}</span>
+</label>`;
+        }).join('');
+
+    wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (cb.checked) ftActiveFilter.add(cb.dataset.ft);
+            else ftActiveFilter.delete(cb.dataset.ft);
+            // Re-render current view
+            if (state.level === 1 && state.activeModule) {
+                const allFiles = DATA.files_by_module[state.activeModule] || [];
+                const filtered = state.activeSubDir
+                    ? allFiles.filter(f => f.path.startsWith(state.activeModule + '/' + state.activeSubDir + '/'))
+                    : allFiles;
+                renderFilesFlat(state.activeModule, filtered);
+            }
+        });
+    });
+}
+
 // ─── Sidebar tree ─────────────────────────────────────────────────────────────
 // Builds a tree in the sidebar: Module → sub-folders (expandable)
 // Graph always shows file nodes only.
@@ -487,6 +622,7 @@ const CY_STYLE = [
 function buildSidebar() {
     const list = document.getElementById('module-list');
     list.innerHTML = '';
+    buildFtFilter();
     DATA.modules.forEach(m => {
         const allFiles = DATA.files_by_module[m.id] || [];
         const tree = buildFileTree(allFiles, m.id);
@@ -652,7 +788,13 @@ function loadLevel0() {
     });
     const edges = [...DATA.module_edges].sort((a, b) => b.weight - a.weight).slice(0, 300);
     edges.forEach((e, i) => {
-        els.push({ data: { id: `me${i}`, source: e.s, target: e.t, w: Math.max(1, Math.min(6, e.weight / 8)), wt: e.weight } });
+        els.push({
+            data: {
+                id: `me${i}`, source: e.s, target: e.t,
+                w: Math.max(1, Math.min(6, e.weight / 8)), wt: e.weight,
+                ec: '#2a3a55', es: 'solid', el: '',
+            }
+        });
     });
 
     cy.elements().remove();
@@ -681,32 +823,35 @@ function drillToModule(modId) {
 
 // Render flat file nodes in graph — the only graph view for L1
 function renderFilesFlat(modId, files) {
-    const EXT_COL = { '.c': '#3b82f6', '.h': '#8b5cf6', '.cpp': '#06b6d4', '.hpp': '#7c3aed', '.asm': '#f59e0b', '.s': '#f59e0b' };
-    const capped = files.slice(0, 200);
+    // Apply File Type Filter
+    const visible = files.filter(f => ftActiveFilter.has(f.file_type || 'other') || ftActiveFilter.size === 0);
+    const capped = visible.slice(0, 250);
     const visIds = new Set(capped.map(f => f.id));
-    const edges = (DATA.file_edges_by_module[modId] || [])
-        .filter(e => visIds.has(e.s) && visIds.has(e.t)).slice(0, 400);
+    const allEdges = DATA.file_edges_by_module[modId] || [];
+    const edges = allEdges
+        .filter(e => visIds.has(e.s) && visIds.has(e.t)).slice(0, 600);
 
     const els = [];
     capped.forEach(f => {
-        els.push({
-            data: {
-                id: `f${f.id}`, label: f.label,
-                bg: '#0a1520', bc: EXT_COL[f.ext] || '#64748b',
-                lvl: 1, w: 165, h: 50, sh: 'roundrectangle',
-                tt: `${f.path}\n${f.ext.toUpperCase()} · ${fmtSize(f.size)} · ${f.func_count} funcs\n\nClick → view source\nDbl-click → caller/callee`,
-                _t: 'file', _f: f,
-            }
-        });
+        els.push({ data: fileNodeData(f) });
     });
     edges.forEach((e, i) => {
-        els.push({ data: { id: `fe${i}`, source: `f${e.s}`, target: `f${e.t}`, w: 1 } });
+        const es = edgeTypeStyle(e.type);
+        els.push({
+            data: {
+                id: `fe${i}`,
+                source: `f${e.s}`, target: `f${e.t}`,
+                w: e.type === 'include' ? 1 : 1.5,
+                ec: es.color, es: es.style, el: es.label,
+                etype: e.type || 'include',
+            }
+        });
     });
 
     cy.elements().remove();
     cy.add(els);
 
-    const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 28, rankSep: 80, padding: 40 });
+    const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
     lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); });
     lay.run();
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-analyze_bios.py V2 — BIOS Code Visualizer
+analyze_bios.py V3 — BIOS Code Visualizer
+Multi file-type support: .c/.h/.asm + .inf/.dec/.dsc/.fdf/.sdl/.cif/.mak/.vfr/.uni
 Hierarchical JSON output + cytoscape.js canvas renderer
-Performance target: <50MB RAM at any zoom level
 """
 
 import os, re, json, sys, argparse
@@ -11,8 +11,47 @@ from collections import defaultdict
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 SKIP_DIRS  = {'Build','build','.git','__pycache__','Conf','DEBUG','RELEASE','.claude'}
-SCAN_EXT   = {'.c','.cpp','.h','.hpp','.asm','.s','.S'}
-SKIP_EXT   = {'.veb','.sdl','.lib','.obj','.efi','.rom','.bin','.log','.map'}
+SCAN_EXT   = {
+    # C/C++ / ASM (已有)
+    '.c','.cpp','.cc','.h','.hpp','.asm','.s','.S','.nasm',
+    # UEFI / EDK2 build system
+    '.inf', '.dec', '.dsc', '.fdf',
+    # AMI BIOS 特有
+    '.sdl', '.cif', '.mak',
+    # HII / ACPI (Phase C 前端暫不處理，但收集節點)
+    '.vfr', '.uni', '.asl',
+}
+SKIP_EXT   = {'.veb','.lib','.obj','.efi','.rom','.bin','.log','.map'}
+
+# ─── File type semantic categories ───────────────────────────────────────────
+FILE_TYPE_MAP = {
+    '.c': 'c_source', '.cpp': 'c_source', '.cc': 'c_source',
+    '.h': 'header',   '.hpp': 'header',
+    '.asm': 'assembly', '.s': 'assembly', '.S': 'assembly', '.nasm': 'assembly',
+    '.inf': 'module_inf',
+    '.dec': 'package_dec',
+    '.dsc': 'platform_dsc',
+    '.fdf': 'flash_desc',
+    '.sdl': 'ami_sdl',
+    '.cif': 'ami_cif',
+    '.mak': 'makefile',
+    '.vfr': 'hii_form',
+    '.uni': 'hii_string',
+    '.asl': 'acpi_asl',
+}
+
+# ─── Edge type definitions ───────────────────────────────────────────────────
+# 每種 edge type 決定前端的線條樣式
+EDGE_TYPES = {
+    'include':    {'label': '',          'color': '#334155', 'style': 'solid'},
+    'sources':    {'label': 'Sources',   'color': '#ffd700', 'style': 'solid'},
+    'package':    {'label': 'Package',   'color': '#00d4ff', 'style': 'dashed'},
+    'library':    {'label': 'Library',   'color': '#a78bfa', 'style': 'dashed'},
+    'elink':      {'label': 'ELINK',     'color': '#ff6b35', 'style': 'dotted'},
+    'cif_own':    {'label': 'owns',      'color': '#34d399', 'style': 'solid'},
+    'component':  {'label': 'Component', 'color': '#60a5fa', 'style': 'solid'},
+    'depex':      {'label': 'Depex',     'color': '#f472b6', 'style': 'dotted'},
+}
 
 C_KEYWORDS = {
     'if','else','while','for','do','switch','case','return','sizeof','typeof',
@@ -39,7 +78,35 @@ RE_FUNCDEF  = re.compile(
 )
 RE_FUNCCALL = re.compile(r'\b([A-Za-z_]\w+)\s*\(')
 RE_STATIC   = re.compile(r'\bstatic\b')
-RE_ASM_INC  = re.compile(r'%include\s+["\']([^"\']+)["\']|EXTERN\s+(\w+)', re.IGNORECASE)
+RE_ASM_INC  = re.compile(r'%include\s+["\'"]([^"\']+)["\']|EXTERN\s+(\w+)', re.IGNORECASE)
+
+# INF / DEC / DSC / FDF section header
+RE_SECTION  = re.compile(r'^\s*\[([^\]]+)\]', re.MULTILINE)
+# INF Sources line: bare filename or path
+RE_INF_FILE = re.compile(r'^\s*([\w./\\-]+\.\w+)', re.MULTILINE)
+# .sdl INFComponent
+RE_SDL_INF  = re.compile(
+    r'INFComponent\s*\n(?:\s+\w+\s*=\s*[^\n]*\n)*\s+File\s*=\s*"([^"]+)"',
+    re.IGNORECASE
+)
+# .sdl LibraryMapping
+RE_SDL_LIB  = re.compile(
+    r'LibraryMapping\s*\n(?:\s+\w+\s*=\s*[^\n]*\n)*\s+Instance\s*=\s*"([^"]+)"',
+    re.IGNORECASE
+)
+# .sdl TOKEN name
+RE_SDL_TOKEN = re.compile(r'^TOKEN\s*\n\s+Name\s*=\s*"([^"]+)"', re.MULTILINE | re.IGNORECASE)
+# .sdl ELINK Parent
+RE_SDL_ELINK = re.compile(
+    r'ELINK\s*\n(?:\s+\w+\s*=\s*[^\n]*\n)*?\s+Parent\s*=\s*"([^"]+)"',
+    re.IGNORECASE
+)
+# .cif section markers
+RE_CIF_INF   = re.compile(r'^\[INF\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
+RE_CIF_FILES = re.compile(r'^\[files\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
+RE_CIF_PARTS = re.compile(r'^\[parts\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
+RE_QUOTED    = re.compile(r'"([^"]+)"')
+
 
 # ─── strip_comments ───────────────────────────────────────────────────────────
 def strip_comments(src: str) -> str:
@@ -63,20 +130,228 @@ def strip_comments(src: str) -> str:
             result.append(src[i]); i += 1
     return ''.join(result)
 
+
+# ─── INF section parser ───────────────────────────────────────────────────────
+def _parse_ini_sections(src: str) -> dict:
+    """Parse INF/DEC/DSC/FDF style [Section] key=val files into a dict of lists."""
+    sections = defaultdict(list)
+    current  = None
+    for line in src.splitlines():
+        line = line.strip()
+        # strip inline comments
+        line = re.sub(r'\s*#.*$', '', line)
+        if not line:
+            continue
+        m = re.match(r'^\[([^\]]+)\]', line)
+        if m:
+            current = m.group(1).strip().lower()
+            continue
+        if current is not None:
+            sections[current].append(line)
+    return dict(sections)
+
+
+def _section_files(lines: list) -> list:
+    """Extract bare filenames/paths from section lines."""
+    result = []
+    for ln in lines:
+        # Strip GUID macros like $(FOO_BAR)
+        ln = re.sub(r'\$\([^)]+\)', '', ln).strip()
+        if ln and not ln.startswith('#'):
+            # take only the first token (filename) before any whitespace or |
+            token = re.split(r'[\s|]', ln)[0]
+            if token:
+                result.append(token)
+    return result
+
+
+# ─── scan_inf ─────────────────────────────────────────────────────────────────
+def scan_inf(src: str) -> dict:
+    """
+    Returns:
+      sources    → list of .c/.asm filenames from [Sources]
+      packages   → list of .dec paths from [Packages]
+      libraries  → list of library class names from [LibraryClasses]
+      guids      → list of GUID variable names from [Guids]
+      protocols  → list of Protocol variable names from [Protocols]
+      ppis       → list of PPI variable names from [Ppis]
+      depex      → raw depex expression string from [Depex]
+      meta       → dict with BASE_NAME, MODULE_TYPE, FILE_GUID, ENTRY_POINT
+    """
+    secs = _parse_ini_sections(src)
+    meta = {}
+    for ln in secs.get('defines', []):
+        if '=' in ln:
+            k, _, v = ln.partition('=')
+            meta[k.strip()] = v.strip()
+
+    sources   = _section_files(secs.get('sources', []))
+    packages  = _section_files(secs.get('packages', []))
+    libraries = _section_files(secs.get('libraryclasses', []))
+    guids     = _section_files(secs.get('guids', []))
+    protocols = _section_files(secs.get('protocols', []))
+    ppis      = _section_files(secs.get('ppis', []))
+    depex_lines = secs.get('depex', [])
+    depex = ' '.join(depex_lines).strip()
+
+    return {
+        'sources': sources, 'packages': packages,
+        'libraries': libraries, 'guids': guids,
+        'protocols': protocols, 'ppis': ppis,
+        'depex': depex, 'meta': meta,
+    }
+
+
+# ─── scan_dec ─────────────────────────────────────────────────────────────────
+def scan_dec(src: str) -> dict:
+    """Returns guids/ppis/protocols declared in a .dec package."""
+    secs = _parse_ini_sections(src)
+    meta = {}
+    for ln in secs.get('defines', []):
+        if '=' in ln:
+            k, _, v = ln.partition('=')
+            meta[k.strip()] = v.strip()
+    guids     = _section_files(secs.get('guids', []))
+    protocols = _section_files(secs.get('protocols', []))
+    ppis      = _section_files(secs.get('ppis', []))
+    return {'guids': guids, 'protocols': protocols, 'ppis': ppis, 'meta': meta}
+
+
+# ─── scan_dsc ─────────────────────────────────────────────────────────────────
+def scan_dsc(src: str) -> dict:
+    """Returns list of component .inf paths from [Components] sections."""
+    secs = _parse_ini_sections(src)
+    components = []
+    for key, lines in secs.items():
+        if key.startswith('components'):
+            for ln in lines:
+                ln = re.sub(r'\$\([^)]+\)', '', ln).strip()
+                if ln and not ln.startswith('#') and ln.lower().endswith('.inf'):
+                    components.append(ln.split('{')[0].strip())
+    return {'components': components}
+
+
+# ─── scan_fdf ─────────────────────────────────────────────────────────────────
+def scan_fdf(src: str) -> dict:
+    """Returns list of .inf paths referenced inside FV sections."""
+    infs = []
+    for ln in src.splitlines():
+        ln = ln.strip()
+        if ln.upper().startswith('INF') and '.inf' in ln.lower():
+            parts = ln.split(None, 1)
+            if len(parts) >= 2:
+                infs.append(parts[1].strip())
+    return {'infs': infs}
+
+
+# ─── scan_sdl ─────────────────────────────────────────────────────────────────
+def scan_sdl(src: str) -> dict:
+    """
+    Parse AMI SDL file. Returns:
+      inf_components → list of .inf File paths
+      lib_mappings   → list of Instance strings (Pkg.LibClass)
+      tokens         → list of token names
+      elink_parents  → list of Parent strings from ELINK blocks
+    """
+    inf_components = [m.group(1) for m in RE_SDL_INF.finditer(src)]
+    lib_mappings   = [m.group(1) for m in RE_SDL_LIB.finditer(src)]
+    tokens         = [m.group(1) for m in RE_SDL_TOKEN.finditer(src)]
+    elink_parents  = [m.group(1) for m in RE_SDL_ELINK.finditer(src)]
+    return {
+        'inf_components': inf_components,
+        'lib_mappings':   lib_mappings,
+        'tokens':         tokens,
+        'elink_parents':  elink_parents,
+    }
+
+
+# ─── scan_cif ─────────────────────────────────────────────────────────────────
+def scan_cif(src: str) -> dict:
+    """
+    Parse AMI CIF component file. Returns:
+      infs   → list of .inf filenames from [INF] section
+      files  → list of other filenames from [files] section
+      parts  → list of sub-component names from [parts] section
+      meta   → dict (name, category, localRoot, refName)
+    """
+    meta = {}
+    # Extract XML-style header attributes
+    for m in re.finditer(r'(\w+)\s*=\s*"([^"]*)"', src.split('[')[0]):
+        meta[m.group(1).lower()] = m.group(2)
+
+    def _extract_quoted(pattern, text):
+        m = pattern.search(text)
+        if not m: return []
+        return RE_QUOTED.findall(m.group(1))
+
+    infs   = _extract_quoted(RE_CIF_INF,   src)
+    files  = _extract_quoted(RE_CIF_FILES,  src)
+    parts  = _extract_quoted(RE_CIF_PARTS,  src)
+    return {'infs': infs, 'files': files, 'parts': parts, 'meta': meta}
+
+
+# ─── scan_mak ─────────────────────────────────────────────────────────────────
+def scan_mak(src: str) -> dict:
+    """Very light Makefile analysis — just extract generated .h targets."""
+    generated = []
+    for ln in src.splitlines():
+        ln = ln.strip()
+        if ln.endswith('.h') or ('BUILD_DIR' in ln and '.h' in ln):
+            # Grab the target name
+            m = re.search(r'\(BUILD_DIR\)/(\w+\.h)', ln)
+            if m: generated.append(m.group(1))
+    return {'generated': generated}
+
+
 # ─── scan_file ────────────────────────────────────────────────────────────────
 def scan_file(filepath: str, root: str):
+    """
+    Returns (includes_or_refs, funcdefs, funccalls, bios_extra_dict)
+    bios_extra_dict varies by file type; None for C/H/ASM.
+    """
     try:
         src = Path(filepath).read_text(encoding='utf-8', errors='replace')
     except Exception:
-        return [], [], []
+        return [], [], [], None
 
-    rel = os.path.relpath(filepath, root).replace('\\', '/')
     ext = Path(filepath).suffix.lower()
 
-    if ext in ('.asm', '.s'):
+    if ext in ('.asm', '.s', '.S', '.nasm'):
         includes = [m.group(1) or m.group(2) for m in RE_ASM_INC.finditer(src)]
-        return includes, [], []
+        return includes, [], [], None
 
+    if ext == '.inf':
+        data = scan_inf(src)
+        refs = data['sources'] + data['packages']
+        return refs, [], [], data
+
+    if ext == '.dec':
+        data = scan_dec(src)
+        return [], [], [], data
+
+    if ext == '.dsc':
+        data = scan_dsc(src)
+        return data['components'], [], [], data
+
+    if ext == '.fdf':
+        data = scan_fdf(src)
+        return data['infs'], [], [], data
+
+    if ext == '.sdl':
+        data = scan_sdl(src)
+        refs = data['inf_components']
+        return refs, [], [], data
+
+    if ext == '.cif':
+        data = scan_cif(src)
+        refs = data['infs'] + data['files']
+        return refs, [], [], data
+
+    if ext == '.mak':
+        data = scan_mak(src)
+        return [], [], [], data
+
+    # Remaining: .c, .cpp, .h, .hpp, .vfr, .uni, .asl → treat as C-like
     clean = strip_comments(src)
     includes = RE_INCLUDE.findall(clean)
 
@@ -95,18 +370,21 @@ def scan_file(filepath: str, root: str):
         if name not in C_KEYWORDS and len(name) >= 2:
             funccalls.append(name)
 
-    return includes, funcdefs, funccalls
+    return includes, funcdefs, funccalls, None
+
 
 # ─── get_module ───────────────────────────────────────────────────────────────
 def get_module(rel_path: str) -> str:
     parts = rel_path.replace('\\', '/').split('/')
     return parts[0] if len(parts) > 1 else '_root'
 
+
 # ─── build_graph ─────────────────────────────────────────────────────────────
 def build_graph(root_dir: str, progress_cb=None) -> dict:
     def _cb(pct, msg):
         print(f'[{pct:3d}%] {msg}', end='\r')
         if progress_cb: progress_cb(pct, msg)
+
     root = os.path.abspath(root_dir)
     all_files = []
 
@@ -121,31 +399,38 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
     total = len(all_files)
     _cb(0, f'Found {total} files, analyzing...')
 
-    # file metadata + raw analysis
-    file_meta  = {}   # rel_path -> {label, ext, size, module}
-    file_incs  = {}   # rel_path -> [include strings]
-    file_defs  = {}   # rel_path -> [{label, is_efiapi, is_static}]
-    file_calls = {}   # rel_path -> [call names]
+    file_meta   = {}  # rel_path → {label, ext, size, module, file_type, bios_meta}
+    file_incs   = {}  # rel_path → [ref strings]
+    file_defs   = {}  # rel_path → [{label, is_efiapi, is_static}]
+    file_calls  = {}  # rel_path → [call names]
+    file_extra  = {}  # rel_path → bios_extra dict (for .inf/.sdl/.cif etc.)
 
     for i, fp in enumerate(all_files):
         if i % 50 == 0:
             pct = int(i / total * 60) if total else 0
             _cb(pct, f'{i}/{total} files analyzed')
         rel = os.path.relpath(fp, root).replace('\\', '/')
-        inc, defs, calls = scan_file(fp, root)
-        file_meta[rel]  = {
-            'label':  os.path.basename(fp),
-            'ext':    Path(fp).suffix.lower(),
-            'size':   os.path.getsize(fp),
-            'module': get_module(rel),
+        inc, defs, calls, extra = scan_file(fp, root)
+        ext = Path(fp).suffix.lower()
+        bios_meta = {}
+        if extra and 'meta' in extra:
+            bios_meta = extra['meta']
+
+        file_meta[rel] = {
+            'label':     os.path.basename(fp),
+            'ext':       ext,
+            'size':      os.path.getsize(fp),
+            'module':    get_module(rel),
+            'file_type': FILE_TYPE_MAP.get(ext, 'other'),
+            'bios_meta': bios_meta,
         }
         file_incs[rel]  = inc
         file_defs[rel]  = defs
         file_calls[rel] = calls
+        file_extra[rel] = extra
 
     _cb(60, 'Building module index...')
 
-    # module index + colors
     all_modules = sorted(set(m['module'] for m in file_meta.values()))
     module_color = {}
     fixed = {'AmiPkg':'#00d4ff','AsusModulePkg':'#00ff9f',
@@ -158,19 +443,33 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
             module_color[mod] = MODULE_COLORS[color_idx % len(MODULE_COLORS)]
             color_idx += 1
 
-    # resolve includes → file-level edges (by rel path)
-    _cb(65, 'Resolving includes...')
-    label_to_paths = defaultdict(list)
+    # Build name-to-path index (basename, full rel path, and path stem)
+    _cb(65, 'Building file index...')
+    label_to_paths  = defaultdict(list)  # basename → [rel_path]
+    stem_to_paths   = defaultdict(list)  # stem (no ext) → [rel_path]
     for rel in file_meta:
         label_to_paths[os.path.basename(rel)].append(rel)
+        stem = Path(rel).stem.lower()
+        stem_to_paths[stem].append(rel)
 
-    # assign integer IDs per file
     rel_to_id = {rel: i for i, rel in enumerate(file_meta)}
 
-    # build per-module file lists + edges
+    def resolve_ref(ref: str, src_dir: str = '') -> list:
+        """Try to resolve a reference string to known rel_paths."""
+        # Try exact basename first
+        base = os.path.basename(ref)
+        if base in label_to_paths:
+            return label_to_paths[base]
+        # Try stem match (for library class names like "AmiSbMiscLib")
+        stem = Path(ref).stem.lower()
+        if stem in stem_to_paths:
+            return stem_to_paths[stem]
+        return []
+
+    # Build per-module file lists + typed edges
     files_by_module      = defaultdict(list)
-    file_edges_by_module = defaultdict(list)   # within & cross
-    
+    file_edges_by_module = defaultdict(list)
+
     for rel, meta in file_meta.items():
         fid  = rel_to_id[rel]
         mod  = meta['module']
@@ -181,42 +480,98 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
             'ext':        meta['ext'],
             'size':       meta['size'],
             'func_count': len(file_defs.get(rel, [])),
+            'file_type':  meta['file_type'],
+            'bios_meta':  meta['bios_meta'],
         })
 
     _cb(70, 'Resolving file edges...')
     module_edge_counts = defaultdict(int)
     seen_file_edges    = set()
 
-    for src_rel, incs in file_incs.items():
+    def add_edge(src_rel, tgt_rel, edge_type):
         src_id  = rel_to_id[src_rel]
+        tgt_id  = rel_to_id[tgt_rel]
         src_mod = file_meta[src_rel]['module']
-        for inc in incs:
-            inc_base = os.path.basename(inc)
-            candidates = label_to_paths.get(inc_base, [])
-            for tgt_rel in candidates:
-                tgt_id  = rel_to_id[tgt_rel]
-                tgt_mod = file_meta[tgt_rel]['module']
-                if src_id == tgt_id:
-                    continue
-                # cross-module edge for module graph weight
-                if src_mod != tgt_mod:
-                    key = (min(src_mod, tgt_mod), max(src_mod, tgt_mod))
-                    module_edge_counts[key] += 1
-                # store edge in source module bucket
-                ekey = (src_id, tgt_id)
-                if ekey not in seen_file_edges:
-                    seen_file_edges.add(ekey)
-                    file_edges_by_module[src_mod].append({'s': src_id, 't': tgt_id})
+        tgt_mod = file_meta[tgt_rel]['module']
+        if src_id == tgt_id:
+            return
+        if src_mod != tgt_mod:
+            key = (min(src_mod, tgt_mod), max(src_mod, tgt_mod))
+            module_edge_counts[key] += 1
+        ekey = (src_id, tgt_id, edge_type)
+        if ekey not in seen_file_edges:
+            seen_file_edges.add(ekey)
+            file_edges_by_module[src_mod].append({'s': src_id, 't': tgt_id, 'type': edge_type})
+
+    for src_rel, extra in file_extra.items():
+        ext = file_meta[src_rel]['ext']
+        src_dir = str(Path(src_rel).parent)
+
+        if ext in ('.c', '.cpp', '.cc', '.h', '.hpp', '.vfr', '.asl'):
+            # Standard #include edges
+            for inc in file_incs.get(src_rel, []):
+                for tgt in resolve_ref(inc, src_dir):
+                    add_edge(src_rel, tgt, 'include')
+
+        elif ext == '.asm' or ext in ('.s', '.S', '.nasm'):
+            for inc in file_incs.get(src_rel, []):
+                for tgt in resolve_ref(inc, src_dir):
+                    add_edge(src_rel, tgt, 'include')
+
+        elif ext == '.inf' and extra:
+            # [Sources] → .c files
+            for src_f in extra.get('sources', []):
+                for tgt in resolve_ref(src_f, src_dir):
+                    add_edge(src_rel, tgt, 'sources')
+            # [Packages] → .dec files
+            for pkg in extra.get('packages', []):
+                for tgt in resolve_ref(pkg, src_dir):
+                    add_edge(src_rel, tgt, 'package')
+            # [LibraryClasses] → other .inf (by stem)
+            for lib in extra.get('libraries', []):
+                for tgt in resolve_ref(lib, src_dir):
+                    if tgt != src_rel:
+                        add_edge(src_rel, tgt, 'library')
+
+        elif ext == '.dsc' and extra:
+            for comp in extra.get('components', []):
+                for tgt in resolve_ref(comp, src_dir):
+                    add_edge(src_rel, tgt, 'component')
+
+        elif ext == '.fdf' and extra:
+            for inf_f in extra.get('infs', []):
+                for tgt in resolve_ref(inf_f, src_dir):
+                    add_edge(src_rel, tgt, 'component')
+
+        elif ext == '.sdl' and extra:
+            # INFComponent → .inf files
+            for inf_f in extra.get('inf_components', []):
+                for tgt in resolve_ref(inf_f, src_dir):
+                    add_edge(src_rel, tgt, 'component')
+            # LibraryMapping → .inf by Instance "Pkg.LibClass" → stem is LibClass
+            for inst in extra.get('lib_mappings', []):
+                stem = inst.split('.')[-1] if '.' in inst else inst
+                for tgt in resolve_ref(stem, src_dir):
+                    if tgt != src_rel:
+                        add_edge(src_rel, tgt, 'library')
+
+        elif ext == '.cif' and extra:
+            # [INF] section → .inf files
+            for inf_f in extra.get('infs', []):
+                for tgt in resolve_ref(inf_f, src_dir):
+                    add_edge(src_rel, tgt, 'cif_own')
+            # [files] section → any file
+            for f in extra.get('files', []):
+                for tgt in resolve_ref(f, src_dir):
+                    add_edge(src_rel, tgt, 'cif_own')
 
     _cb(80, 'Building function index...')
-    # global function name → file path (first occurrence)
     func_name_to_file = {}
     for rel, defs in file_defs.items():
         for d in defs:
             if d['label'] not in func_name_to_file:
                 func_name_to_file[d['label']] = rel
 
-    # assign function IDs per file
     funcs_by_file      = {}
     func_edges_by_file = {}
 
@@ -234,7 +589,6 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
             }
             for i, d in enumerate(defs)
         ]
-        # Only intra-file edges; deduplicate call sites first
         intra_calls = set(file_calls.get(rel, [])) & fid_map.keys()
         edges = []
         seen_edge = set()
@@ -254,7 +608,6 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
                 break
         func_edges_by_file[rel] = edges
 
-    # module-level nodes
     _cb(95, 'Assembling output...')
     modules = [
         {
@@ -275,6 +628,11 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
     total_funcs = sum(len(v) for v in file_defs.values())
     total_calls = sum(len(v) for v in file_calls.values())
 
+    # Count by file type for stats
+    type_counts = defaultdict(int)
+    for meta in file_meta.values():
+        type_counts[meta['file_type']] += 1
+
     _cb(100, 'Done!')
     print()
     return {
@@ -284,12 +642,14 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
         'file_edges_by_module': dict(file_edges_by_module),
         'funcs_by_file':        funcs_by_file,
         'func_edges_by_file':   func_edges_by_file,
+        'edge_types':           EDGE_TYPES,
         'stats': {
-            'files':     total,
-            'modules':   len(modules),
-            'functions': total_funcs,
-            'calls':     total_calls,
-            'root':      root.replace('\\', '/'),
+            'files':      total,
+            'modules':    len(modules),
+            'functions':  total_funcs,
+            'calls':      total_calls,
+            'type_counts': dict(type_counts),
+            'root':       root.replace('\\', '/'),
         }
     }
 
@@ -343,6 +703,7 @@ HTML_SKELETON = """\
 <div id="layout">
   <div id="sidebar">
     <div id="sidebar-title">Modules</div>
+    <div id="ft-filter"></div>
     <div id="module-list"></div>
   </div>
   <div id="sidebar-resizer"></div>
@@ -406,7 +767,7 @@ HTML_SKELETON = """\
   var l=document.getElementById('loading');
   var m=document.getElementById('loading-msg');
   if(l){{l.className='show';}}
-  if(m){{m.textContent='⏳ Parsing graph data...'}}
+  if(m){{m.textContent='⏳ Parsing graph data...';}}
   // Show resizer when code panel opens (handled by JS)
   document.getElementById('cp-loading').classList.add('hidden');
   document.getElementById('cp-empty').style.display='';
@@ -453,7 +814,7 @@ def inject_data(html: str, data: dict) -> str:
 
 # ─── main ─────────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description='BIOS Code Visualizer V2')
+    parser = argparse.ArgumentParser(description='BIOS Code Visualizer V3')
     parser.add_argument('root', help='Root directory of BIOS codebase')
     parser.add_argument('-o', '--output', default='bios_viz.html',
                         help='Output HTML file (default: bios_viz.html)')
@@ -463,7 +824,7 @@ def main():
         print(f'Error: "{args.root}" is not a directory', file=sys.stderr)
         sys.exit(1)
 
-    print(f'BIOSVIZ V2 — analyzing: {args.root}')
+    print(f'BIOSVIZ V3 — analyzing: {args.root}')
     data = build_graph(args.root)
 
     s = data['stats']
@@ -472,6 +833,10 @@ def main():
     print(f'  Files:     {s["files"]}')
     print(f'  Functions: {s["functions"]}')
     print(f'  Calls:     {s["calls"]}')
+    if s.get('type_counts'):
+        print(f'\n  File types:')
+        for ft, cnt in sorted(s['type_counts'].items(), key=lambda x: -x[1]):
+            print(f'    {ft:20s} {cnt}')
 
     try:
         html = build_html(data)
