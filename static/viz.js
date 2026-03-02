@@ -5,9 +5,10 @@
 
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
-    level: 0,        // 0=modules 1=files 2=functions
+    level: 0,        // 0=modules 1=files(subdirs) 1.5=files(subdir expanded) 2=functions
     tab: 'files',    // 'files' | 'calls'
     activeModule: null,
+    activeSubDir: null,   // null = showing folder overview; string = inside a sub-folder
     activeFile: null,
     history: [],
     pinnedNodes: new Set(),
@@ -37,7 +38,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('loading-msg').textContent = '🔍 Parsing graph data...';
                 const t0 = performance.now();
                 window.DATA = JSON.parse(el.textContent);
-                console.log(`JSON.parse: ${(performance.now()-t0).toFixed(0)}ms`);
+                console.log(`JSON.parse: ${(performance.now() - t0).toFixed(0)}ms`);
 
                 if (!window.DATA?.stats) { showMsg('Error: invalid data format'); return; }
 
@@ -73,11 +74,17 @@ function showMsg(msg) {
 // ─── Code Panel ──────────────────────────────────────────────────────────────
 function initCodePanel() {
     document.getElementById('cp-close').onclick = closeCodePanel;
+
     document.getElementById('code-toggle-btn').onclick = () => {
         if (codeState.isOpen) closeCodePanel();
-        else if (codeState.currentFile) openCodePanel();
-        else openCodePanel(); // will show empty state
+        else openCodePanel();
     };
+
+    // Graph button: drill to caller/callee for the currently selected/highlighted file
+    document.getElementById('graph-toggle-btn').onclick = () => {
+        drillCurrentFileToL2();
+    };
+
     document.getElementById('cp-prev-func').onclick = () => navigateFunc(-1);
     document.getElementById('cp-next-func').onclick = () => navigateFunc(1);
 
@@ -85,9 +92,46 @@ function initCodePanel() {
     initResizer();
 }
 
+// Drill the currently active file (code panel or selected node) to L2 caller/callee
+function drillCurrentFileToL2() {
+    // Priority: use code panel's current file if open
+    const filePath = codeState.currentFile
+        || (cy?.nodes(':selected').first().data('_f')?.path)
+        || null;
+
+    if (!filePath) {
+        // Highlight the button to signal "select a file first"
+        const btn = document.getElementById('graph-toggle-btn');
+        btn.style.borderColor = '#f87171';
+        btn.style.color = '#f87171';
+        setTimeout(() => {
+            btn.style.borderColor = '';
+            btn.style.color = '';
+        }, 900);
+        return;
+    }
+
+    // If we're already at L2 for this file, just bring it into focus
+    if (state.level === 2 && state.activeFile === filePath) return;
+
+    // Need to be in L1 context first — find which module this file belongs to
+    if (state.level < 1) {
+        // Find module
+        for (const m of DATA.modules) {
+            const files = DATA.files_by_module[m.id] || [];
+            if (files.some(f => f.path === filePath)) {
+                drillToModule(m.id);
+                break;
+            }
+        }
+    }
+    drillToFile(filePath);
+    document.getElementById('graph-toggle-btn').classList.add('active');
+}
+
 function initResizer() {
     const resizer = document.getElementById('resizer');
-    const panel   = document.getElementById('code-panel');
+    const panel = document.getElementById('code-panel');
     if (!resizer || !panel) return;
     let startX, startW;
     resizer.addEventListener('mousedown', e => {
@@ -131,11 +175,11 @@ async function loadFileInPanel(filePath, funcName) {
 
     openCodePanel();
     const fname = filePath.split('/').pop();
-    const ext   = fname.includes('.') ? '.' + fname.split('.').pop().toLowerCase() : '';
+    const ext = fname.includes('.') ? '.' + fname.split('.').pop().toLowerCase() : '';
 
     // Update header immediately
     document.getElementById('cp-filename').textContent = fname;
-    document.getElementById('cp-filename').title       = filePath;
+    document.getElementById('cp-filename').title = filePath;
     document.getElementById('cp-ext-badge').textContent = ext.toUpperCase() || 'FILE';
     document.getElementById('cp-ext-badge').style.background = extColor(ext);
     document.getElementById('cp-ext-badge').style.color = '#000';
@@ -176,9 +220,9 @@ async function loadFileInPanel(filePath, funcName) {
 
 function extColor(ext) {
     const map = {
-        '.c':   '#3b82f6', '.cpp': '#06b6d4', '.cc': '#06b6d4',
-        '.h':   '#8b5cf6', '.hpp': '#7c3aed',
-        '.asm': '#f59e0b', '.s':   '#f59e0b', '.S': '#f59e0b',
+        '.c': '#3b82f6', '.cpp': '#06b6d4', '.cc': '#06b6d4',
+        '.h': '#8b5cf6', '.hpp': '#7c3aed',
+        '.asm': '#f59e0b', '.s': '#f59e0b', '.S': '#f59e0b',
     };
     return map[ext] || '#64748b';
 }
@@ -199,14 +243,16 @@ function showCpError(msg) {
 }
 
 function renderCode(src, ext, fname) {
-    const lines  = src.split('\n');
-    const hlExt  = { '.c':'c', '.cpp':'cpp', '.cc':'cpp', '.h':'cpp', '.hpp':'cpp',
-                     '.asm':'x86asm', '.s':'x86asm', '.S':'x86asm' };
-    const lang   = hlExt[ext] || 'plaintext';
+    const lines = src.split('\n');
+    const hlExt = {
+        '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.h': 'cpp', '.hpp': 'cpp',
+        '.asm': 'x86asm', '.s': 'x86asm', '.S': 'x86asm'
+    };
+    const lang = hlExt[ext] || 'plaintext';
 
     // Build funcLineMap: scan for `funcName(` patterns
     codeState.funcLineMap = {};
-    codeState.funcList    = [];
+    codeState.funcList = [];
     const funcDefs = DATA.funcs_by_file[codeState.currentFile] || [];
     funcDefs.forEach(f => {
         const pattern = new RegExp('\\b' + escapeRe(f.label) + '\\s*\\(');
@@ -225,7 +271,7 @@ function renderCode(src, ext, fname) {
         try {
             const result = hljs.highlight(src, { language: lang, ignoreIllegals: true });
             highlightedLines = result.value.split('\n');
-        } catch(_) {
+        } catch (_) {
             highlightedLines = lines.map(l => escapeHtml(l));
         }
     } else {
@@ -234,7 +280,7 @@ function renderCode(src, ext, fname) {
 
     const wrap = document.getElementById('cp-code-wrap');
     const lineDivs = highlightedLines.map((hl, i) =>
-        `<div class="code-line" id="cl-${i}"><span class="line-num">${i+1}</span><span class="line-content">${hl}</span></div>`
+        `<div class="code-line" id="cl-${i}"><span class="line-num">${i + 1}</span><span class="line-content">${hl}</span></div>`
     ).join('');
 
     wrap.innerHTML = `<pre><code class="hljs language-${lang}">${lineDivs}</code></pre>`;
@@ -294,10 +340,10 @@ function navigateFunc(dir) {
 }
 
 function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 function escapeRe(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ─── Cytoscape ────────────────────────────────────────────────────────────────
@@ -315,6 +361,11 @@ function initCy() {
     cy.on('mouseover', 'node', e => { showTooltip(e); highlightNode(e.target); });
     cy.on('mouseout', 'node', () => { hideTooltip(); clearHighlight(); });
     cy.on('tap', e => { if (e.target === cy) clearSelection(); });
+    // Double-tap a file node → drill to L2 (caller/callee view)
+    cy.on('dbltap', 'node', e => {
+        const d = e.target.data();
+        if (d._t === 'file' && d._f?.path) drillToFile(d._f.path);
+    });
     document.getElementById('cy').addEventListener('contextmenu', e => e.preventDefault());
 }
 
@@ -381,30 +432,165 @@ const CY_STYLE = [
         }
     },
     { selector: '.hl-node-out', style: { 'border-color': '#f59e0b', 'border-width': 3, 'opacity': 1 } },
-    { selector: '.hl-node-in',  style: { 'border-color': '#10b981', 'border-width': 3, 'opacity': 1 } },
+    { selector: '.hl-node-in', style: { 'border-color': '#10b981', 'border-width': 3, 'opacity': 1 } },
 ];
 
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
+// ─── Sidebar tree ─────────────────────────────────────────────────────────────
+// Builds a tree in the sidebar: Module → sub-folders (expandable)
+// Graph always shows file nodes only.
+
 function buildSidebar() {
     const list = document.getElementById('module-list');
     list.innerHTML = '';
     DATA.modules.forEach(m => {
-        const d = document.createElement('div');
-        d.className = 'mod-item';
-        d.id = `mi-${m.id}`;
-        d.innerHTML = `<div class="mod-dot" style="background:${m.color}"></div>
-      <div class="mod-name" title="${m.id}">${m.id}</div>
-      <div class="mod-count">${m.file_count}</div>`;
-        d.onclick = () => drillToModule(m.id);
-        list.appendChild(d);
+        const allFiles = DATA.files_by_module[m.id] || [];
+        const tree = buildFileTree(allFiles, m.id);
+        const hasSubdirs = tree.children.length > 0;
+
+        // ── Module row ──
+        const modRow = document.createElement('div');
+        modRow.className = 'tree-row mod-row';
+        modRow.id = `mi-${m.id}`;
+        modRow.innerHTML =
+            `<span class="tree-arrow ${hasSubdirs ? '▶' : 'leaf'}">▶</span>` +
+            `<span class="mod-dot" style="background:${m.color}"></span>` +
+            `<span class="mod-name" title="${m.id}">${m.id}</span>` +
+            `<span class="mod-count">${m.file_count}</span>`;
+
+        // ── Sub-folder children container ──
+        const children = document.createElement('div');
+        children.className = 'tree-children';
+
+        if (hasSubdirs) {
+            buildTreeRows(children, tree, m.id, m.color, 0);
+        }
+
+        // Module click → show ALL files for this module (no filter)
+        modRow.addEventListener('click', () => {
+            const arrow = modRow.querySelector('.tree-arrow');
+            const isOpen = children.classList.contains('open');
+
+            if (!isOpen) {
+                children.classList.add('open');
+                arrow.classList.add('open');
+            }
+            // Always render all files in graph when clicking module name
+            drillToModule(m.id);
+        });
+
+        list.appendChild(modRow);
+        list.appendChild(children);
     });
+}
+
+// Recursively build a virtual tree node from flat file list
+// Returns { name, path, files:[], children:[] }
+function buildFileTree(files, modId) {
+    const root = { name: modId, path: '', files: [], children: [] };
+    const nodeMap = { '': root };
+
+    function ensureNode(parts, upTo) {
+        const key = parts.slice(0, upTo + 1).join('/');
+        if (!nodeMap[key]) {
+            const parent = nodeMap[parts.slice(0, upTo).join('/') || ''];
+            const node = { name: parts[upTo], path: key, files: [], children: [] };
+            parent.children.push(node);
+            nodeMap[key] = node;
+        }
+        return nodeMap[key];
+    }
+
+    files.forEach(f => {
+        // Path relative to module: strip "ModuleId/"
+        const prefix = modId + '/';
+        const rel = f.path.startsWith(prefix) ? f.path.slice(prefix.length) : f.path;
+        const parts = rel.split('/');
+        if (parts.length === 1) {
+            // root-level file
+            root.files.push(f);
+        } else {
+            // Walk every directory part
+            for (let i = 0; i < parts.length - 1; i++) {
+                ensureNode(parts, i);
+            }
+            const dirKey = parts.slice(0, -1).join('/');
+            nodeMap[dirKey].files.push(f);
+        }
+    });
+    return root;
+}
+
+// Recursively create sidebar rows for a tree node's children
+function buildTreeRows(container, node, modId, modColor, depth) {
+    node.children.forEach(child => {
+        const fileCount = countFiles(child);
+        const hasKids = child.children.length > 0;
+        const indent = 20 + depth * 14; // px left indent
+
+        // Sub-folder row
+        const row = document.createElement('div');
+        row.className = 'tree-row subdir-row';
+        row.dataset.modId = modId;
+        row.dataset.subPath = child.path;
+        row.innerHTML =
+            `<span style="flex-shrink:0;width:${indent}px"></span>` +
+            `<span class="tree-arrow ${hasKids ? '' : 'leaf'}">▶</span>` +
+            `<span class="subdir-icon">📁</span>` +
+            `<span class="subdir-name" title="${modId}/${child.path}">${child.name}</span>` +
+            `<span class="subdir-count">${fileCount}</span>`;
+
+        const subChildren = document.createElement('div');
+        subChildren.className = 'tree-children';
+
+        if (hasKids) {
+            buildTreeRows(subChildren, child, modId, modColor, depth + 1);
+        }
+
+        row.addEventListener('click', e => {
+            e.stopPropagation();
+            const arrow = row.querySelector('.tree-arrow');
+            const isOpen = subChildren.classList.contains('open');
+
+            if (hasKids) {
+                subChildren.classList.toggle('open', !isOpen);
+                arrow.classList.toggle('open', !isOpen);
+            }
+            // Show files under this path in graph
+            filterGraphToSubPath(modId, child.path);
+            setSubdirActive(modId, child.path);
+        });
+
+        container.appendChild(row);
+        container.appendChild(subChildren);
+    });
+}
+
+function countFiles(node) {
+    return node.files.length + node.children.reduce((s, c) => s + countFiles(c), 0);
+}
+
+function setSubdirActive(modId, subPath) {
+    document.querySelectorAll('.subdir-row').forEach(el => el.classList.remove('active'));
+    const row = document.querySelector(`.subdir-row[data-mod-id="${modId}"][data-sub-path="${subPath}"]`);
+    if (row) row.classList.add('active');
+}
+
+// Show files under a given sub-path (all depths) in the graph
+function filterGraphToSubPath(modId, subPath) {
+    state.activeSubDir = subPath;
+    const prefix = modId + '/' + subPath + '/';
+    const allFiles = DATA.files_by_module[modId] || [];
+    // Include files directly in this dir AND in any nested dirs
+    const filtered = allFiles.filter(f => f.path.startsWith(prefix) || f.path === modId + '/' + subPath);
+    renderFilesFlat(modId, filtered);
+    updateBreadcrumb();
 }
 
 // ─── L0: Module View ──────────────────────────────────────────────────────────
 function loadLevel0() {
     showLoading(true, 'Rendering modules...');
     hideFuncView();
-    state.level = 0; state.activeModule = null; state.activeFile = null;
+    state.level = 0; state.activeModule = null; state.activeFile = null; state.activeSubDir = null;
     updateBreadcrumb(); setSidebarActive(null);
 
     const els = [];
@@ -419,9 +605,9 @@ function loadLevel0() {
             }
         });
     });
-    const edges = [...DATA.module_edges].sort((a,b) => b.weight - a.weight).slice(0, 300);
+    const edges = [...DATA.module_edges].sort((a, b) => b.weight - a.weight).slice(0, 300);
     edges.forEach((e, i) => {
-        els.push({ data: { id: `me${i}`, source: e.s, target: e.t, w: Math.max(1, Math.min(6, e.weight/8)), wt: e.weight } });
+        els.push({ data: { id: `me${i}`, source: e.s, target: e.t, w: Math.max(1, Math.min(6, e.weight / 8)), wt: e.weight } });
     });
 
     cy.elements().remove();
@@ -435,29 +621,35 @@ function loadLevel0() {
     lay.run();
 }
 
-// ─── L1: File View ────────────────────────────────────────────────────────────
+// ─── L1: Module → show ALL files flat (no folder nodes ever) ─────────────────
 function drillToModule(modId) {
     if (state.level === 0) state.history.push({ level: 0 });
-    state.level = 1; state.activeModule = modId;
+    state.level = 1; state.activeModule = modId; state.activeSubDir = null;
     showLoading(true, `Loading ${modId}...`);
     hideFuncView(); setSidebarActive(modId);
+    // Clear sub-dir active highlight
+    document.querySelectorAll('.subdir-row').forEach(el => el.classList.remove('active'));
 
-    const files = (DATA.files_by_module[modId] || []).slice(0, 200);
-    const visIds = new Set(files.map(f => f.id));
+    const allFiles = DATA.files_by_module[modId] || [];
+    renderFilesFlat(modId, allFiles);
+}
+
+// Render flat file nodes in graph — the only graph view for L1
+function renderFilesFlat(modId, files) {
+    const EXT_COL = { '.c': '#3b82f6', '.h': '#8b5cf6', '.cpp': '#06b6d4', '.hpp': '#7c3aed', '.asm': '#f59e0b', '.s': '#f59e0b' };
+    const capped = files.slice(0, 200);
+    const visIds = new Set(capped.map(f => f.id));
     const edges = (DATA.file_edges_by_module[modId] || [])
         .filter(e => visIds.has(e.s) && visIds.has(e.t)).slice(0, 400);
-    const EXT_COL = {
-        '.c': '#3b82f6', '.h': '#8b5cf6', '.cpp': '#06b6d4',
-        '.hpp': '#7c3aed', '.asm': '#f59e0b', '.s': '#f59e0b'
-    };
+
     const els = [];
-    files.forEach(f => {
+    capped.forEach(f => {
         els.push({
             data: {
                 id: `f${f.id}`, label: f.label,
                 bg: '#0a1520', bc: EXT_COL[f.ext] || '#64748b',
                 lvl: 1, w: 165, h: 50, sh: 'roundrectangle',
-                tt: `${f.path}\n${f.ext.toUpperCase()} · ${fmtSize(f.size)} · ${f.func_count} funcs`,
+                tt: `${f.path}\n${f.ext.toUpperCase()} · ${fmtSize(f.size)} · ${f.func_count} funcs\n\nClick → view source\nDbl-click → caller/callee`,
                 _t: 'file', _f: f,
             }
         });
@@ -482,16 +674,59 @@ function drillToFile(fileRel) {
 
     const funcs = DATA.funcs_by_file[fileRel] || [];
     const edges = DATA.func_edges_by_file[fileRel] || [];
+    // showFuncView handles code panel sync — do NOT call loadFileInPanel separately
     funcs.length === 0 ? showFuncViewEmpty(fileRel) : showFuncView(fileRel, funcs, edges, 0);
+}
 
-    // Always load file into code panel when drilling to L2
-    loadFileInPanel(fileRel, funcs[0]?.label);
+// Dedicated code-panel sync — called only from showFuncView to avoid race conditions
+async function _syncCodePanel(fileRel, funcName) {
+    if (!fileRel) return;
+    openCodePanel();
+
+    const fname = fileRel.split('/').pop();
+    const ext = fname.includes('.') ? '.' + fname.split('.').pop().toLowerCase() : '';
+
+    document.getElementById('cp-filename').textContent = fname;
+    document.getElementById('cp-filename').title = fileRel;
+    document.getElementById('cp-ext-badge').textContent = ext.toUpperCase() || 'FILE';
+    document.getElementById('cp-ext-badge').style.background = extColor(ext);
+    document.getElementById('cp-ext-badge').style.color = '#000';
+    hideFuncBar();
+
+    if (!codeState.jobId) {
+        showCpError('No job ID — code preview only available via the local server (launch.bat).');
+        return;
+    }
+
+    if (fileRel === codeState.currentFile) {
+        // File already rendered — just jump to function
+        if (funcName) {
+            // Use a small delay to ensure DOM is stable after showFuncView re-render
+            requestAnimationFrame(() => jumpToFunc(funcName));
+        }
+        return;
+    }
+
+    // New file — fetch and render
+    showCpLoading(true);
+    try {
+        const url = `/file?job=${encodeURIComponent(codeState.jobId)}&path=${encodeURIComponent(fileRel)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.error) { showCpError('Could not load file: ' + data.error); return; }
+        codeState.currentFile = fileRel;
+        renderCode(data.content, ext, fname);
+        showCpLoading(false);
+        if (funcName) requestAnimationFrame(() => jumpToFunc(funcName));
+    } catch (e) {
+        showCpError('Fetch error: ' + e.message);
+    }
 }
 
 function showFuncView(fileRel, funcs, edges, centerIdx) {
-    const center   = funcs[centerIdx];
-    const callers  = dedupeBy(edges.filter(e => e.t === centerIdx).map(e => funcs[e.s]).filter(Boolean), 'label').slice(0, 8);
-    const callees  = dedupeBy(edges.filter(e => e.s === centerIdx).map(e => funcs[e.t]).filter(Boolean), 'label').slice(0, 8);
+    const center = funcs[centerIdx];
+    const callers = dedupeBy(edges.filter(e => e.t === centerIdx).map(e => funcs[e.s]).filter(Boolean), 'label').slice(0, 8);
+    const callees = dedupeBy(edges.filter(e => e.s === centerIdx).map(e => funcs[e.t]).filter(Boolean), 'label').slice(0, 8);
 
     cy.elements().remove();
     document.getElementById('cy').style.display = 'none';
@@ -502,10 +737,13 @@ function showFuncView(fileRel, funcs, edges, centerIdx) {
     const accessCls = center.is_public ? 'access-public' : 'access-private';
     const accessLbl = center.is_public ? '🔓 PUBLIC' : '🔒 PRIVATE';
 
+    const fileName = fileRel.split('/').pop();   // just the filename, e.g. "Dhcp4Driver.c"
+
     let pillHtml = '';
     funcs.slice(0, 24).forEach((f, i) => {
-        const cls = f.is_efiapi ? 'pill-yellow' : f.is_public ? 'pill-blue' : 'pill-gray';
-        pillHtml += `<span class="pill ${cls}" onclick="focusFunc(${JSON.stringify(fileRel)},${i})">${f.label}</span>`;
+        const baseCls = f.is_efiapi ? 'pill-yellow' : f.is_public ? 'pill-blue' : 'pill-gray';
+        const activeCls = i === centerIdx ? ' pill-active' : '';
+        pillHtml += `<span class="pill ${baseCls}${activeCls}" id="pill-${i}" onclick="focusFunc(${JSON.stringify(fileRel)},${i})">${f.label}</span>`;
     });
 
     fv.innerHTML = `
@@ -514,8 +752,7 @@ function showFuncView(fileRel, funcs, edges, centerIdx) {
       ${callers.map(f => fnCard(f, fileRel, funcs.indexOf(f))).join('') || '<div class="fv-empty">No callers</div>'}
     </div>
     <div class="fv-center">
-      <div class="fv-center-header">${center.label}</div>
-      <div class="fv-center-path">${fileRel}</div>
+      <div class="fv-center-header">${fileName}</div>
       <div class="access-strip ${accessCls}">${accessLbl}</div>
       <div class="fv-center-pills">${pillHtml}</div>
     </div>
@@ -524,10 +761,8 @@ function showFuncView(fileRel, funcs, edges, centerIdx) {
       ${callees.map(f => fnCard(f, fileRel, funcs.indexOf(f))).join('') || '<div class="fv-empty">No callees</div>'}
     </div>`;
 
-    // Sync code panel to this function
-    if (codeState.isOpen && codeState.currentFile === fileRel) {
-        jumpToFunc(center.label);
-    }
+    // Sync code: load file and jump to selected function
+    _syncCodePanel(fileRel, center.label);
 }
 
 function fnCard(f, fileRel, idx) {
@@ -544,8 +779,7 @@ function focusFunc(fileRel, idx) {
     const edges = DATA.func_edges_by_file[fileRel] || [];
     if (funcs[idx]) {
         showFuncView(fileRel, funcs, edges, idx);
-        // Sync code panel
-        loadFileInPanel(fileRel, funcs[idx].label);
+        // _syncCodePanel is called inside showFuncView
     }
 }
 
@@ -566,6 +800,8 @@ function hideFuncView() {
     fv.classList.remove('active');
     fv.innerHTML = '';
     document.getElementById('cy').style.display = '';
+    // Clear graph-toggle active state when leaving L2
+    document.getElementById('graph-toggle-btn')?.classList.remove('active');
 }
 
 // ─── Node Tap ─────────────────────────────────────────────────────────────────
@@ -577,15 +813,15 @@ function onNodeTap(node) {
         drillToModule(d._m.id);
         return;
     }
-    if (state.level === 1 && d._t === 'file') {
-        // Single click: show code panel; double-click to drill to L2
+
+    if (d._t === 'file') {
+        // Single click → code panel preview
         if (d._f?.path) loadFileInPanel(d._f.path);
-        // Highlight node
         highlightNode(node);
         return;
     }
 
-    // Persistent highlight on non-drillable tap
+    // Persistent highlight for other node types
     cy.elements().addClass('faded');
     node.removeClass('faded').addClass('hl');
     const outEdges = node.outgoers('edge');
@@ -596,34 +832,29 @@ function onNodeTap(node) {
     inEdges.sources().removeClass('faded').addClass('hl-node-in');
 }
 
-// Double-tap to drill into file
-cy && cy.on('dbltap', 'node', e => {
-    const d = e.target.data();
-    if (state.level === 1 && d._t === 'file') drillToFile(d._f.path);
-});
-
 // ─── Navigation ───────────────────────────────────────────────────────────────
 function goBack() {
     const prev = state.history.pop();
     if (!prev) return;
     cy.elements().removeClass('faded hl');
-    if (prev.level === 0) { loadLevel0(); }
-    else if (prev.level === 1) {
-        hideFuncView();
+    hideFuncView();
+    if (prev.level === 0) {
+        loadLevel0();
+    } else if (prev.level === 1) {
         const savedHistory = [...state.history];
         drillToModule(prev.activeModule);
         state.history = savedHistory;
     }
 }
 
-window.goLevel = function(n) {
+window.goLevel = function (n) {
     if (n === 0) { state.history = []; loadLevel0(); }
     else if (n === 1 && state.activeModule) {
         hideFuncView(); state.history = [{ level: 0 }]; drillToModule(state.activeModule);
     }
 };
 
-window.switchTab = function(tab) {
+window.switchTab = function (tab) {
     state.tab = tab;
     document.getElementById('tab-files').classList.toggle('active', tab === 'files');
     document.getElementById('tab-calls').classList.toggle('active', tab === 'calls');
@@ -633,21 +864,56 @@ window.switchTab = function(tab) {
 window.goBack = goBack;
 
 function updateBreadcrumb() {
-    const show = (id, txt) => {
-        const el = document.getElementById(id);
-        el.style.display = txt ? '' : 'none';
-        if (txt) el.textContent = txt;
-    };
-    show('bc-sep1', state.level >= 1 ? '›' : '');
-    show('bc1',     state.level >= 1 ? state.activeModule : '');
-    show('bc-sep2', state.level >= 2 ? '›' : '');
-    show('bc2',     state.level >= 2 ? (state.activeFile || '').split('/').pop() : '');
+    const container = document.getElementById('bc-items');
+    container.innerHTML = '';
+
+    function addSeg(label, clickFn, isCurrent) {
+        if (container.children.length > 0) {
+            const sep = document.createElement('span');
+            sep.className = 'bc-sep';
+            sep.textContent = '›';
+            container.appendChild(sep);
+        }
+        const seg = document.createElement('span');
+        seg.className = 'bc-item' + (isCurrent ? ' bc-current' : '');
+        seg.textContent = label;
+        if (clickFn) seg.onclick = clickFn;
+        container.appendChild(seg);
+    }
+
+    // Level 0: always show Modules
+    addSeg('Modules', () => { state.history = []; loadLevel0(); }, state.level === 0);
+
+    if (state.level >= 1 && state.activeModule) {
+        addSeg(state.activeModule,
+            state.level >= 2 ? () => { const h = [...state.history]; drillToModule(state.activeModule); state.history = h; } : null,
+            state.level === 1);
+    }
+
+    if (state.level >= 2 && state.activeFile) {
+        // Build all path segments between module and filename
+        const modId = state.activeModule || '';
+        const full = state.activeFile;              // e.g. "AmiNetworkPkg/Dhcp4Dxe/Dhcp4Driver.c"
+        const prefix = modId ? modId + '/' : '';
+        const rel = full.startsWith(prefix) ? full.slice(prefix.length) : full;
+        // rel = "Dhcp4Dxe/Dhcp4Driver.c"
+        const parts = rel.split('/');              // ["Dhcp4Dxe", "Dhcp4Driver.c"]
+
+        parts.forEach((part, i) => {
+            const isLast = i === parts.length - 1;
+            addSeg(part, null, isLast);
+        });
+    }
+
     document.getElementById('back-btn').classList.toggle('visible', state.level > 0);
 }
 
 function setSidebarActive(modId) {
-    document.querySelectorAll('.mod-item').forEach(el => el.classList.remove('active'));
-    if (modId) { const el = document.getElementById(`mi-${modId}`); if (el) el.classList.add('active'); }
+    document.querySelectorAll('.mod-row').forEach(el => el.classList.remove('active'));
+    if (modId) {
+        const el = document.getElementById(`mi-${modId}`);
+        if (el) el.classList.add('active');
+    }
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
@@ -668,7 +934,9 @@ function onKey(e) {
         goBack();
     }
     if (e.key === 'm' || e.key === 'M') { state.history = []; loadLevel0(); }
-    if (e.key === 'ArrowLeft')  navigateFunc(-1);
+    if (e.key === 'c' || e.key === 'C') { document.getElementById('code-toggle-btn').click(); }
+    if (e.key === 'g' || e.key === 'G') { drillCurrentFileToL2(); }
+    if (e.key === 'ArrowLeft') navigateFunc(-1);
     if (e.key === 'ArrowRight') navigateFunc(1);
 }
 
@@ -678,11 +946,11 @@ function onNodeRightClick(ev, node) {
     const menu = document.getElementById('ctx-menu');
     menu.style.display = 'block';
     menu.style.left = ev.originalEvent.clientX + 'px';
-    menu.style.top  = ev.originalEvent.clientY + 'px';
+    menu.style.top = ev.originalEvent.clientY + 'px';
 
     document.getElementById('ctx-copy').onclick = () => {
         const d = node.data();
-        navigator.clipboard?.writeText(d._f?.path || d._m?.id || d.label).catch(()=>{});
+        navigator.clipboard?.writeText(d._f?.path || d._m?.id || d.label).catch(() => { });
         hideCtxMenu();
     };
     document.getElementById('ctx-open-code').onclick = () => {
@@ -695,7 +963,7 @@ function onNodeRightClick(ev, node) {
         const d = node.data();
         if (d._f?.path) {
             const root = DATA.stats.root;
-            const abs  = root.replace(/\//g,'\\') + '\\' + d._f.path.replace(/\//g,'\\');
+            const abs = root.replace(/\//g, '\\') + '\\' + d._f.path.replace(/\//g, '\\');
             window.open(`vscode://file/${abs}`);
         }
         hideCtxMenu();
@@ -722,19 +990,19 @@ function showTooltip(e) {
     if (!tt) return;
     if (e.target.isNode()) {
         const outCount = e.target.outgoers('edge').length;
-        const inCount  = e.target.incomers('edge').length;
+        const inCount = e.target.incomers('edge').length;
         if (outCount > 0 || inCount > 0) {
             tt += `\n\nDependencies:`;
             if (outCount > 0) tt += `\n• Calls: ${outCount} (Orange)`;
-            if (inCount  > 0) tt += `\n• Called by: ${inCount} (Green)`;
+            if (inCount > 0) tt += `\n• Called by: ${inCount} (Green)`;
         }
-        tt += '\n\nClick → view code  |  Dbl-click → drill in';
+        tt += '\n\nClick → view code  |  Dbl-click or [G] → caller/callee';
     }
     const tip = document.getElementById('tooltip');
     tip.textContent = tt;
     tip.style.display = 'block';
     tip.style.left = (e.originalEvent.clientX + 14) + 'px';
-    tip.style.top  = (e.originalEvent.clientY + 14) + 'px';
+    tip.style.top = (e.originalEvent.clientY + 14) + 'px';
 }
 function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
 
@@ -748,5 +1016,5 @@ function showLoading(v, msg) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function dedupeBy(arr, key) { return [...new Map(arr.map(x=>[x[key],x])).values()]; }
-function fmtSize(b) { return b>1e6?(b/1e6).toFixed(1)+'MB':b>1e3?(b/1e3).toFixed(0)+'KB':b+'B'; }
+function dedupeBy(arr, key) { return [...new Map(arr.map(x => [x[key], x])).values()]; }
+function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + 'MB' : b > 1e3 ? (b / 1e3).toFixed(0) + 'KB' : b + 'B'; }

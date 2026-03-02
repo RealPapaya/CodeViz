@@ -334,12 +334,9 @@ HTML_SKELETON = """\
 </div>
 
 <div id="breadcrumb">
-  <span class="bc-item" id="bc0" onclick="goLevel(0)">Modules</span>
-  <span class="bc-sep" id="bc-sep1" style="display:none">›</span>
-  <span class="bc-item" id="bc1" style="display:none"></span>
-  <span class="bc-sep" id="bc-sep2" style="display:none">›</span>
-  <span class="bc-item" id="bc2" style="display:none"></span>
+  <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
   <button id="back-btn" onclick="goBack()">← Back</button>
+  <button id="graph-toggle-btn" title="Caller / Callee view (same as double-click)">⬡ Graph</button>
   <button id="code-toggle-btn" title="Toggle Code Panel (C)">&#60;&#47;&#62; Code</button>
 </div>
 
@@ -497,4 +494,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
