@@ -144,7 +144,7 @@ function initResizer() {
     });
     function onDrag(e) {
         const delta = startX - e.clientX; // drag left = wider panel
-        const newW = Math.max(200, Math.min(900, startW + delta));
+        const newW = Math.max(200, Math.min(1200, startW + delta));
         panel.style.width = newW + 'px';
         document.documentElement.style.setProperty('--code-panel', newW + 'px');
     }
