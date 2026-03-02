@@ -345,6 +345,7 @@ HTML_SKELETON = """\
     <div id="sidebar-title">Modules</div>
     <div id="module-list"></div>
   </div>
+  <div id="sidebar-resizer"></div>
   <div id="graph-wrap">
     <div id="cy"></div>
     <div id="func-view"></div>

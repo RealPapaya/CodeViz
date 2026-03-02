@@ -90,6 +90,7 @@ function initCodePanel() {
 
     // Resizer drag
     initResizer();
+    initSidebarResizer();
 }
 
 // Drill the currently active file (code panel or selected node) to L2 caller/callee
@@ -138,6 +139,7 @@ function initResizer() {
         startX = e.clientX;
         startW = panel.offsetWidth;
         resizer.classList.add('dragging');
+        panel.style.transition = 'none';
         document.addEventListener('mousemove', onDrag);
         document.addEventListener('mouseup', stopDrag);
         e.preventDefault();
@@ -150,6 +152,35 @@ function initResizer() {
     }
     function stopDrag() {
         resizer.classList.remove('dragging');
+        panel.style.transition = '';
+        document.removeEventListener('mousemove', onDrag);
+        document.removeEventListener('mouseup', stopDrag);
+    }
+}
+
+function initSidebarResizer() {
+    const resizer = document.getElementById('sidebar-resizer');
+    const panel = document.getElementById('sidebar');
+    if (!resizer || !panel) return;
+    let startX, startW;
+    resizer.addEventListener('mousedown', e => {
+        startX = e.clientX;
+        startW = panel.offsetWidth;
+        resizer.classList.add('dragging');
+        panel.style.transition = 'none';
+        document.addEventListener('mousemove', onDrag);
+        document.addEventListener('mouseup', stopDrag);
+        e.preventDefault();
+    });
+    function onDrag(e) {
+        const delta = e.clientX - startX; // drag right = wider panel
+        const newW = Math.max(150, Math.min(800, startW + delta));
+        panel.style.width = newW + 'px';
+        document.documentElement.style.setProperty('--sidebar', newW + 'px');
+    }
+    function stopDrag() {
+        resizer.classList.remove('dragging');
+        panel.style.transition = '';
         document.removeEventListener('mousemove', onDrag);
         document.removeEventListener('mouseup', stopDrag);
     }
@@ -160,6 +191,8 @@ function openCodePanel() {
     panel.classList.add('open');
     document.getElementById('code-toggle-btn').classList.add('active');
     codeState.isOpen = true;
+    const resizer = document.getElementById('resizer');
+    if (resizer) resizer.style.display = 'flex';
 }
 
 function closeCodePanel() {
@@ -167,6 +200,8 @@ function closeCodePanel() {
     panel.classList.remove('open');
     document.getElementById('code-toggle-btn').classList.remove('active');
     codeState.isOpen = false;
+    const resizer = document.getElementById('resizer');
+    if (resizer) resizer.style.display = 'none';
 }
 
 // Load a file into the code panel; optionally jump to a function

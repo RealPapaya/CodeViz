@@ -402,7 +402,8 @@ body {
 }
 
 /* ── Resizer ── */
-#resizer {
+#resizer,
+#sidebar-resizer {
     width: 5px;
     background: var(--border);
     cursor: col-resize;
@@ -413,11 +414,14 @@ body {
 }
 
 #resizer:hover,
-#resizer.dragging {
+#resizer.dragging,
+#sidebar-resizer:hover,
+#sidebar-resizer.dragging {
     background: var(--accent)
 }
 
-#resizer::after {
+#resizer::after,
+#sidebar-resizer::after {
     content: '⋮';
     position: absolute;
     top: 50%;
