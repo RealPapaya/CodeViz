@@ -182,18 +182,6 @@ body {
     flex-shrink: 0
 }
 
-#back-btn {
-    margin-left: auto;
-    padding: 4px 12px;
-    border-radius: 5px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 12px;
-    display: none
-}
-
 #back-btn:hover {
     border-color: var(--accent);
     color: var(--accent)
@@ -203,21 +191,34 @@ body {
     display: block
 }
 
-/* Code panel toggle button in breadcrumb */
+/* Common breadcrumb buttons */
+#back-btn,
 #code-toggle-btn,
 #graph-toggle-btn {
-    padding: 4px 10px;
+    padding: 6px 14px;
     border-radius: 5px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--muted);
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
+    font-weight: 600;
     margin-left: 8px;
-    transition: all .15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
     display: flex;
     align-items: center;
-    gap: 5px
+    justify-content: center;
+    gap: 5px;
+    min-width: 130px;
+    /* Force uniform size */
+    height: 32px;
+    flex-shrink: 0;
+}
+
+#back-btn {
+    margin-left: auto;
+    display: none;
+    min-width: 90px;
 }
 
 #code-toggle-btn:hover,
@@ -238,6 +239,23 @@ body {
 
 #graph-toggle-btn.active {
     background: rgba(167, 139, 250, .08)
+}
+
+/* 3D Flip Animation */
+@keyframes flip-in-x {
+    0% {
+        transform: perspective(400px) rotateX(90deg);
+        opacity: 0;
+    }
+
+    100% {
+        transform: perspective(400px) rotateX(0deg);
+        opacity: 1;
+    }
+}
+
+.flip-animate {
+    animation: flip-in-x 0.25s ease-out forwards;
 }
 
 /* ── Layout ── */
@@ -820,7 +838,7 @@ body {
 
 .fv-node:hover {
     border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent)22
+    box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.15)
 }
 
 .fv-node .fn-name {

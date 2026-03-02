@@ -80,9 +80,13 @@ function initCodePanel() {
         else openCodePanel();
     };
 
-    // Graph button: drill to caller/callee for the currently selected/highlighted file
+    // Graph button: drill to caller/callee or go back to graph
     document.getElementById('graph-toggle-btn').onclick = () => {
-        drillCurrentFileToL2();
+        if (state.level === 2) {
+            goBack();
+        } else {
+            drillCurrentFileToL2();
+        }
     };
 
     document.getElementById('cp-prev-func').onclick = () => navigateFunc(-1);
@@ -402,11 +406,11 @@ function initCy() {
     cy.on('mouseover', 'node', e => { showTooltip(e); highlightNode(e.target); });
     cy.on('mouseout', 'node', () => { hideTooltip(); clearHighlight(); });
     cy.on('tap', e => { if (e.target === cy) clearSelection(); });
-    // Double-tap a file node → drill to L2 (caller/callee view)
-    cy.on('dbltap', 'node', e => {
-        const d = e.target.data();
-        if (d._t === 'file' && d._f?.path) drillToFile(d._f.path);
-    });
+    // // Double-tap a file node → drill to L2 (disabled per request)
+    // cy.on('dbltap', 'node', e => {
+    //     const d = e.target.data();
+    //     if (d._t === 'file' && d._f?.path) drillToFile(d._f.path);
+    // });
     document.getElementById('cy').addEventListener('contextmenu', e => e.preventDefault());
 }
 
@@ -948,11 +952,34 @@ function updateBreadcrumb() {
     addSeg('Modules', () => { state.history = []; loadLevel0(); }, state.level === 0);
 
     if (state.level >= 1 && state.activeModule) {
+        const isModActive = state.level === 1 && !state.activeSubDir;
         addSeg(state.activeModule,
-            state.level >= 2 ? () => { const h = [...state.history]; drillToModule(state.activeModule); state.history = h; } : null,
-            state.level === 1);
+            isModActive ? null : () => {
+                if (state.level >= 2) {
+                    const h = [...state.history]; drillToModule(state.activeModule); state.history = h;
+                } else {
+                    drillToModule(state.activeModule);
+                }
+            },
+            isModActive);
     }
 
+    // Level 1: Sub-directory
+    if (state.level === 1 && state.activeSubDir) {
+        const parts = state.activeSubDir.split('/');
+        parts.forEach((part, i) => {
+            const isLast = i === parts.length - 1;
+            const subPath = parts.slice(0, i + 1).join('/');
+            addSeg(part,
+                isLast ? null : () => {
+                    filterGraphToSubPath(state.activeModule, subPath);
+                    setSubdirActive(state.activeModule, subPath);
+                },
+                isLast);
+        });
+    }
+
+    // Level 2: File (functions)
     if (state.level >= 2 && state.activeFile) {
         // Build all path segments between module and filename
         const modId = state.activeModule || '';
@@ -964,11 +991,36 @@ function updateBreadcrumb() {
 
         parts.forEach((part, i) => {
             const isLast = i === parts.length - 1;
-            addSeg(part, null, isLast);
+            const subPath = parts.slice(0, i + 1).join('/');
+            addSeg(part,
+                isLast ? null : () => {
+                    state.level = 1;
+                    hideFuncView();
+                    filterGraphToSubPath(state.activeModule, subPath);
+                    setSubdirActive(state.activeModule, subPath);
+                },
+                isLast);
         });
     }
 
     document.getElementById('back-btn').classList.toggle('visible', state.level > 0);
+
+    // Update graph-toggle-btn text depending on whether we are in Call Graph (level 2) or File Graph (level 1)
+    const graphBtn = document.getElementById('graph-toggle-btn');
+    if (graphBtn) {
+        const isLevel2 = state.level >= 2;
+        const newHtml = isLevel2 ? '⬡ Dependency Map' : '⬡ Call Graph';
+        const newTitle = isLevel2 ? 'Back to Dependency Map' : 'View Call Graph for Selected File';
+
+        if (graphBtn.innerHTML !== newHtml) {
+            // Trigger flip animation
+            graphBtn.classList.remove('flip-animate');
+            void graphBtn.offsetWidth; // trigger reflow
+            graphBtn.innerHTML = newHtml;
+            graphBtn.title = newTitle;
+            graphBtn.classList.add('flip-animate');
+        }
+    }
 }
 
 function setSidebarActive(modId) {
