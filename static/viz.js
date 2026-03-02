@@ -140,6 +140,7 @@ function initResizer() {
         startW = panel.offsetWidth;
         resizer.classList.add('dragging');
         panel.style.transition = 'none';
+        document.getElementById('graph-wrap').style.pointerEvents = 'none'; // prevent iframe/canvas drag lag
         document.addEventListener('mousemove', onDrag);
         document.addEventListener('mouseup', stopDrag);
         e.preventDefault();
@@ -153,8 +154,10 @@ function initResizer() {
     function stopDrag() {
         resizer.classList.remove('dragging');
         panel.style.transition = '';
+        document.getElementById('graph-wrap').style.pointerEvents = '';
         document.removeEventListener('mousemove', onDrag);
         document.removeEventListener('mouseup', stopDrag);
+        if (window.cy) cy.resize();
     }
 }
 
@@ -168,6 +171,7 @@ function initSidebarResizer() {
         startW = panel.offsetWidth;
         resizer.classList.add('dragging');
         panel.style.transition = 'none';
+        document.getElementById('graph-wrap').style.pointerEvents = 'none';
         document.addEventListener('mousemove', onDrag);
         document.addEventListener('mouseup', stopDrag);
         e.preventDefault();
@@ -181,8 +185,10 @@ function initSidebarResizer() {
     function stopDrag() {
         resizer.classList.remove('dragging');
         panel.style.transition = '';
+        document.getElementById('graph-wrap').style.pointerEvents = '';
         document.removeEventListener('mousemove', onDrag);
         document.removeEventListener('mouseup', stopDrag);
+        if (window.cy) cy.resize();
     }
 }
 
@@ -759,6 +765,7 @@ async function _syncCodePanel(fileRel, funcName) {
 }
 
 function showFuncView(fileRel, funcs, edges, centerIdx) {
+    hideTooltip(); // ensure tooltip is cleared when entering func view
     const center = funcs[centerIdx];
     const callers = dedupeBy(edges.filter(e => e.t === centerIdx).map(e => funcs[e.s]).filter(Boolean), 'label').slice(0, 8);
     const callees = dedupeBy(edges.filter(e => e.s === centerIdx).map(e => funcs[e.t]).filter(Boolean), 'label').slice(0, 8);
@@ -774,17 +781,20 @@ function showFuncView(fileRel, funcs, edges, centerIdx) {
 
     const fileName = fileRel.split('/').pop();   // just the filename, e.g. "Dhcp4Driver.c"
 
+    // Store fileRel on the container to avoid inline-JS quoting issues
+    fv.dataset.fileRel = fileRel;
+
     let pillHtml = '';
     funcs.slice(0, 24).forEach((f, i) => {
         const baseCls = f.is_efiapi ? 'pill-yellow' : f.is_public ? 'pill-blue' : 'pill-gray';
         const activeCls = i === centerIdx ? ' pill-active' : '';
-        pillHtml += `<span class="pill ${baseCls}${activeCls}" id="pill-${i}" onclick="focusFunc(${JSON.stringify(fileRel)},${i})">${f.label}</span>`;
+        pillHtml += `<span class="pill ${baseCls}${activeCls}" id="pill-${i}" data-func-idx="${i}">${f.label}</span>`;
     });
 
     fv.innerHTML = `
     <div class="fv-col">
       <div class="fv-col-label">◀ Callers</div>
-      ${callers.map(f => fnCard(f, fileRel, funcs.indexOf(f))).join('') || '<div class="fv-empty">No callers</div>'}
+      ${callers.map(f => fnCard(f, funcs.indexOf(f))).join('') || '<div class="fv-empty">No callers</div>'}
     </div>
     <div class="fv-center">
       <div class="fv-center-header">${fileName}</div>
@@ -793,17 +803,21 @@ function showFuncView(fileRel, funcs, edges, centerIdx) {
     </div>
     <div class="fv-col">
       <div class="fv-col-label">Callees ▶</div>
-      ${callees.map(f => fnCard(f, fileRel, funcs.indexOf(f))).join('') || '<div class="fv-empty">No callees</div>'}
+      ${callees.map(f => fnCard(f, funcs.indexOf(f))).join('') || '<div class="fv-empty">No callees</div>'}
     </div>`;
+
+    // Re-attach dataset after innerHTML wipe
+    fv.dataset.fileRel = fileRel;
 
     // Sync code: load file and jump to selected function
     _syncCodePanel(fileRel, center.label);
 }
 
-function fnCard(f, fileRel, idx) {
+function fnCard(f, idx) {
     const cls = f.is_efiapi ? 'pill-yellow' : f.is_public ? 'pill-blue' : 'pill-gray';
     const lbl = f.is_efiapi ? 'EFIAPI' : f.is_public ? 'public' : 'static';
-    return `<div class="fv-node" onclick="focusFunc(${JSON.stringify(fileRel)},${idx})">
+    // Use data-func-idx; fileRel is read from fv.dataset.fileRel in the click handler
+    return `<div class="fv-node" data-func-idx="${idx}">
     <div class="fn-name">${f.label}</div>
     <span class="fn-badge ${cls}">${lbl}</span>
   </div>`;
@@ -817,6 +831,20 @@ function focusFunc(fileRel, idx) {
         // _syncCodePanel is called inside showFuncView
     }
 }
+
+// Event delegation for fv-node and pill clicks (avoids inline-JS quoting issues)
+document.addEventListener('click', e => {
+    const fv = document.getElementById('func-view');
+    if (!fv) return;
+    const fileRel = fv.dataset.fileRel;
+    if (!fileRel) return;
+
+    const target = e.target.closest('[data-func-idx]');
+    if (target && fv.contains(target)) {
+        const idx = parseInt(target.dataset.funcIdx, 10);
+        focusFunc(fileRel, idx);
+    }
+});
 
 function showFuncViewEmpty(fileRel) {
     cy.elements().remove();
