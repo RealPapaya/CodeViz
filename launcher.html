@@ -38,10 +38,40 @@
             align-items: center;
             justify-content: center;
             background-image:
-                radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0, 212, 255, .08) 0%, transparent 70%),
-                repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(26, 37, 53, .4) 39px, rgba(26, 37, 53, .4) 40px),
-                repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(26, 37, 53, .4) 39px, rgba(26, 37, 53, .4) 40px);
+                radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0, 212, 255, .15) 0%, transparent 70%);
             padding: 24px;
+        }
+
+        #bg-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* ── Settings Btn ── */
+        .settings-btn {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            fill: none;
+            stroke: var(--muted);
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            transition: all 0.2s ease;
+            z-index: 100;
+        }
+
+        .settings-btn:hover {
+            stroke: var(--accent);
+            transform: rotate(45deg) scale(1.1);
         }
 
         /* ── Hero ── */
@@ -457,16 +487,24 @@
 </head>
 
 <body>
+    <canvas id="bg-canvas"></canvas>
+
+    <!-- Global Settings Button (Top Right) -->
+    <svg class="settings-btn" viewBox="0 0 24 24" onclick="openPrefModal()">
+        <path
+            d="M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z">
+        </path>
+    </svg>
 
     <div class="hero">
-        <div class="logo-big">BIOS<em>VIZ</em><span> V2</span></div>
-        <div class="tagline">BIOS Codebase Visualizer — module · file · function drill-down</div>
-        <div class="badge">⚡ Cytoscape Canvas · Max 200 nodes · &lt;50MB RAM</div>
+        <div class="logo-big">VIZ<em>CODE</em></div>
+        <div class="tagline">Codebase Visualizer &mdash; module &middot; file &middot; function drill-down</div>
+        <div class="badge">⚡ Cytoscape Canvas &middot; Free &middot; Low RAM</div>
     </div>
 
     <div class="card">
 
-        <div class="input-label">BIOS Codebase Path</div>
+        <div class="input-label">Codebase Path</div>
         <div class="path-wrap">
             <input id="path-input" type="text" placeholder="D:\Code\ADL\B1403CTA_SMR\" value="" autocomplete="off"
                 spellcheck="false">
@@ -500,11 +538,6 @@
             <div id="cli-msg-area"></div>
         </div>
 
-        <div id="search-wrap"
-            style="margin-top:20px;display:flex;align-items:center;justify-content:flex-end;position:relative;">
-            <button id="pref-btn" title="Preferences"
-                style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:20px;padding:4px 6px;transition:color 0.2s;border-radius:6px;">⚙</button>
-        </div>
     </div>
     <div id="stats-row">
         <div class="stat-box">
@@ -573,7 +606,7 @@
 
 
 
-    <footer>BIOSVIZ V2 · ASUS BIOS Code Visualizer · Canvas Renderer · No SVG</footer>
+    <footer>Code Visualizer · Canvas Renderer · No SVG</footer>
 
     <script>
         // ─── State ────────────────────────────────────────────────────────────────────
@@ -616,11 +649,21 @@
             const wrap = document.getElementById('recents-wrap');
             const list = document.getElementById('recent-list');
             wrap.style.display = r.length ? '' : 'none';
-            list.innerHTML = r.map(p => `
-    <span class="recent-chip" onclick="useRecent(${JSON.stringify(p)})">
-      ${p}
-      <span class="rm" onclick="event.stopPropagation();removeRecent(${JSON.stringify(p)})">✕</span>
-    </span>`).join('');
+            list.innerHTML = '';
+            r.forEach(p => {
+                const span = document.createElement('span');
+                span.className = 'recent-chip';
+                span.textContent = p + ' ';
+                span.onclick = () => useRecent(p);
+
+                const rm = document.createElement('span');
+                rm.className = 'rm';
+                rm.textContent = '✕';
+                rm.onclick = (e) => { e.stopPropagation(); removeRecent(p); };
+
+                span.appendChild(rm);
+                list.appendChild(span);
+            });
         }
 
         function useRecent(path) {
@@ -630,7 +673,7 @@
         window.onload = function () {
             document.getElementById('path-input').focus();
             renderRecents();
-            initLauncherPreferences();
+            initPreferences(); // Call the new initPreferences
         };
 
         function applyFont(font) {
@@ -639,36 +682,31 @@
             document.body.style.fontFamily = font + ', Inter, sans-serif';
         }
 
-        function initLauncherPreferences() {
-            const prefBtn = document.getElementById('pref-btn');
-            const prefModal = document.getElementById('pref-modal');
-            const closeX = document.getElementById('pref-close-x');
-            const closeBtn = document.getElementById('pref-close-btn');
+        // Initialize preferences
+        function initPreferences() {
             const fontSelect = document.getElementById('font-select');
-
-            if (!prefBtn || !prefModal) return;
-
-            const savedFont = localStorage.getItem('biosviz_code_font') || "'JetBrains Mono', monospace";
-            applyFont(savedFont);
+            const savedFont = getSavedFont();
             if (fontSelect) {
                 fontSelect.value = savedFont;
-                fontSelect.style.fontFamily = savedFont;
+                fontSelect.style.fontFamily = savedFont; // Apply font to the select itself
+                applyFont(savedFont); // Apply font to the document
             }
 
-            prefBtn.addEventListener('click', () => { prefModal.style.display = 'flex'; });
-            prefBtn.addEventListener('mouseenter', () => { prefBtn.style.color = 'var(--accent)'; });
-            prefBtn.addEventListener('mouseleave', () => { prefBtn.style.color = 'var(--muted)'; });
-            const closeModal = () => { prefModal.style.display = 'none'; };
-            if (closeX) closeX.addEventListener('click', closeModal);
-            if (closeBtn) closeBtn.addEventListener('click', closeModal);
-            prefModal.addEventListener('click', (e) => { if (e.target === prefModal) closeModal(); });
+            // Replaced the old pref-btn logic with global functions above for the top-right button
+            const prefCloseBtn = document.getElementById('pref-close-btn');
+            const prefCloseX = document.getElementById('pref-close-x');
+            const prefModal = document.getElementById('pref-modal'); // Get modal for outside click
+
+            if (prefCloseBtn) prefCloseBtn.addEventListener('click', closePrefModal);
+            if (prefCloseX) prefCloseX.addEventListener('click', closePrefModal);
+            if (prefModal) prefModal.addEventListener('click', (e) => { if (e.target === prefModal) closePrefModal(); });
 
             if (fontSelect) {
                 fontSelect.addEventListener('change', (e) => {
-                    const font = e.target.value;
-                    applyFont(font);
-                    localStorage.setItem('biosviz_code_font', font);
-                    fontSelect.style.fontFamily = font;
+                    const val = e.target.value;
+                    localStorage.setItem('codeviz-font', val);
+                    applyFont(val);
+                    fontSelect.style.fontFamily = val;
                 });
             }
         }
@@ -734,6 +772,19 @@
             pollTimer = setTimeout(pollProgress, 600);
         }
 
+        // ─── Preferences ──────────────────────────────────────────────────────────────
+        function openPrefModal() {
+            document.getElementById('pref-modal').style.display = 'flex';
+        }
+
+        function closePrefModal() {
+            document.getElementById('pref-modal').style.display = 'none';
+        }
+
+        function getSavedFont() {
+            return localStorage.getItem('codeviz-font') || "'JetBrains Mono', monospace";
+        }
+
         // ─── UI Helpers ───────────────────────────────────────────────────────────────
         function setAnalyzing(v) {
             const btn = document.getElementById('analyze-btn');
@@ -747,6 +798,7 @@
                 const cliArea = document.getElementById('cli-msg-area');
                 if (cliArea) cliArea.innerHTML = '';
             }
+            window.bgAnalyzing = v;
         }
 
         function startElapsedTimer() {
@@ -860,6 +912,226 @@
         if (recents[0] && !document.getElementById('path-input').value) {
             document.getElementById('path-input').value = recents[0];
         }
+
+        // ─── 3D Background Canvas Animation ──────────────────────────────────────────
+        const canvas = document.getElementById('bg-canvas');
+        const ctx = canvas.getContext('2d');
+        let w, h;
+        const nodes = [];
+        const edges = [];
+        let signals = [];
+        window.bgAnalyzing = false;
+
+        function resize() {
+            w = canvas.width = window.innerWidth;
+            h = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        const NUM_NODES = 120;
+        const RADIUS = 800;
+        for (let i = 0; i < NUM_NODES; i++) {
+            nodes.push({
+                x: (Math.random() - 0.5) * RADIUS * 2,
+                y: (Math.random() - 0.5) * RADIUS * 2,
+                z: (Math.random() - 0.5) * RADIUS * 2,
+                connections: []
+            });
+        }
+
+        for (let i = 0; i < NUM_NODES; i++) {
+            let dists = [];
+            for (let j = 0; j < NUM_NODES; j++) {
+                if (i === j) continue;
+                let dx = nodes[i].x - nodes[j].x;
+                let dy = nodes[i].y - nodes[j].y;
+                let dz = nodes[i].z - nodes[j].z;
+                dists.push({ j, d: Math.sqrt(dx * dx + dy * dy + dz * dz) });
+            }
+            dists.sort((a, b) => a.d - b.d);
+            for (let k = 0; k < 3; k++) {
+                let j = dists[k].j;
+                let exists = edges.some(e => (e.a === i && e.b === j) || (e.a === j && e.b === i));
+                if (!exists) {
+                    let edge = { a: i, b: j };
+                    edges.push(edge);
+                    nodes[i].connections.push(edge);
+                    nodes[j].connections.push(edge);
+                }
+            }
+        }
+
+        let angleX = 0;
+        let angleY = 0;
+        const fov = 700;
+
+        function drawBg() {
+            requestAnimationFrame(drawBg);
+            ctx.clearRect(0, 0, w, h);
+
+            angleY += 0.0002;
+            angleX += 0.0001;
+
+            const cosX = Math.cos(angleX);
+            const sinX = Math.sin(angleX);
+            const cosY = Math.cos(angleY);
+            const sinY = Math.sin(angleY);
+
+            const projNodes = nodes.map(n => {
+                let x1 = n.x * cosY - n.z * sinY;
+                let z1 = n.z * cosY + n.x * sinY;
+
+                let y2 = n.y * cosX - z1 * sinX;
+                let z2 = z1 * cosX + n.y * sinX;
+
+                let z3 = z2 + RADIUS + 400;
+                let scale = fov / z3;
+                let x2d = (x1 * scale) + w / 2;
+                let y2d = (y2 * scale) + h / 2;
+
+                return { x: x2d, y: y2d, scale, z3 };
+            });
+
+            ctx.lineWidth = 1;
+            for (let e of edges) {
+                let pA = projNodes[e.a];
+                let pB = projNodes[e.b];
+
+                let zAvg = (pA.z3 + pB.z3) / 2;
+                let alpha = 1 - (zAvg / (RADIUS * 2.5));
+                if (alpha < 0) alpha = 0;
+
+                ctx.strokeStyle = `rgba(0, 212, 255, ${alpha * 0.15})`;
+                ctx.beginPath();
+                ctx.moveTo(pA.x, pA.y);
+                ctx.lineTo(pB.x, pB.y);
+                ctx.stroke();
+            }
+
+            for (let p of projNodes) {
+                let alpha = 1 - (p.z3 / (RADIUS * 2.5));
+                if (alpha < 0) alpha = 0;
+
+                ctx.fillStyle = `rgba(226, 232, 240, ${alpha * 0.5})`;
+                ctx.beginPath();
+                let r = 1.8 * p.scale;
+                ctx.arc(p.x, p.y, r > 0 ? r : 0.01, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Base absolute travel speed in 3D units per frame
+            const CONSTANT_SPEED = 7; // Slowed down from 15
+
+            // Signal logic
+            if (window.bgAnalyzing && signals.length < 2) {
+                if (Math.random() < 0.1) {
+                    let startIdx = Math.floor(Math.random() * nodes.length);
+                    let conns = nodes[startIdx].connections;
+                    if (conns.length > 0) {
+                        let edge = conns[Math.floor(Math.random() * conns.length)];
+
+                        let nextIdx = edge.a === startIdx ? edge.b : edge.a;
+                        let dx = nodes[startIdx].x - nodes[nextIdx].x;
+                        let dy = nodes[startIdx].y - nodes[nextIdx].y;
+                        let dz = nodes[startIdx].z - nodes[nextIdx].z;
+                        let dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                        signals.push({
+                            edge,
+                            src: startIdx,
+                            tgt: nextIdx,
+                            prevSrc: -1,
+                            progress: 0,
+                            speed: CONSTANT_SPEED / Math.max(1, dist) // Const speed calculation
+                        });
+                    }
+                }
+            } else if (!window.bgAnalyzing && signals.length > 0) {
+                signals = [];
+            }
+
+            for (let i = signals.length - 1; i >= 0; i--) {
+                let sig = signals[i];
+                sig.progress += sig.speed;
+
+                if (sig.progress >= 1) {
+                    let nextIdx = sig.tgt;
+                    let conns = nodes[nextIdx].connections;
+
+                    let validConns = conns.filter(c => {
+                        let potentialTgt = c.a === nextIdx ? c.b : c.a;
+                        return potentialTgt !== sig.src;
+                    });
+
+                    let nextEdgePool = validConns.length > 0 ? validConns : conns;
+
+                    if (nextEdgePool.length > 0) {
+                        let nextEdge = nextEdgePool[Math.floor(Math.random() * nextEdgePool.length)];
+
+                        let nextTgt = nextEdge.a === nextIdx ? nextEdge.b : nextEdge.a;
+                        let dx = nodes[nextIdx].x - nodes[nextTgt].x;
+                        let dy = nodes[nextIdx].y - nodes[nextTgt].y;
+                        let dz = nodes[nextIdx].z - nodes[nextTgt].z;
+                        let dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                        sig.edge = nextEdge;
+                        sig.prevSrc = sig.src;
+                        sig.src = nextIdx;
+                        sig.tgt = nextTgt;
+                        sig.progress = 0;
+                        sig.speed = CONSTANT_SPEED / Math.max(1, dist); // Update speed
+                    } else {
+                        signals.splice(i, 1);
+                        continue;
+                    }
+                }
+
+                let pA = projNodes[sig.src];
+                let pB = projNodes[sig.tgt];
+                let cx = pA.x + (pB.x - pA.x) * sig.progress;
+                let cy = pA.y + (pB.y - pA.y) * sig.progress;
+                let cz = pA.z3 + (pB.z3 - pA.z3) * sig.progress;
+
+                // create trail ray (comet)
+                let tailProgress = Math.max(0, sig.progress - 0.4);
+                let tx = pA.x + (pB.x - pA.x) * tailProgress;
+                let ty = pA.y + (pB.y - pA.y) * tailProgress;
+
+                let alpha = 1 - (cz / (RADIUS * 3));
+                if (alpha < 0) alpha = 0;
+                let baseScale = pA.scale + (pB.scale - pA.scale) * sig.progress;
+
+                let grad = ctx.createLinearGradient(cx, cy, tx, ty);
+                grad.addColorStop(0, `rgba(255, 255, 255, ${Math.min(1, alpha * 2)})`);
+                grad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+
+                ctx.shadowBlur = 0; // Turn off shadowBlur for smooth blending
+                ctx.strokeStyle = grad;
+                ctx.lineWidth = 4 * baseScale;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(tx, ty);
+                ctx.lineTo(cx, cy);
+                ctx.stroke();
+
+                // Realistic Comet Head (Radial Gradient Glow)
+                let headRadius = 16 * baseScale; // Expand radius for natural fade
+                if (headRadius > 0.1) {
+                    let headGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, headRadius);
+                    headGrad.addColorStop(0, `rgba(255, 255, 255, ${Math.min(1, alpha * 2.5)})`); // Hot center
+                    headGrad.addColorStop(0.15, `rgba(200, 240, 255, ${Math.min(1, alpha * 1.5)})`); // Inner halo
+                    headGrad.addColorStop(0.5, `rgba(100, 200, 255, ${Math.min(1, alpha * 0.4)})`); // Soft edge
+                    headGrad.addColorStop(1, `rgba(0, 150, 255, 0)`); // Dissolve
+
+                    ctx.fillStyle = headGrad;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, headRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+        drawBg();
     </script>
 </body>
 
