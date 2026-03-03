@@ -921,15 +921,13 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
                     add_edge(src_rel, tgt, 'asl_include')
 
     _cb(80, 'Building function index...')
-    func_name_to_file = {}
-    func_name_ambiguous = set()
+    func_name_to_files = defaultdict(list)  # name → [rel_path, ...]
     for rel, defs in file_defs.items():
         for d in defs:
-            name = d['label']
-            if name not in func_name_to_file:
-                func_name_to_file[name] = rel
-            else:
-                func_name_ambiguous.add(name)
+            func_name_to_files[d['label']].append(rel)
+
+    func_name_to_file = {name: files[0] for name, files in func_name_to_files.items()}
+    func_name_ambiguous = sorted(name for name, files in func_name_to_files.items() if len(files) > 1)
 
     funcs_by_file       = {}
     func_edges_by_file  = {}
@@ -1010,6 +1008,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         'func_edges_by_file':   func_edges_by_file,
         'func_calls_by_file':   func_calls_by_file,
         'func_name_to_file':    func_name_to_file,
+        'func_name_to_files':   {k: v for k, v in func_name_to_files.items() if len(v) > 1},
         'func_name_ambiguous':  sorted(func_name_ambiguous),
         'file_to_module':       file_to_module,
         'edge_types':           EDGE_TYPES,

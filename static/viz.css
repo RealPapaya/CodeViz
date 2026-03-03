@@ -455,6 +455,9 @@ body {
     flex-direction: column;
     gap: 2px;
     min-width: 0;
+    /* allow shrink so buttons never push title off */
+    flex: 1;
+    overflow: hidden;
 }
 
 .l2-title {
@@ -480,6 +483,7 @@ body {
     gap: 8px;
     flex-wrap: wrap;
     justify-content: flex-end;
+    flex-shrink: 0;
 }
 
 .l2-btn {
@@ -1245,13 +1249,29 @@ body {
     right: 18px;
     z-index: 20;
     min-width: 140px;
-    max-width: 160px;
+    max-width: 180px;
     background: rgba(5, 10, 15, 0.88);
     border: 1px solid var(--border);
     border-radius: 8px;
     backdrop-filter: blur(6px);
     overflow: hidden;
     box-shadow: 0 4px 24px rgba(0, 0, 0, .5)
+}
+
+/* L2 Call Flow Legend — same position/style as #graph-legend */
+#l2-legend {
+    position: absolute;
+    bottom: 18px;
+    right: 18px;
+    z-index: 21;
+    min-width: 160px;
+    max-width: 200px;
+    background: rgba(5, 10, 15, 0.92);
+    border: 1px solid #2d3f55;
+    border-radius: 8px;
+    backdrop-filter: blur(6px);
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, .6)
 }
 
 .legend-title {
@@ -1280,7 +1300,8 @@ body {
     transition: transform .2s
 }
 
-#graph-legend.legend-collapsed .legend-toggle {
+#graph-legend.legend-collapsed .legend-toggle,
+#l2-legend.legend-collapsed .legend-toggle {
     transform: rotate(-90deg)
 }
 
@@ -1289,7 +1310,8 @@ body {
     transition: all .2s
 }
 
-#graph-legend.legend-collapsed .legend-body {
+#graph-legend.legend-collapsed .legend-body,
+#l2-legend.legend-collapsed .legend-body {
     display: none
 }
 

@@ -517,7 +517,10 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
     clearFuncOverlay();
     setL2ToolbarVisible(true);
 
-    if (l2State.activeFile !== fileRel) resetL2State(fileRel);
+    if (l2State.activeFile !== fileRel) {
+        resetL2State(fileRel);
+        l2State._expandInitialized = false;
+    }
 
     const funcs = DATA.funcs_by_file[fileRel] || [];
     if (focusFuncName) {
@@ -537,10 +540,31 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
     const hasCallList = Array.isArray(callList) && callList.length > 0;
     const legacyEdges = DATA.func_edges_by_file[fileRel] || [];
     const nameToFile = DATA.func_name_to_file || {};
-    const ambiguous = new Set(DATA.func_name_ambiguous || []);
+    const nameToFiles = DATA.func_name_to_files || {};  // ambiguous: name → [file, ...]
     const fileToModule = DATA.file_to_module || {};
     const moduleColorMap = {};
     (DATA.modules || []).forEach(m => { moduleColorMap[m.id] = m.color; });
+
+    const currentModule = fileToModule[fileRel] || resolveModuleForFile(fileRel) || '';
+
+    // Distance between two module path strings (slash-separated hierarchy)
+    function moduleDistance(modA, modB) {
+        if (!modA || !modB || modA === modB) return modA === modB ? 0 : 99;
+        const pa = modA.split('/'), pb = modB.split('/');
+        let shared = 0;
+        const minLen = Math.min(pa.length, pb.length);
+        for (let i = 0; i < minLen; i++) { if (pa[i] === pb[i]) shared++; else break; }
+        return pa.length + pb.length - 2 * shared;
+    }
+
+    // Edge color by distance (0=same module blue, 1=near green, 2=mid amber, 3+=far red)
+    function distColor(targetMod) {
+        const d = moduleDistance(currentModule, targetMod);
+        if (d === 0) return '#38bdf8';
+        if (d === 1) return '#10b981';
+        if (d === 2) return '#f59e0b';
+        return '#f87171';
+    }
 
     const fidMap = new Map();
     funcs.forEach((f, i) => fidMap.set(f.label, i));
@@ -554,17 +578,27 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const access = isPublic ? 'public' : 'static';
         els.push({
             data: {
-                id: `fn-${i}`,
-                label: f.label,
-                bg, bc, w: 150, h: 38, sh: 'roundrectangle', lvl: 2,
-                _t: 'func', fn: f.label, _f: fileRel, idx: i, access,
-                tt: `Function: ${f.label}\n${access}${isEfi ? ' EFIAPI' : ''}`,
+                id: `fn-${i}`, label: f.label, bg, bc, w: 150, h: 38,
+                sh: 'roundrectangle', lvl: 2, _t: 'func', fn: f.label, _f: fileRel,
+                idx: i, access, tt: `Function: ${f.label}\n${access}${isEfi ? ' EFIAPI' : ''}`,
             }
         });
     });
 
+    // extMap:  modName → Map<funcName, { files[], callers:Set }>
+    // potMap:  key     → { callee, files[], callers:Set }   (ambiguous)
+    // unkMap:  callee  → callers:Set                         (truly unresolvable)
     const extMap = new Map();
+    const potMap = new Map();
+    const unkMap = new Map();
     let internalEdgeCount = 0;
+
+    function addExt(modName, callee, targetFiles, callerIdx) {
+        if (!extMap.has(modName)) extMap.set(modName, new Map());
+        const fm = extMap.get(modName);
+        if (!fm.has(callee)) fm.set(callee, { files: targetFiles, callers: new Set() });
+        fm.get(callee).callers.add(callerIdx);
+    }
 
     if (hasCallList) {
         for (let i = 0; i < funcs.length; i++) {
@@ -574,45 +608,39 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 const calleeIdx = fidMap.get(callee);
                 if (calleeIdx != null) {
                     if (calleeIdx === i) continue;
-                    const id = `ie-${i}-${calleeIdx}`;
                     els.push({
                         data: {
-                            id,
-                            source: `fn-${i}`,
-                            target: `fn-${calleeIdx}`,
+                            id: `ie-${i}-${calleeIdx}`,
+                            source: `fn-${i}`, target: `fn-${calleeIdx}`,
                             w: 1.6, ec: '#38bdf8', es: 'solid', el: '',
-                            tt: `${funcs[i].label} -> ${callee}`,
+                            tt: `${funcs[i].label} → ${callee}`,
                         }
                     });
-                    internalEdgeCount += 1;
+                    internalEdgeCount++;
                     continue;
                 }
-
-                let modName = 'Unknown';
-                let targetFile = null;
-                if (!ambiguous.has(callee)) {
-                    targetFile = nameToFile[callee] || null;
-                    if (targetFile && targetFile !== fileRel) {
-                        modName = fileToModule[targetFile] || 'Unknown';
-                    } else if (!targetFile) {
-                        modName = 'Unknown';
-                    }
+                if (nameToFiles[callee]) {
+                    // Ambiguous: multiple possible files
+                    const k = `pot:${callee}`;
+                    if (!potMap.has(k)) potMap.set(k, { callee, files: nameToFiles[callee], callers: new Set() });
+                    potMap.get(k).callers.add(i);
+                    continue;
                 }
-                if (!extMap.has(modName)) extMap.set(modName, new Map());
-                const fnMap = extMap.get(modName);
-                if (!fnMap.has(callee)) fnMap.set(callee, { file: targetFile, callers: new Set() });
-                fnMap.get(callee).callers.add(i);
+                const targetFile = nameToFile[callee] || null;
+                if (!targetFile) {
+                    if (!unkMap.has(callee)) unkMap.set(callee, new Set());
+                    unkMap.get(callee).add(i);
+                    continue;
+                }
+                addExt(fileToModule[targetFile] || '_root', callee, [targetFile], i);
             }
         }
     } else {
         legacyEdges.forEach((e, idx) => {
             els.push({
                 data: {
-                    id: `le-${idx}`,
-                    source: `fn-${e.s}`,
-                    target: `fn-${e.t}`,
-                    w: 1.4, ec: '#38bdf8', es: 'solid', el: '',
-                    tt: `Call`,
+                    id: `le-${idx}`, source: `fn-${e.s}`, target: `fn-${e.t}`,
+                    w: 1.4, ec: '#38bdf8', es: 'solid', el: '', tt: 'Call'
                 }
             });
         });
@@ -621,105 +649,124 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
 
     l2State.externalModules = Array.from(extMap.keys()).sort();
 
+    // First time entering this file → default expand all external modules
+    if (!l2State._expandInitialized) {
+        l2State.expandedModules = new Set(extMap.keys());
+        l2State._expandInitialized = true;
+    }
+
+    // ─── External module groups ───────────────────────────────────────────────
     for (const [modName, fnMap] of extMap.entries()) {
         const modSlug = _safeId(modName) + '-' + _hashId(modName);
         const modId = `extmod-${modSlug}`;
         const funcCount = fnMap.size;
         const isExpanded = l2State.expandedModules.has(modName);
         const modColor = moduleColorMap[modName] || '#64748b';
-        const modBg = modName === 'Unknown' ? '#2a1515' : '#111827';
-
-        els.push({
-            data: {
-                id: modId,
-                label: `${modName}\n${funcCount} funcs`,
-                bg: modBg,
-                bc: modColor,
-                w: 170,
-                h: 52,
-                sh: 'roundrectangle',
-                lvl: 2,
-                _t: 'ext_group',
-                mod: modName,
-                tt: `External Module: ${modName}\nFunctions: ${funcCount}\n${isExpanded ? 'Expanded' : 'Collapsed'}`,
-            }
-        });
+        const ec = distColor(modName);
 
         if (!isExpanded) {
-            const callerCounts = new Map();
-            fnMap.forEach(info => {
-                info.callers.forEach(idx => {
-                    callerCounts.set(idx, (callerCounts.get(idx) || 0) + 1);
-                });
+            // Unexpanded: show the big group node and aggregate edges
+            els.push({
+                data: {
+                    id: modId, label: `${modName}\n${funcCount} funcs`,
+                    bg: '#111827', bc: modColor, w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
+                    _t: 'ext_group', mod: modName,
+                    tt: `External Module: ${modName}\nFunctions: ${funcCount}\nClick to expand`,
+                }
             });
+
+            const callerCounts = new Map();
+            fnMap.forEach(info => info.callers.forEach(idx => callerCounts.set(idx, (callerCounts.get(idx) || 0) + 1)));
             for (const [callerIdx, count] of callerCounts.entries()) {
                 els.push({
                     data: {
                         id: `exte-${modId}-${callerIdx}`,
-                        source: `fn-${callerIdx}`,
-                        target: modId,
-                        w: Math.min(4, 1 + count / 2),
-                        ec: '#f59e0b',
-                        es: 'dashed',
-                        el: 'ext',
-                        tt: `${funcs[callerIdx].label} -> ${modName} (${count})`,
+                        source: `fn-${callerIdx}`, target: modId,
+                        w: Math.min(4, 1 + count / 2), ec, es: 'dashed', el: 'ext',
+                        tt: `${funcs[callerIdx].label} → ${modName} (${count})`,
                     }
                 });
             }
         } else {
+            // Expanded: do NOT show the group bounding box. Show individual external funcs.
             let extIdx = 0;
             fnMap.forEach((info, funcName) => {
                 const fnId = `extfn-${modSlug}-${_hashId(funcName)}`;
-                const targetFile = info.file;
-                const nodeBg = modName === 'Unknown' ? '#3b1f1f' : '#0f172a';
+                const tf = info.files[0] || null;
                 els.push({
                     data: {
                         id: fnId,
-                        label: funcName,
-                        bg: nodeBg,
-                        bc: modColor,
-                        w: 150,
-                        h: 34,
-                        sh: 'roundrectangle',
-                        lvl: 2,
-                        _t: 'ext_func',
-                        fn: funcName,
-                        _f: targetFile,
-                        mod: modName,
-                        tt: targetFile ? `External: ${funcName}\n${targetFile}` : `External: ${funcName}\nUnknown target`,
+                        label: `${funcName}\n(${modName})`,
+                        bg: '#0f172a', bc: modColor,
+                        w: 160, h: 42, sh: 'roundrectangle', lvl: 2,
+                        _t: 'ext_func', fn: funcName, _f: tf, mod: modName, _drilled: false,
+                        tt: `${funcName}\n${tf || '(file unknown)'}\nModule: ${modName}\n\nDouble-click to drill in →\nClick to collapse module`,
                     }
                 });
-
-                els.push({
-                    data: {
-                        id: `extg-${modId}-${extIdx}`,
-                        source: modId,
-                        target: fnId,
-                        w: 1,
-                        ec: '#334155',
-                        es: 'dotted',
-                        el: 'group',
-                        tt: `${modName} contains ${funcName}`,
-                    }
-                });
-
                 info.callers.forEach(callerIdx => {
                     els.push({
                         data: {
                             id: `extc-${modId}-${callerIdx}-${_hashId(funcName)}`,
-                            source: `fn-${callerIdx}`,
-                            target: fnId,
-                            w: 1.5,
-                            ec: '#f59e0b',
-                            es: 'solid',
-                            el: 'ext',
-                            tt: `${funcs[callerIdx].label} -> ${funcName}`,
+                            source: `fn-${callerIdx}`, target: fnId,
+                            w: 1.5, ec, es: 'solid', el: 'ext',
+                            tt: `${funcs[callerIdx].label} → ${funcName}`,
                         }
                     });
                 });
-                extIdx += 1;
+                extIdx++;
             });
         }
+    }
+
+    // ─── Potential / ambiguous nodes ──────────────────────────────────────────
+    for (const [, info] of potMap.entries()) {
+        const { callee, files, callers } = info;
+        const slug = _safeId(callee) + '-' + _hashId(callee);
+        const potId = `pot-${slug}`;
+        const firstMod = fileToModule[files[0]] || '';
+        const ec = firstMod ? distColor(firstMod) : '#a78bfa';
+        els.push({
+            data: {
+                id: potId, label: `${callee}\n(${files.length} paths)`,
+                bg: '#1a1040', bc: '#a78bfa', w: 160, h: 44, sh: 'roundrectangle', lvl: 2,
+                _t: 'potential_func', fn: callee, _files: files,
+                tt: `Ambiguous: ${callee}\nPossible files:\n${files.slice(0, 5).join('\n')}${files.length > 5 ? `\n…+${files.length - 5} more` : ''}`,
+            }
+        });
+        callers.forEach(callerIdx => {
+            els.push({
+                data: {
+                    id: `pote-${slug}-${callerIdx}`,
+                    source: `fn-${callerIdx}`, target: potId,
+                    w: 1.4, ec, es: 'dashed', el: 'ext',
+                    tt: `${funcs[callerIdx].label} → ${callee} (ambiguous)`,
+                }
+            });
+        });
+    }
+
+    // ─── True unknown (system / compiler) ────────────────────────────────────
+    if (unkMap.size > 0) {
+        const unkId = 'extmod-unknown';
+        els.push({
+            data: {
+                id: unkId, label: `System / Unknown\n${unkMap.size} funcs`,
+                bg: '#2a1515', bc: '#64748b', w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
+                _t: 'ext_group', mod: 'Unknown',
+                tt: `System calls or unresolved symbols\nCount: ${unkMap.size}`,
+            }
+        });
+        const callerSet = new Map();
+        unkMap.forEach(callers => callers.forEach(idx => callerSet.set(idx, (callerSet.get(idx) || 0) + 1)));
+        callerSet.forEach((count, callerIdx) => {
+            els.push({
+                data: {
+                    id: `unke-${callerIdx}`, source: `fn-${callerIdx}`, target: unkId,
+                    w: Math.min(3, 1 + count / 3), ec: '#64748b', es: 'dotted', el: 'ext',
+                    tt: `→ system calls (${count})`,
+                }
+            });
+        });
     }
 
     cy.elements().remove();
@@ -740,6 +787,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         });
         updateExternalToggle();
         focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: true });
+        renderL2Legend();
     });
     lay.run();
 }
@@ -781,6 +829,161 @@ function drillCurrentFileToL2() {
     document.getElementById('graph-toggle-btn').classList.add('active');
 }
 
+// ─── Lazy drill-down on ext_func / potential_func double-click ────────────────
+// Dynamically expands the callees of the target function into the current canvas.
+function drillDownExtFunc(node) {
+    const d = node.data();
+    const targetFile = d._f || null;
+    const funcName = d.fn || null;
+    if (!targetFile || !funcName) return;
+    if (d._drilled) return;   // already expanded
+
+    // Mark as drilled so we don't double-expand
+    node.data('_drilled', true);
+    node.data('label', funcName + '\n↳');
+    node.style('border-style', 'double');
+
+    const funcs = DATA.funcs_by_file[targetFile] || [];
+    const callList = DATA.func_calls_by_file?.[targetFile] || null;
+    const nameToFile = DATA.func_name_to_file || {};
+    const nameToFiles = DATA.func_name_to_files || {};
+    const fileToModule = DATA.file_to_module || {};
+    const moduleColorMap = {};
+    (DATA.modules || []).forEach(m => { moduleColorMap[m.id] = m.color; });
+
+    const targetMod = fileToModule[targetFile] || '';
+    const fidIdx = funcs.findIndex(f => f.label === funcName);
+    if (fidIdx < 0 || !Array.isArray(callList)) return;
+
+    const callees = new Set(Array.isArray(callList[fidIdx]) ? callList[fidIdx] : []);
+    const nodeId = node.id();
+    const newEls = [];
+    let added = 0;
+
+    function distColor2(tMod) {
+        function dist(a, b) {
+            if (!a || !b || a === b) return a === b ? 0 : 99;
+            const pa = a.split('/'), pb = b.split('/');
+            let s = 0, ml = Math.min(pa.length, pb.length);
+            for (let i = 0; i < ml; i++) { if (pa[i] === pb[i]) s++; else break; }
+            return pa.length + pb.length - 2 * s;
+        }
+        const d = dist(targetMod, tMod);
+        if (d === 0) return '#38bdf8';
+        if (d === 1) return '#10b981';
+        if (d === 2) return '#f59e0b';
+        return '#f87171';
+    }
+
+    for (const callee of callees) {
+        const childId = `drill-${_hashId(nodeId)}-${_hashId(callee)}`;
+        if (cy.$id(childId).length) continue;  // already in graph
+
+        let tf = null, modName = '', ec = '#64748b', bc = '#64748b';
+        if (nameToFiles[callee]) {
+            tf = nameToFiles[callee][0];
+            modName = fileToModule[tf] || '';
+            ec = bc = '#a78bfa';   // ambiguous — purple
+        } else if (nameToFile[callee]) {
+            tf = nameToFile[callee];
+            modName = fileToModule[tf] || '';
+            ec = bc = distColor2(modName);
+        }
+
+        newEls.push({
+            data: {
+                id: childId, label: callee,
+                bg: '#0d1f33', bc: bc || '#64748b',
+                w: 140, h: 30, sh: 'roundrectangle', lvl: 2,
+                _t: 'drilled_func', fn: callee, _f: tf, mod: modName, _drilled: false,
+                tt: tf ? `${callee}\n${tf}\n\nDouble-click to drill further` : `${callee}\n(no file found)`,
+            }
+        });
+        newEls.push({
+            data: {
+                id: `drille-${_hashId(nodeId)}-${_hashId(callee)}`,
+                source: nodeId, target: childId,
+                w: 1.4, ec: ec || '#64748b', es: 'solid', el: '',
+                tt: `${funcName} → ${callee}`,
+            }
+        });
+        added++;
+    }
+
+    if (!added) {
+        // No outgoing calls — mark as leaf
+        node.data('label', funcName + '\n(leaf)');
+        return;
+    }
+
+    cy.add(newEls);
+    // Re-run layout incrementally
+    cy.layout({
+        name: 'dagre', rankDir: 'LR', animate: true, animationDuration: 300,
+        nodeSep: 26, rankSep: 80, padding: 50
+    }).run();
+}
+
+// ─── Call Flow Legend ─────────────────────────────────────────────────────────
+const L2_LEGEND_ITEMS = [
+    { color: '#38bdf8', label: 'Internal call', style: 'solid' },
+    { color: '#10b981', label: 'Near module (d=1)', style: 'solid' },
+    { color: '#f59e0b', label: 'Mid module (d=2)', style: 'solid' },
+    { color: '#f87171', label: 'Far module (d≥3)', style: 'solid' },
+    { color: '#a78bfa', label: 'Ambiguous (multi)', style: 'dashed' },
+    { color: '#64748b', label: 'System / unknown', style: 'dotted' },
+];
+
+function renderL2Legend() {
+    const wrap = document.getElementById('graph-wrap');
+    if (!wrap) return;
+    clearL2Legend();
+
+    function edgeLine(col, style) {
+        const dash = style === 'dashed' ? '6,4' : style === 'dotted' ? '2,3' : 'none';
+        const sd = dash !== 'none' ? `stroke-dasharray="${dash}"` : '';
+        return `<svg width="32" height="10" style="vertical-align:middle;overflow:visible">
+            <line x1="0" y1="5" x2="32" y2="5" stroke="${col}" stroke-width="2" ${sd}/>
+            <polygon points="28,2 34,5 28,8" fill="${col}"/>
+        </svg>`;
+    }
+
+    const leg = document.createElement('div');
+    leg.id = 'l2-legend';
+    leg.className = 'legend-collapsed';
+    leg.innerHTML = `
+<div class="legend-title" onclick="this.parentElement.classList.toggle('legend-collapsed')">
+  <span>⬡</span> Call Flow Legend <span class="legend-toggle">▾</span>
+</div>
+<div class="legend-body">
+  <div class="legend-section-label">Edge Distance</div>
+  ${L2_LEGEND_ITEMS.map(e => `
+  <div class="legend-row">
+    ${edgeLine(e.color, e.style)}
+    <span class="legend-label" style="color:${e.color}">${e.label}</span>
+  </div>`).join('')}
+  <div class="legend-section-label" style="margin-top:8px">Node Types</div>
+  <div class="legend-row"><span class="legend-shape" style="color:#60a5fa">▣</span><span class="legend-label" style="color:#60a5fa">Current file func</span></div>
+  <div class="legend-row"><span class="legend-shape" style="color:#64748b">▣</span><span class="legend-label" style="color:#64748b">External func</span></div>
+  <div class="legend-row"><span class="legend-shape" style="color:#a78bfa">▣</span><span class="legend-label" style="color:#a78bfa">Ambiguous func</span></div>
+  <div class="legend-row"><span style="font-size:10px;margin-right:4px">↳</span><span class="legend-label" style="color:#94a3b8">Double-click to drill</span></div>
+</div>`;
+    wrap.appendChild(leg);
+
+    // Also hide the dependency map legend while in L2
+    const depLeg = document.getElementById('graph-legend');
+    if (depLeg) depLeg.style.display = 'none';
+}
+
+function clearL2Legend() {
+    const existing = document.getElementById('l2-legend');
+    if (existing) existing.remove();
+    // Restore dependency map legend
+    const depLeg = document.getElementById('graph-legend');
+    if (depLeg) depLeg.style.display = '';
+}
+
+
 function initResizer() {
     const resizer = document.getElementById('resizer');
     const panel = document.getElementById('code-panel');
@@ -791,13 +994,13 @@ function initResizer() {
         startW = panel.offsetWidth;
         resizer.classList.add('dragging');
         panel.style.transition = 'none';
-        document.getElementById('graph-wrap').style.pointerEvents = 'none'; // prevent iframe/canvas drag lag
+        document.getElementById('graph-wrap').style.pointerEvents = 'none';
         document.addEventListener('mousemove', onDrag);
         document.addEventListener('mouseup', stopDrag);
         e.preventDefault();
     });
     function onDrag(e) {
-        const delta = startX - e.clientX; // drag left = wider panel
+        const delta = startX - e.clientX;
         const newW = Math.max(200, Math.min(1200, startW + delta));
         panel.style.width = newW + 'px';
         document.documentElement.style.setProperty('--code-panel', newW + 'px');
@@ -1144,11 +1347,13 @@ function initCy() {
     cy.on('mouseover', 'node', e => { showTooltip(e); highlightNode(e.target); });
     cy.on('mouseout', 'node', () => { scheduleHideTooltip(); });
     cy.on('tap', e => { if (e.target === cy) clearSelection(); });
-    // // Double-tap a file node → drill to L2 (disabled per request)
-    // cy.on('dbltap', 'node', e => {
-    //     const d = e.target.data();
-    //     if (d._t === 'file' && d._f?.path) drillToFile(d._f.path);
-    // });
+    // Double-tap ext/drilled/potential func nodes → lazy drill-down
+    cy.on('dbltap', 'node', e => {
+        const d = e.target.data();
+        if (d._t === 'ext_func' || d._t === 'drilled_func' || d._t === 'potential_func') {
+            drillDownExtFunc(e.target);
+        }
+    });
     document.getElementById('cy').addEventListener('contextmenu', e => e.preventDefault());
 }
 
@@ -1698,10 +1903,12 @@ function showFuncViewEmpty(fileRel) {
 function hideFuncView() {
     clearFuncOverlay();
     setL2ToolbarVisible(false);
+    clearL2Legend();
     l2State.activeFile = null;
     l2State.activeFuncIdx = 0;
     l2State.expandedModules = new Set();
     l2State.externalModules = [];
+    l2State._expandInitialized = false;
     // Clear graph-toggle active state when leaving L2
     document.getElementById('graph-toggle-btn')?.classList.remove('active');
     updateL2NavButtons();
@@ -2008,70 +2215,70 @@ function showTooltip(e) {
                 `</div>`;
         } else {
 
-        // 取得 tooltip 原文字的第一行 (標題/路徑) 和剩餘內容
-        const lines = d.tt.split('\n');
-        const titleRaw = lines[0] || '';
-        const bodyLines = lines.slice(1).join('<br>').trim();
+            // 取得 tooltip 原文字的第一行 (標題/路徑) 和剩餘內容
+            const lines = d.tt.split('\n');
+            const titleRaw = lines[0] || '';
+            const bodyLines = lines.slice(1).join('<br>').trim();
 
-        // 1. 處理檔名過長 (使用 css ellipsis 或截斷)
-        // 這裡加上 max-width 強制斷掉加上 '...'
-        html += `<div style="font-weight:bold; max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(titleRaw)}">${escapeHtml(titleRaw)}</div>`;
+            // 1. 處理檔名過長 (使用 css ellipsis 或截斷)
+            // 這裡加上 max-width 強制斷掉加上 '...'
+            html += `<div style="font-weight:bold; max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(titleRaw)}">${escapeHtml(titleRaw)}</div>`;
 
-        if (bodyLines) {
-            html += `<div style="margin-top:6px; font-size:11px; color:#cbd5e1;">${bodyLines}</div>`;
-        }
-
-        // 2. 處理 dependencies 文字和顏色
-        if (outCount > 0 || inCount > 0) {
-            html += `<div style="margin-top:10px; border-top:1px solid #334155; padding-top:6px;">`;
-            html += `<div style="font-weight:bold; margin-bottom:4px">Dependencies:</div>`;
-
-            const OUT_MAP = {
-                'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
-                'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
-                'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
-                'HII-Pkg': 'hii pkg', 'Depex': 'depex',
-                'ext': 'external calls', 'group': 'group',
-                '': state.level === 2 ? 'calls' : 'includes'
-            };
-            const IN_MAP = {
-                'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
-                'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
-                'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
-                'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
-                'ext': 'external callers', 'group': 'group',
-                '': state.level === 2 ? 'called by' : 'included by'
-            };
-
-            const outGroups = {};
-            e.target.outgoers('edge').forEach(edge => {
-                const lbl = edge.data('el') || '';
-                const col = edge.data('ec') || '#f59e0b';
-                const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
-                const key = outTxt + '|' + col;
-                outGroups[key] = (outGroups[key] || 0) + 1;
-            });
-
-            const inGroups = {};
-            e.target.incomers('edge').forEach(edge => {
-                const lbl = edge.data('el') || '';
-                const col = edge.data('ec') || '#10b981';
-                const inTxt = IN_MAP[lbl] || lbl || 'incoming';
-                const key = inTxt + '|' + col;
-                inGroups[key] = (inGroups[key] || 0) + 1;
-            });
-
-            for (const [key, count] of Object.entries(outGroups)) {
-                const [lbl, col] = key.split('|');
-                html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
-            }
-            for (const [key, count] of Object.entries(inGroups)) {
-                const [lbl, col] = key.split('|');
-                html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
+            if (bodyLines) {
+                html += `<div style="margin-top:6px; font-size:11px; color:#cbd5e1;">${bodyLines}</div>`;
             }
 
-            html += `</div>`;
-        }
+            // 2. 處理 dependencies 文字和顏色
+            if (outCount > 0 || inCount > 0) {
+                html += `<div style="margin-top:10px; border-top:1px solid #334155; padding-top:6px;">`;
+                html += `<div style="font-weight:bold; margin-bottom:4px">Dependencies:</div>`;
+
+                const OUT_MAP = {
+                    'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
+                    'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
+                    'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
+                    'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+                    'ext': 'external calls', 'group': 'group',
+                    '': state.level === 2 ? 'calls' : 'includes'
+                };
+                const IN_MAP = {
+                    'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
+                    'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
+                    'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
+                    'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+                    'ext': 'external callers', 'group': 'group',
+                    '': state.level === 2 ? 'called by' : 'included by'
+                };
+
+                const outGroups = {};
+                e.target.outgoers('edge').forEach(edge => {
+                    const lbl = edge.data('el') || '';
+                    const col = edge.data('ec') || '#f59e0b';
+                    const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
+                    const key = outTxt + '|' + col;
+                    outGroups[key] = (outGroups[key] || 0) + 1;
+                });
+
+                const inGroups = {};
+                e.target.incomers('edge').forEach(edge => {
+                    const lbl = edge.data('el') || '';
+                    const col = edge.data('ec') || '#10b981';
+                    const inTxt = IN_MAP[lbl] || lbl || 'incoming';
+                    const key = inTxt + '|' + col;
+                    inGroups[key] = (inGroups[key] || 0) + 1;
+                });
+
+                for (const [key, count] of Object.entries(outGroups)) {
+                    const [lbl, col] = key.split('|');
+                    html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
+                }
+                for (const [key, count] of Object.entries(inGroups)) {
+                    const [lbl, col] = key.split('|');
+                    html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
+                }
+
+                html += `</div>`;
+            }
         }
     } else {
         // Edge tooltip
