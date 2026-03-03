@@ -1119,3 +1119,89 @@ body {
     padding: 2px 0 8px;
     min-height: 0
 }
+
+/* ── Graph Legend ── */
+#graph-legend {
+    position: absolute;
+    bottom: 18px;
+    right: 18px;
+    z-index: 20;
+    min-width: 140px;
+    max-width: 160px;
+    background: rgba(5, 10, 15, 0.88);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    backdrop-filter: blur(6px);
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, .5)
+}
+
+.legend-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    cursor: pointer;
+    user-select: none;
+    transition: color .15s;
+    border-bottom: 1px solid var(--border)
+}
+
+.legend-title:hover {
+    color: var(--text)
+}
+
+.legend-toggle {
+    margin-left: auto;
+    font-size: 13px;
+    transition: transform .2s
+}
+
+#graph-legend.legend-collapsed .legend-toggle {
+    transform: rotate(-90deg)
+}
+
+.legend-body {
+    padding: 6px 8px 8px;
+    transition: all .2s
+}
+
+#graph-legend.legend-collapsed .legend-body {
+    display: none
+}
+
+.legend-section-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 4px;
+    padding-left: 2px
+}
+
+.legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 2px;
+    border-radius: 3px
+}
+
+.legend-label {
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap
+}
+
+.legend-shape {
+    font-size: 13px;
+    width: 32px;
+    text-align: center;
+    flex-shrink: 0
+}

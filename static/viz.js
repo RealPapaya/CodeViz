@@ -273,8 +273,12 @@ function extColor(ext) {
         '.inf': '#ffd700', '.dec': '#00d4ff', '.dsc': '#e2e8f0', '.fdf': '#c084fc',
         // AMI 特有
         '.sdl': '#34d399', '.cif': '#60a5fa', '.mak': '#94a3b8',
-        // HII / ACPI
-        '.vfr': '#f472b6', '.uni': '#fb923c', '.asl': '#a78bfa',
+        // HII (UEFI 標準 + AMI 擴充)
+        '.vfr': '#f472b6',  // UEFI HII Form
+        '.hfr': '#e940a0',  // AMI HII Form Resource (較深的籉红)
+        '.uni': '#fb923c',  // Unicode 字串包
+        // ACPI
+        '.asl': '#a78bfa',
     };
     return map[ext] || '#64748b';
 }
@@ -291,8 +295,11 @@ const FILE_TYPE_SHAPE = {
     'ami_sdl': { sh: 'octagon', w: 170, h: 56 },
     'ami_cif': { sh: 'barrel', w: 160, h: 56 },
     'makefile': { sh: 'tag', w: 150, h: 46 },
-    'hii_form': { sh: 'round-tag', w: 155, h: 46 },
-    'hii_string': { sh: 'round-rectangle', w: 150, h: 44 },
+    // HII ecosystem
+    'hii_vfr': { sh: 'round-tag', w: 165, h: 50 },  // UEFI 標準 VFR 表單
+    'hii_hfr': { sh: 'round-tag', w: 165, h: 50 },  // AMI HFR 擴充 (相同形狀但較深籉红色)
+    'hii_form': { sh: 'round-tag', w: 165, h: 50 },  // backward compat
+    'hii_string': { sh: 'round-rectangle', w: 155, h: 44 },  // UNI 字串包
     'acpi_asl': { sh: 'pentagon', w: 160, h: 56 },
     'other': { sh: 'round-rectangle', w: 155, h: 46 },
 };
@@ -308,6 +315,10 @@ const EDGE_TYPE_STYLE = {
     'component': { color: '#60a5fa', style: 'solid', label: 'Comp' },
     'depex': { color: '#f472b6', style: 'dotted', label: 'Depex' },
     'guid_ref': { color: '#fb923c', style: 'dashed', label: 'GUID' },
+    'str_ref': { color: '#e879f9', style: 'dashed', label: 'Strings' },
+    'asl_include': { color: '#818cf8', style: 'solid', label: 'ASL' },
+    'callback_ref': { color: '#f87171', style: 'dotted', label: 'Callback' },
+    'hii_pkg': { color: '#c084fc', style: 'solid', label: 'HII-Pkg' },
 };
 
 function fileNodeData(f, modColor) {
@@ -356,8 +367,17 @@ function showCpError(msg) {
 function renderCode(src, ext, fname) {
     const lines = src.split('\n');
     const hlExt = {
+        // C / ASM
         '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.h': 'cpp', '.hpp': 'cpp',
-        '.asm': 'x86asm', '.s': 'x86asm', '.S': 'x86asm'
+        '.asm': 'x86asm', '.s': 'x86asm', '.S': 'x86asm',
+        // UEFI module metadata — ini-like sections
+        '.inf': 'ini', '.dec': 'ini', '.dsc': 'ini', '.fdf': 'ini',
+        // AMI specific — ini-like
+        '.sdl': 'ini', '.cif': 'ini', '.mak': 'makefile',
+        // HII / ACPI
+        '.vfr': 'c',       // VFR syntax is closest to C
+        '.uni': 'plaintext', // UNI is custom; plaintext is safest
+        '.asl': 'c',       // ASL/ACPI looks like C braces
     };
     const lang = hlExt[ext] || 'plaintext';
 
@@ -581,11 +601,17 @@ const FT_GROUPS = [
     { key: 'ami_sdl', label: '.sdl', exts: ['.sdl'] },
     { key: 'ami_cif', label: '.cif', exts: ['.cif'] },
     { key: 'makefile', label: '.mak', exts: ['.mak'] },
-    { key: 'hii_form', label: '.vfr', exts: ['.vfr'] },
+    { key: 'hii_vfr', label: '.vfr', exts: ['.vfr'] },
+    { key: 'hii_hfr', label: '.hfr', exts: ['.hfr'] },
+    { key: 'hii_string', label: '.uni', exts: ['.uni'] },
     { key: 'acpi_asl', label: '.asl', exts: ['.asl'] },
 ];
-const ftActiveFilter = new Set(['c_source', 'header', 'assembly', 'module_inf', 'package_dec',
-    'platform_dsc', 'flash_desc', 'ami_sdl', 'ami_cif']);
+// 預設全部勾選顯示
+const ftActiveFilter = new Set([
+    'c_source', 'header', 'assembly', 'module_inf', 'package_dec',
+    'platform_dsc', 'flash_desc', 'ami_sdl', 'ami_cif', 'makefile',
+    'hii_vfr', 'hii_hfr', 'hii_string', 'acpi_asl'
+]);
 
 function buildFtFilter() {
     const wrap = document.getElementById('ft-filter');
@@ -1290,3 +1316,76 @@ function showLoading(v, msg) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function dedupeBy(arr, key) { return [...new Map(arr.map(x => [x[key], x])).values()]; }
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + 'MB' : b > 1e3 ? (b / 1e3).toFixed(0) + 'KB' : b + 'B'; }
+
+// ─── Graph Legend ─────────────────────────────────────────────────────────────
+// Edge types shown in legend (omit 'include' — it's the default invisible edge)
+const LEGEND_EDGES = [
+    { type: 'sources', label: 'Src', color: '#ffd700', style: 'solid' },
+    { type: 'package', label: 'Pkg', color: '#00d4ff', style: 'dashed' },
+    { type: 'library', label: 'Lib', color: '#a78bfa', style: 'dashed' },
+    { type: 'cif_own', label: 'owns', color: '#34d399', style: 'solid' },
+    { type: 'component', label: 'Comp', color: '#60a5fa', style: 'solid' },
+    { type: 'guid_ref', label: 'GUID', color: '#fb923c', style: 'dashed' },
+    { type: 'elink', label: 'ELINK', color: '#ff6b35', style: 'dotted' },
+    { type: 'str_ref', label: 'Strings', color: '#e879f9', style: 'dashed' },
+    { type: 'hii_pkg', label: 'HII-Pkg', color: '#c084fc', style: 'solid' },
+    { type: 'callback_ref', label: 'Callback', color: '#f87171', style: 'dotted' },
+    { type: 'asl_include', label: 'ASL', color: '#818cf8', style: 'solid' },
+    { type: 'depex', label: 'Depex', color: '#f472b6', style: 'dotted' },
+];
+const LEGEND_NODES = [
+    { shape: '◆', label: '.inf', color: '#ffd700' },
+    { shape: '⬡', label: '.dec', color: '#00d4ff' },
+    { shape: '⬟', label: '.sdl', color: '#34d399' },
+    { shape: '▣', label: '.cif', color: '#60a5fa' },
+    { shape: '●', label: '.c/.h', color: '#3b82f6' },
+    { shape: '▲', label: '.asm', color: '#f59e0b' },
+    { shape: '⬠', label: '.dsc', color: '#e2e8f0' },
+    { shape: '‣', label: '.vfr', color: '#f472b6' },  // UEFI HII Form
+    { shape: '‣', label: '.hfr', color: '#e940a0' },  // AMI HII Form Resource
+    { shape: '□', label: '.uni', color: '#fb923c' },  // Unicode 字串包
+    { shape: '▷', label: '.asl', color: '#a78bfa' },  // ACPI
+];
+
+function buildLegend() {
+    const wrap = document.getElementById('graph-wrap');
+    if (!wrap || document.getElementById('graph-legend')) return;
+
+    const leg = document.createElement('div');
+    leg.id = 'graph-legend';
+    leg.className = 'legend-collapsed';  // start collapsed
+
+    // Build SVG line dash preview
+    function edgeLine(col, style) {
+        const dash = style === 'dashed' ? '6,4' : style === 'dotted' ? '2,3' : 'none';
+        const strokeDash = dash !== 'none' ? `stroke-dasharray="${dash}"` : '';
+        return `<svg width="32" height="10" style="vertical-align:middle;overflow:visible">
+            <line x1="0" y1="5" x2="32" y2="5" stroke="${col}" stroke-width="2" ${strokeDash}/>
+            <polygon points="28,2 34,5 28,8" fill="${col}"/>
+        </svg>`;
+    }
+
+    leg.innerHTML = `
+<div id="legend-title" class="legend-title" onclick="this.parentElement.classList.toggle('legend-collapsed')">
+  <span>⬡</span> Legend <span class="legend-toggle">▾</span>
+</div>
+<div class="legend-body">
+  <div class="legend-section-label">Edge Types</div>
+  ${LEGEND_EDGES.map(e => `
+  <div class="legend-row">
+    ${edgeLine(e.color, e.style)}
+    <span class="legend-label" style="color:${e.color}">${e.label}</span>
+  </div>`).join('')}
+  <div class="legend-section-label" style="margin-top:8px">Node Shapes</div>
+  ${LEGEND_NODES.map(n => `
+  <div class="legend-row">
+    <span class="legend-shape" style="color:${n.color}">${n.shape}</span>
+    <span class="legend-label" style="color:${n.color}">${n.label}</span>
+  </div>`).join('')}
+</div>`;
+
+    wrap.appendChild(leg);
+}
+
+// Call on init
+document.addEventListener('DOMContentLoaded', buildLegend);

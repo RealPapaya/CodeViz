@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 analyze_bios.py V3 — BIOS Code Visualizer
-Multi file-type support: .c/.h/.asm + .inf/.dec/.dsc/.fdf/.sdl/.cif/.mak/.vfr/.uni
+Multi file-type support: .c/.h/.asm + .inf/.dec/.dsc/.fdf/.sdl/.cif/.mak/.vfr/.hfr/.uni/.asl
 Hierarchical JSON output + cytoscape.js canvas renderer
 """
 
@@ -12,14 +12,18 @@ from collections import defaultdict
 # ─── Constants ───────────────────────────────────────────────────────────────
 SKIP_DIRS  = {'Build','build','.git','__pycache__','Conf','DEBUG','RELEASE','.claude'}
 SCAN_EXT   = {
-    # C/C++ / ASM (已有)
+    # C/C++ / ASM
     '.c','.cpp','.cc','.h','.hpp','.asm','.s','.S','.nasm',
     # UEFI / EDK2 build system
     '.inf', '.dec', '.dsc', '.fdf',
     # AMI BIOS 特有
     '.sdl', '.cif', '.mak',
-    # HII / ACPI (Phase C 前端暫不處理，但收集節點)
-    '.vfr', '.uni', '.asl',
+    # HII (Human Interface Infrastructure)
+    '.vfr',   # UEFI 標準 HII 表單語言
+    '.hfr',   # AMI 擴充 HII Form Resource（類似 VFR）
+    '.uni',   # Unicode 字串包
+    # ACPI
+    '.asl',   # ACPI Source Language
 }
 SKIP_EXT   = {'.veb','.lib','.obj','.efi','.rom','.bin','.log','.map'}
 
@@ -35,23 +39,28 @@ FILE_TYPE_MAP = {
     '.sdl': 'ami_sdl',
     '.cif': 'ami_cif',
     '.mak': 'makefile',
-    '.vfr': 'hii_form',
-    '.uni': 'hii_string',
+    '.vfr': 'hii_vfr',      # UEFI 標準 HII 表單
+    '.hfr': 'hii_hfr',      # AMI 擴充 HII Form Resource
+    '.uni': 'hii_string',   # Unicode 字串包
     '.asl': 'acpi_asl',
 }
 
 # ─── Edge type definitions ───────────────────────────────────────────────────
 # 每種 edge type 決定前端的線條樣式
 EDGE_TYPES = {
-    'include':    {'label': '',          'color': '#334155', 'style': 'solid'},
-    'sources':    {'label': 'Sources',   'color': '#ffd700', 'style': 'solid'},
-    'package':    {'label': 'Package',   'color': '#00d4ff', 'style': 'dashed'},
-    'library':    {'label': 'Library',   'color': '#a78bfa', 'style': 'dashed'},
-    'elink':      {'label': 'ELINK',     'color': '#ff6b35', 'style': 'dotted'},
-    'cif_own':    {'label': 'owns',      'color': '#34d399', 'style': 'solid'},
-    'component':  {'label': 'Component', 'color': '#60a5fa', 'style': 'solid'},
-    'depex':      {'label': 'Depex',     'color': '#f472b6', 'style': 'dotted'},
-    'guid_ref':   {'label': 'GUID',      'color': '#fb923c', 'style': 'dashed'},
+    'include':       {'label': '',            'color': '#334155', 'style': 'solid'},
+    'sources':       {'label': 'Sources',     'color': '#ffd700', 'style': 'solid'},
+    'package':       {'label': 'Package',     'color': '#00d4ff', 'style': 'dashed'},
+    'library':       {'label': 'Library',     'color': '#a78bfa', 'style': 'dashed'},
+    'elink':         {'label': 'ELINK',       'color': '#ff6b35', 'style': 'dotted'},
+    'cif_own':       {'label': 'owns',        'color': '#34d399', 'style': 'solid'},
+    'component':     {'label': 'Component',   'color': '#60a5fa', 'style': 'solid'},
+    'depex':         {'label': 'Depex',       'color': '#f472b6', 'style': 'dotted'},
+    'guid_ref':      {'label': 'GUID',        'color': '#fb923c', 'style': 'dashed'},
+    'str_ref':       {'label': 'Strings',     'color': '#e879f9', 'style': 'dashed'},
+    'asl_include':   {'label': 'ASL',         'color': '#818cf8', 'style': 'solid'},
+    'callback_ref':  {'label': 'Callback',    'color': '#f87171', 'style': 'dotted'},  # VFR/HFR 表單 → .c callback 函式
+    'hii_pkg':       {'label': 'HII-Pkg',     'color': '#c084fc', 'style': 'solid'},   # .inf → .vfr/.hfr/.uni
 }
 
 C_KEYWORDS = {
@@ -304,6 +313,194 @@ def scan_mak(src: str) -> dict:
     return {'generated': generated}
 
 
+# ─── scan_vfr ─────────────────────────────────────────────────────────────────
+# Pre-compiled regexes for VFR/HFR (reused by both)
+_RE_STR_TOKEN  = re.compile(r'\bSTRING_TOKEN\s*\(\s*(\w+)\s*\)', re.IGNORECASE)
+_RE_VFR_FORMSET= re.compile(
+    r'\bformset\s+guid\s*=\s*\{([^}]+)\}\s*,\s*title\s*=\s*STRING_TOKEN\s*\(\s*(\w+)\s*\)',
+    re.IGNORECASE | re.DOTALL
+)
+# `form formid = N, title = STRING_TOKEN(...)`
+_RE_VFR_FORM   = re.compile(
+    r'\bform\s+formid\s*=\s*(\d+)\s*,\s*title\s*=\s*STRING_TOKEN\s*\(\s*(\w+)\s*\)',
+    re.IGNORECASE
+)
+# Callback: `questionid = N, ... flags = ... INTERACTIVE, ... key = N`
+# Maps to EFI_HII_CONFIG_ACCESS_PROTOCOL.Callback() — in .c files
+# Also: `AMI_CALLBACK_KEY`，`INTERACTIVE` flags trigger callbacks
+_RE_VFR_CB     = re.compile(
+    r'(?:AMI_CALLBACK_KEY\s*\(\s*(\w+)\s*\)|\bkey\s*=\s*(0x[0-9A-Fa-f]+|\d+)\b)',
+    re.IGNORECASE
+)
+# suppressif/grayif EFI_VAR token usage
+_RE_VFR_LABEL  = re.compile(r'\blabel\s+(0x[0-9A-Fa-f]+|\w+)', re.IGNORECASE)
+
+
+def _parse_vfr_hfr(src: str) -> dict:
+    """
+    Shared internal parser for VFR and HFR files.
+
+    VFR/HFR structure:
+      #include "SetupString.uni"          → pulls in string package
+      #include "CommonSetup.hfr"          → pulls in shared form fragments
+
+      formset guid  = { ... },
+              title = STRING_TOKEN(STR_SETUP_TITLE),
+              help  = STRING_TOKEN(STR_SETUP_HELP),
+        form formid = 1,
+             title  = STRING_TOKEN(STR_FORM_TITLE);
+          ...
+          oneof varid = Setup.BootMode,
+                prompt = STRING_TOKEN(STR_BOOT_MODE),
+                help   = STRING_TOKEN(STR_BOOT_MODE_HELP),
+                flags  = INTERACTIVE,
+                key    = KEY_BOOT_MODE;          ← triggers C callback
+            ...
+          endoneof;
+        endform;
+      endformset;
+    """
+    # #include "xxx.uni" or "xxx.hfr" or <xxx.h>
+    includes = RE_INCLUDE.findall(src)
+
+    # Separate .uni includes (those are the string packages)
+    uni_includes = [f for f in includes if f.lower().endswith('.uni')]
+    hfr_includes = [f for f in includes if f.lower().endswith('.hfr')]
+
+    # All STRING_TOKEN references → these are keys into .uni files
+    str_refs = list(set(_RE_STR_TOKEN.findall(src)))
+
+    # formset blocks: (guid_raw, title_token)
+    formsets = [
+        {'guid': m.group(1).strip(), 'title_token': m.group(2)}
+        for m in _RE_VFR_FORMSET.finditer(src)
+    ]
+
+    # form pages: (formid, title_token)
+    forms = [
+        {'formid': m.group(1), 'title_token': m.group(2)}
+        for m in _RE_VFR_FORM.finditer(src)
+    ]
+
+    # Callback keys / AMI_CALLBACK_KEY macros
+    cb_keys = [m.group(1) or m.group(2) for m in _RE_VFR_CB.finditer(src) if m.group(1) or m.group(2)]
+
+    # Labels (used for goto and dynamic form updates)
+    labels = _RE_VFR_LABEL.findall(src)
+
+    return {
+        'includes':      includes,
+        'uni_includes':  uni_includes,
+        'hfr_includes':  hfr_includes,
+        'str_refs':      str_refs,
+        'formsets':      formsets,
+        'forms':         forms,
+        'cb_keys':       cb_keys,
+        'labels':        labels,
+    }
+
+
+def scan_vfr(src: str) -> dict:
+    """
+    Parse UEFI standard VFR (Visual Forms Representation) file.
+    VFR defines HII Setup UI forms and is compiled into IFR binary.
+    """
+    return _parse_vfr_hfr(src)
+
+
+# ─── scan_hfr ─────────────────────────────────────────────────────────────────
+def scan_hfr(src: str) -> dict:
+    """
+    Parse AMI HFR (HII Form Resource) file.
+    HFR is AMI's extension of VFR with additional macros:
+    - DEFINE HII_FORMSET_GUID = { ... }
+    - AMI_CALLBACK_KEY(KEY_xxx)
+    - SUPPRESS_GRAYOUT_ENDIF
+    - Often prefixed with large #define blocks for Setup variables
+
+    HFR files are typically #include'd from a main .vfr or other .hfr files.
+    They partition the BIOS Setup forms into manageable units.
+    """
+    data = _parse_vfr_hfr(src)
+    # Additional HFR-specific: DEFINE HII_FORMSET_GUID
+    RE_HFR_GUID = re.compile(r'#define\s+\w*FORMSET_GUID\s+\{([^}]+)\}', re.IGNORECASE)
+    formset_guids = [m.group(1).strip() for m in RE_HFR_GUID.finditer(src)]
+    data['formset_guids'] = formset_guids
+    return data
+
+
+# ─── scan_uni ─────────────────────────────────────────────────────────────────
+def scan_uni(src: str) -> dict:
+    """
+    Parse UEFI UNI (Unicode String Package) file.
+
+    UNI format:
+      //-*- coding: utf-8 -*-        ← BOM/coding comment (optional)
+      #langdef en-US "English"       ← language definition
+      #string STR_MODULE_NAME        ← token name declaration
+        #language en-US "Module Name"
+        #language zh-Hant "模組名稱"
+
+    This file is the 'string table' that VFR/HFR reference via STRING_TOKEN().
+    Build tools compile it into HII String Packages embedded in the driver image.
+
+    Returns:
+      string_names  → list of all #string token names declared
+      languages     → list of RFC4646 language codes (e.g. en-US, zh-Hant)
+      lang_defs     → list of #langdef declarations
+      token_count   → total number of unique tokens
+    """
+    # Strip UTF-8 BOM if present
+    src = src.lstrip('\ufeff')
+
+    RE_STR_DECL = re.compile(r'^#string\s+(\w+)', re.MULTILINE | re.IGNORECASE)
+    RE_LANG     = re.compile(r'^#language\s+(\S+)', re.MULTILINE | re.IGNORECASE)
+    RE_LANGDEF  = re.compile(r'^#langdef\s+(\S+)\s+"([^"]*)"', re.MULTILINE | re.IGNORECASE)
+
+    string_names = list(set(RE_STR_DECL.findall(src)))
+    languages    = list(set(RE_LANG.findall(src)))
+    lang_defs    = [(m.group(1), m.group(2)) for m in RE_LANGDEF.finditer(src)]
+
+    return {
+        'string_names': string_names,
+        'languages':    languages,
+        'lang_defs':    lang_defs,
+        'token_count':  len(string_names),
+    }
+
+
+
+# ─── scan_asl ─────────────────────────────────────────────────────────────────
+def scan_asl(src: str) -> dict:
+    """
+    Parse ACPI ASL (ACPI Source Language) file.
+    ASL uses:
+      Include("file.asl")  — file include
+      External(ObjectName, ...) — cross-table symbol reference
+      DefinitionBlock("name", "SSDT", ...)
+
+    Returns:
+      includes  → list of included ASL filenames
+      externals → list of external object names
+      tablename → DSDT/SSDT identifier string
+    """
+    # Include("xxx.asl") — case insensitive
+    RE_ASL_INC  = re.compile(r'\bInclude\s*\(\s*"([^"]+)"\s*\)', re.IGNORECASE)
+    # External(ObjName, ...) — first arg is the cross-table symbol
+    RE_EXTERNAL = re.compile(r'\bExternal\s*\(\s*\\?(\w[\w.]+)', re.IGNORECASE)
+    # DefinitionBlock table name
+    RE_DEFBLOCK = re.compile(r'\bDefinitionBlock\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"', re.IGNORECASE)
+
+    includes  = RE_ASL_INC.findall(src)
+    externals = RE_EXTERNAL.findall(src)
+    tablename = next((m.group(1) for m in RE_DEFBLOCK.finditer(src)), None)
+
+    # Also grab standard C-style #include for ASL preprocessed files
+    includes += RE_INCLUDE.findall(src)
+
+    return {'includes': includes, 'externals': externals, 'tablename': tablename}
+
+
 # ─── scan_file ────────────────────────────────────────────────────────────────
 def scan_file(filepath: str, root: str):
     """
@@ -352,7 +549,25 @@ def scan_file(filepath: str, root: str):
         data = scan_mak(src)
         return [], [], [], data
 
-    # Remaining: .c, .cpp, .h, .hpp, .vfr, .uni, .asl → treat as C-like
+    # Phase C/D: VFR / HFR / UNI / ASL — specialized parsers
+    if ext == '.vfr':
+        data = scan_vfr(src)
+        # Return all includes (uni_includes + hfr_includes + other)
+        return data['includes'], [], [], data
+
+    if ext == '.hfr':
+        data = scan_hfr(src)
+        return data['includes'], [], [], data
+
+    if ext == '.uni':
+        data = scan_uni(src)
+        return [], [], [], data
+
+    if ext == '.asl':
+        data = scan_asl(src)
+        return data['includes'], [], [], data
+
+    # Remaining: .c, .cpp, .h, .hpp → C-like analysis
     clean = strip_comments(src)
     includes = RE_INCLUDE.findall(clean)
 
@@ -590,6 +805,11 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
                 for tgt in resolve_ref(stem, src_dir):
                     if tgt != src_rel:
                         add_edge(src_rel, tgt, 'library')
+            # Phase C: ELINK parent chain — each ELINK parent points to a .sdl that owns it
+            for parent in extra.get('elink_parents', []):
+                for tgt in resolve_ref(parent, src_dir):
+                    if tgt != src_rel:
+                        add_edge(src_rel, tgt, 'elink')
 
         elif ext == '.cif' and extra:
             # [INF] section → .inf files
@@ -600,6 +820,43 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
             for f in extra.get('files', []):
                 for tgt in resolve_ref(f, src_dir):
                     add_edge(src_rel, tgt, 'cif_own')
+
+        # Phase D: VFR → UNI (str_ref) / HFR (include) edges
+        elif ext == '.vfr' and extra:
+            # .uni string packages → str_ref (this VFR depends on that UNI for string tokens)
+            for uni_f in extra.get('uni_includes', []):
+                for tgt in resolve_ref(uni_f, src_dir):
+                    add_edge(src_rel, tgt, 'str_ref')
+            # .hfr sub-forms → include (this VFR includes that HFR form fragment)
+            for hfr_f in extra.get('hfr_includes', []):
+                for tgt in resolve_ref(hfr_f, src_dir):
+                    add_edge(src_rel, tgt, 'include')
+            # Other #include (e.g. .h header defines)
+            for inc in extra.get('includes', []):
+                ext_i = Path(inc).suffix.lower()
+                if ext_i not in ('.uni', '.hfr'):  # already handled above
+                    for tgt in resolve_ref(inc, src_dir):
+                        add_edge(src_rel, tgt, 'include')
+
+        # Phase D: HFR (AMI HII Form Resource) — same pattern as VFR
+        elif ext == '.hfr' and extra:
+            for uni_f in extra.get('uni_includes', []):
+                for tgt in resolve_ref(uni_f, src_dir):
+                    add_edge(src_rel, tgt, 'str_ref')
+            for hfr_f in extra.get('hfr_includes', []):
+                for tgt in resolve_ref(hfr_f, src_dir):
+                    add_edge(src_rel, tgt, 'include')
+            for inc in extra.get('includes', []):
+                ext_i = Path(inc).suffix.lower()
+                if ext_i not in ('.uni', '.hfr'):
+                    for tgt in resolve_ref(inc, src_dir):
+                        add_edge(src_rel, tgt, 'include')
+
+        # Phase C: ASL → Include edges
+        elif ext == '.asl' and extra:
+            for inc in extra.get('includes', []):
+                for tgt in resolve_ref(inc, src_dir):
+                    add_edge(src_rel, tgt, 'asl_include')
 
     _cb(80, 'Building function index...')
     func_name_to_file = {}
