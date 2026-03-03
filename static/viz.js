@@ -19,8 +19,8 @@ const l2State = {
     activeFuncIdx: 0,
     expandedModules: new Set(),
     externalModules: [],
-    history: [],
-    historyIdx: -1,
+    fileHistory: [],
+    fileHistoryIdx: -1,
     showExternalEdges: true,
 };
 
@@ -36,6 +36,8 @@ const codeState = {
 };
 
 let cy = null;
+let tooltipPinned = false;
+let tooltipHideTimer = null;
 const DEFAULT_CODE_FONT = "'JetBrains Mono', monospace";
 
 function getSavedFont() {
@@ -109,6 +111,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // L2 toolbar init
                 initL2Toolbar();
+
+                // Tooltip actions init
+                initTooltipActions();
 
                 // Ensure Canvas redraws after Google Fonts are fully loaded
                 document.fonts.ready.then(() => {
@@ -247,6 +252,33 @@ function initL2Toolbar() {
     window.addEventListener('mouseup', onL2MouseNav);
 }
 
+function initTooltipActions() {
+    const tip = document.getElementById('tooltip');
+    if (!tip) return;
+
+    tip.addEventListener('mouseenter', () => {
+        tooltipPinned = true;
+        if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+    });
+    tip.addEventListener('mouseleave', () => {
+        tooltipPinned = false;
+        hideTooltip();
+        clearHighlight();
+    });
+    tip.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const file = decodeURIComponent(btn.dataset.file || '');
+        const func = decodeURIComponent(btn.dataset.func || '');
+        if (action === 'open') {
+            openL2File(file, { pushHistory: true, focusFunc: func || null });
+        } else if (action === 'view') {
+            _syncCodePanel(file, func || null);
+        }
+    });
+}
+
 function onL2MouseNav(e) {
     if (state.level !== 2) return;
     if (e.button === 3) {
@@ -274,28 +306,26 @@ function applyExternalEdgeVisibility() {
 function updateL2NavButtons() {
     const prevBtn = document.getElementById('l2-prev');
     const nextBtn = document.getElementById('l2-next');
-    const canPrev = l2State.historyIdx > 0;
-    const canNext = l2State.historyIdx >= 0 && l2State.historyIdx < l2State.history.length - 1;
+    const canPrev = l2State.fileHistoryIdx > 0;
+    const canNext = l2State.fileHistoryIdx >= 0 && l2State.fileHistoryIdx < l2State.fileHistory.length - 1;
     if (prevBtn) prevBtn.disabled = !canPrev;
     if (nextBtn) nextBtn.disabled = !canNext;
 }
 
 function goL2Prev() {
-    if (l2State.historyIdx <= 0) return;
-    l2State.historyIdx -= 1;
-    const entry = l2State.history[l2State.historyIdx];
-    if (!entry) return;
-    if (entry.type === 'func') focusL2Func(l2State.activeFile, entry.idx, { pushHistory: false, center: true });
-    else focusL2External(entry, { center: true });
+    if (l2State.fileHistoryIdx <= 0) return;
+    l2State.fileHistoryIdx -= 1;
+    const fileRel = l2State.fileHistory[l2State.fileHistoryIdx];
+    if (!fileRel) return;
+    openL2File(fileRel, { pushHistory: false });
 }
 
 function goL2Next() {
-    if (l2State.historyIdx < 0 || l2State.historyIdx >= l2State.history.length - 1) return;
-    l2State.historyIdx += 1;
-    const entry = l2State.history[l2State.historyIdx];
-    if (!entry) return;
-    if (entry.type === 'func') focusL2Func(l2State.activeFile, entry.idx, { pushHistory: false, center: true });
-    else focusL2External(entry, { center: true });
+    if (l2State.fileHistoryIdx < 0 || l2State.fileHistoryIdx >= l2State.fileHistory.length - 1) return;
+    l2State.fileHistoryIdx += 1;
+    const fileRel = l2State.fileHistory[l2State.fileHistoryIdx];
+    if (!fileRel) return;
+    openL2File(fileRel, { pushHistory: false });
 }
 
 function setL2ToolbarVisible(v) {
@@ -327,17 +357,27 @@ function clearFuncOverlay() {
     document.getElementById('cy').style.display = '';
 }
 
+function openFileInVsCode(fileRel) {
+    if (!fileRel) return;
+    const root = DATA.stats.root;
+    const abs = root.replace(/\//g, '\\') + '\\' + fileRel.replace(/\//g, '\\');
+    window.open(`vscode://file/${abs}`);
+}
+
 function resetL2State(fileRel) {
     l2State.activeFile = fileRel;
     l2State.activeFuncIdx = 0;
     l2State.expandedModules = new Set();
     l2State.externalModules = [];
-    l2State.history = [];
-    l2State.historyIdx = -1;
+}
+
+function resetL2History() {
+    l2State.fileHistory = [];
+    l2State.fileHistoryIdx = -1;
 }
 
 function focusL2Func(fileRel, idx, opts = {}) {
-    const { pushHistory = true, center = false } = opts;
+    const { center = false } = opts;
     const funcs = DATA.funcs_by_file[fileRel] || [];
     if (!funcs[idx]) return;
     l2State.activeFuncIdx = idx;
@@ -350,10 +390,6 @@ function focusL2Func(fileRel, idx, opts = {}) {
         }
     }
     _syncCodePanel(fileRel, funcs[idx].label);
-
-    if (pushHistory) {
-        pushL2History({ type: 'func', idx });
-    }
     updateL2NavButtons();
 }
 
@@ -376,20 +412,14 @@ function focusL2External(entry, opts = {}) {
     updateL2NavButtons();
 }
 
-function sameL2Entry(a, b) {
-    if (!a || !b || a.type !== b.type) return false;
-    if (a.type === 'func') return a.idx === b.idx;
-    return a.func === b.func && a.mod === b.mod && a.file === b.file;
-}
-
-function pushL2History(entry) {
-    const current = l2State.history[l2State.historyIdx];
-    if (sameL2Entry(current, entry)) return;
-    if (l2State.historyIdx < l2State.history.length - 1) {
-        l2State.history = l2State.history.slice(0, l2State.historyIdx + 1);
+function pushL2FileHistory(fileRel) {
+    const current = l2State.fileHistory[l2State.fileHistoryIdx];
+    if (current === fileRel) return;
+    if (l2State.fileHistoryIdx < l2State.fileHistory.length - 1) {
+        l2State.fileHistory = l2State.fileHistory.slice(0, l2State.fileHistoryIdx + 1);
     }
-    l2State.history.push(entry);
-    l2State.historyIdx = l2State.history.length - 1;
+    l2State.fileHistory.push(fileRel);
+    l2State.fileHistoryIdx = l2State.fileHistory.length - 1;
 }
 
 function toggleExternalGroup(modName) {
@@ -397,6 +427,15 @@ function toggleExternalGroup(modName) {
     if (l2State.expandedModules.has(modName)) l2State.expandedModules.delete(modName);
     else l2State.expandedModules.add(modName);
     renderL2Flowchart(l2State.activeFile);
+}
+
+function openL2File(fileRel, opts = {}) {
+    const { pushHistory = true, newSession = false, focusFunc = null } = opts;
+    if (!fileRel) return;
+    if (newSession) resetL2History();
+    pushHistory && pushL2FileHistory(fileRel);
+    renderL2Flowchart(fileRel, focusFunc);
+    updateL2NavButtons();
 }
 
 function _safeId(s) {
@@ -413,7 +452,7 @@ function _hashId(s) {
     return Math.abs(h).toString(36);
 }
 
-function renderL2Flowchart(fileRel) {
+function renderL2Flowchart(fileRel, focusFuncName = null) {
     if (!fileRel) return;
     showLoading(true, 'Rendering call flow...');
     clearFuncOverlay();
@@ -422,6 +461,10 @@ function renderL2Flowchart(fileRel) {
     if (l2State.activeFile !== fileRel) resetL2State(fileRel);
 
     const funcs = DATA.funcs_by_file[fileRel] || [];
+    if (focusFuncName) {
+        const idx = funcs.findIndex(f => f.label === focusFuncName);
+        if (idx >= 0) l2State.activeFuncIdx = idx;
+    }
     if (l2State.activeFuncIdx >= funcs.length) l2State.activeFuncIdx = 0;
     updateL2Toolbar(fileRel, { funcs: funcs.length, internalEdges: 0, extModules: 0, extFuncs: 0 });
 
@@ -637,8 +680,7 @@ function renderL2Flowchart(fileRel) {
             legacy: !hasCallList,
         });
         updateExternalToggle();
-        const shouldPush = l2State.historyIdx < 0;
-        focusL2Func(fileRel, l2State.activeFuncIdx || 0, { pushHistory: shouldPush, center: true });
+        focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: true });
     });
     lay.run();
 }
@@ -1041,7 +1083,7 @@ function initCy() {
     cy.on('tap', 'node', e => onNodeTap(e.target));
     cy.on('cxttap', 'node', e => onNodeRightClick(e, e.target));
     cy.on('mouseover', 'node', e => { showTooltip(e); highlightNode(e.target); });
-    cy.on('mouseout', 'node', () => { hideTooltip(); clearHighlight(); });
+    cy.on('mouseout', 'node', () => { scheduleHideTooltip(); });
     cy.on('tap', e => { if (e.target === cy) clearSelection(); });
     // // Double-tap a file node → drill to L2 (disabled per request)
     // cy.on('dbltap', 'node', e => {
@@ -1449,7 +1491,7 @@ function drillToFile(fileRel) {
     updateBreadcrumb();
 
     // showFuncView handles code panel sync — do NOT call loadFileInPanel separately
-    renderL2Flowchart(fileRel);
+    openL2File(fileRel, { newSession: true, pushHistory: true });
     document.getElementById('graph-toggle-btn')?.classList.add('active');
 }
 
@@ -1613,7 +1655,7 @@ function onNodeTap(node) {
     if (state.level === 2) {
         if (d._t === 'func') {
             highlightNode(node);
-            focusL2Func(d._f, d.idx, { pushHistory: true, center: true });
+            focusL2Func(d._f, d.idx, { center: true });
             return;
         }
         if (d._t === 'ext_group') {
@@ -1622,9 +1664,11 @@ function onNodeTap(node) {
         }
         if (d._t === 'ext_func') {
             highlightNode(node);
-            const entry = { type: 'ext', file: d._f, func: d.fn, mod: d.mod, nodeId: node.id() };
-            pushL2History(entry);
-            focusL2External(entry, { center: true });
+            if (d._f) {
+                openL2File(d._f, { pushHistory: true, focusFunc: d.fn });
+            } else {
+                focusL2External({ file: null, func: d.fn, mod: d.mod, nodeId: node.id() }, { center: true });
+            }
             return;
         }
     }
@@ -1876,6 +1920,19 @@ function showTooltip(e) {
         const outCount = e.target.outgoers('edge').length;
         const inCount = e.target.incomers('edge').length;
 
+        if (d._t === 'ext_func') {
+            const fileRel = d._f || '';
+            const funcName = d.fn || '';
+            html += `<div style="font-weight:bold;">${escapeHtml(funcName)}</div>`;
+            html += fileRel
+                ? `<div style="margin-top:4px;color:#cbd5e1;font-size:11px;">${escapeHtml(fileRel)}</div>`
+                : `<div style="margin-top:4px;color:#cbd5e1;font-size:11px;">Unknown target</div>`;
+            html += `<div class="tip-actions">` +
+                `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">Open Location</button>` +
+                `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">View File</button>` +
+                `</div>`;
+        } else {
+
         // 取得 tooltip 原文字的第一行 (標題/路徑) 和剩餘內容
         const lines = d.tt.split('\n');
         const titleRaw = lines[0] || '';
@@ -1940,6 +1997,7 @@ function showTooltip(e) {
 
             html += `</div>`;
         }
+        }
     } else {
         // Edge tooltip
         html = escapeHtml(d.tt).replace(/\n/g, '<br>');
@@ -1952,6 +2010,16 @@ function showTooltip(e) {
     tip.style.top = (e.originalEvent.clientY + 14) + 'px';
 }
 function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
+
+function scheduleHideTooltip() {
+    if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+    tooltipHideTimer = setTimeout(() => {
+        if (!tooltipPinned) {
+            hideTooltip();
+            clearHighlight();
+        }
+    }, 120);
+}
 
 // ─── Loading ──────────────────────────────────────────────────────────────────
 function showLoading(v, msg) {

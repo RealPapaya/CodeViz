@@ -11,6 +11,7 @@ from collections import defaultdict
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 SKIP_DIRS  = {'Build','build','.git','__pycache__','Conf','DEBUG','RELEASE','.claude'}
+BUILD_DIRS = {'Build','build','DEBUG','RELEASE'}
 SCAN_EXT   = {
     # C/C++ / ASM
     '.c','.cpp','.cc','.h','.hpp','.asm','.s','.S','.nasm',
@@ -649,7 +650,7 @@ def get_module(rel_path: str) -> str:
 
 
 # ─── build_graph ─────────────────────────────────────────────────────────────
-def build_graph(root_dir: str, progress_cb=None) -> dict:
+def build_graph(root_dir: str, progress_cb=None, include_build=False, include_dirs=None) -> dict:
     def _cb(pct, msg):
         print(f'[{pct:3d}%] {msg}', end='\r')
         if progress_cb: progress_cb(pct, msg)
@@ -658,8 +659,13 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
     all_files = []
 
     _cb(0, 'Scanning files...')
+    skip_dirs = set(SKIP_DIRS)
+    if include_build:
+        skip_dirs -= BUILD_DIRS
+    if include_dirs:
+        skip_dirs -= set(include_dirs)
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fname in filenames:
             ext = Path(fname).suffix.lower()
             if ext in SCAN_EXT and ext not in SKIP_EXT:
@@ -1224,6 +1230,10 @@ def main():
     parser.add_argument('root', help='Root directory of BIOS codebase')
     parser.add_argument('-o', '--output', default='bios_viz.html',
                         help='Output HTML file (default: bios_viz.html)')
+    parser.add_argument('--include-build', action='store_true',
+                        help='Include build output directories (Build/build/DEBUG/RELEASE)')
+    parser.add_argument('--include-dir', action='append', default=[],
+                        help='Directory name to include even if normally skipped (repeatable)')
     args = parser.parse_args()
 
     if not os.path.isdir(args.root):
@@ -1231,7 +1241,7 @@ def main():
         sys.exit(1)
 
     print(f'BIOSVIZ V3 — analyzing: {args.root}')
-    data = build_graph(args.root)
+    data = build_graph(args.root, include_build=args.include_build, include_dirs=args.include_dir)
 
     s = data['stats']
     print(f'\nAnalysis complete:')

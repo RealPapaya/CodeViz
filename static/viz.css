@@ -1091,12 +1091,34 @@ body {
     border-radius: 6px;
     padding: 8px 12px;
     font-size: 12px;
-    pointer-events: none;
+    pointer-events: auto;
     z-index: 999;
     display: none;
     max-width: 300px;
     line-height: 1.6;
     white-space: pre-line
+}
+
+.tip-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 6px;
+}
+
+.tip-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .15s;
+}
+
+.tip-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
 }
 
 /* ── Loading (graph) ── */
