@@ -427,6 +427,93 @@ body {
     height: 100%
 }
 
+/* L2 Flowchart Toolbar */
+.l2-toolbar {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    right: 12px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(9, 14, 20, 0.92);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+}
+
+.l2-toolbar.hidden {
+    display: none;
+}
+
+.l2-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.l2-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+}
+
+.l2-sub {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 55vw;
+}
+
+.l2-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.l2-btn {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .15s;
+}
+
+.l2-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.l2-btn:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.l2-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.l2-stats {
+    font-size: 11px;
+    color: var(--muted);
+    padding-left: 6px;
+}
+
 /* ── Resizer ── */
 #resizer,
 #sidebar-resizer {

@@ -141,6 +141,47 @@ def strip_comments(src: str) -> str:
     return ''.join(result)
 
 
+# Remove string and char literals to avoid brace confusion
+def mask_string_literals(src: str) -> str:
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        ch = src[i]
+        if ch in ('"', "'"):
+            q = ch
+            out.append(' ')
+            i += 1
+            while i < n:
+                c = src[i]
+                if c == '\\':
+                    out.append(' ')
+                    i += 1
+                    if i < n:
+                        out.append(' ')
+                        i += 1
+                    continue
+                out.append(' ')
+                i += 1
+                if c == q:
+                    break
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
+def find_matching_brace(src: str, open_idx: int) -> int:
+    depth = 0
+    for i in range(open_idx, len(src)):
+        if src[i] == '{':
+            depth += 1
+        elif src[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
 # ─── INF section parser ───────────────────────────────────────────────────────
 def _parse_ini_sections(src: str) -> dict:
     """Parse INF/DEC/DSC/FDF style [Section] key=val files into a dict of lists."""
@@ -504,74 +545,75 @@ def scan_asl(src: str) -> dict:
 # ─── scan_file ────────────────────────────────────────────────────────────────
 def scan_file(filepath: str, root: str):
     """
-    Returns (includes_or_refs, funcdefs, funccalls, bios_extra_dict)
+    Returns (includes_or_refs, funcdefs, funccalls, bios_extra_dict, func_calls_by_func)
     bios_extra_dict varies by file type; None for C/H/ASM.
     """
     try:
         src = Path(filepath).read_text(encoding='utf-8', errors='replace')
     except Exception:
-        return [], [], [], None
+        return [], [], [], None, []
 
     ext = Path(filepath).suffix.lower()
 
     if ext in ('.asm', '.s', '.S', '.nasm'):
         includes = [m.group(1) or m.group(2) for m in RE_ASM_INC.finditer(src)]
-        return includes, [], [], None
+        return includes, [], [], None, []
 
     if ext == '.inf':
         data = scan_inf(src)
         refs = data['sources'] + data['packages']
-        return refs, [], [], data
+        return refs, [], [], data, []
 
     if ext == '.dec':
         data = scan_dec(src)
-        return [], [], [], data
+        return [], [], [], data, []
 
     if ext == '.dsc':
         data = scan_dsc(src)
-        return data['components'], [], [], data
+        return data['components'], [], [], data, []
 
     if ext == '.fdf':
         data = scan_fdf(src)
-        return data['infs'], [], [], data
+        return data['infs'], [], [], data, []
 
     if ext == '.sdl':
         data = scan_sdl(src)
         refs = data['inf_components']
-        return refs, [], [], data
+        return refs, [], [], data, []
 
     if ext == '.cif':
         data = scan_cif(src)
         refs = data['infs'] + data['files']
-        return refs, [], [], data
+        return refs, [], [], data, []
 
     if ext == '.mak':
         data = scan_mak(src)
-        return [], [], [], data
+        return [], [], [], data, []
 
     # Phase C/D: VFR / HFR / UNI / ASL — specialized parsers
     if ext == '.vfr':
         data = scan_vfr(src)
         # Return all includes (uni_includes + hfr_includes + other)
-        return data['includes'], [], [], data
+        return data['includes'], [], [], data, []
 
     if ext == '.hfr':
         data = scan_hfr(src)
-        return data['includes'], [], [], data
+        return data['includes'], [], [], data, []
 
     if ext == '.uni':
         data = scan_uni(src)
-        return [], [], [], data
+        return [], [], [], data, []
 
     if ext == '.asl':
         data = scan_asl(src)
-        return data['includes'], [], [], data
+        return data['includes'], [], [], data, []
 
     # Remaining: .c, .cpp, .h, .hpp → C-like analysis
     clean = strip_comments(src)
+    masked = mask_string_literals(clean)
     includes = RE_INCLUDE.findall(clean)
 
-    funcdefs, funccalls = [], []
+    funcdefs, funccalls, func_calls_by_func = [], [], []
     for m in RE_FUNCDEF.finditer(clean):
         is_efiapi = bool(m.group(1))
         name = m.group(2)
@@ -581,12 +623,23 @@ def scan_file(filepath: str, root: str):
         is_static = bool(RE_STATIC.search(line_before.split('\n')[-1] if '\n' in line_before else line_before))
         funcdefs.append({'label': name, 'is_efiapi': is_efiapi, 'is_static': is_static})
 
+        open_idx = m.end() - 1  # regex ends at '{'
+        close_idx = find_matching_brace(masked, open_idx)
+        body = masked[open_idx + 1:close_idx] if close_idx > open_idx else ''
+        calls = []
+        if body:
+            for cm in RE_FUNCCALL.finditer(body):
+                cname = cm.group(1)
+                if cname not in C_KEYWORDS and len(cname) >= 2:
+                    calls.append(cname)
+        func_calls_by_func.append(calls)
+
     for m in RE_FUNCCALL.finditer(clean):
         name = m.group(1)
         if name not in C_KEYWORDS and len(name) >= 2:
             funccalls.append(name)
 
-    return includes, funcdefs, funccalls, None
+    return includes, funcdefs, funccalls, None, func_calls_by_func
 
 
 # ─── get_module ───────────────────────────────────────────────────────────────
@@ -621,12 +674,14 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
     file_calls  = {}  # rel_path → [call names]
     file_extra  = {}  # rel_path → bios_extra dict (for .inf/.sdl/.cif etc.)
 
+    file_func_calls = {}
+
     for i, fp in enumerate(all_files):
         if i % 50 == 0:
             pct = int(i / total * 60) if total else 0
             _cb(pct, f'{i}/{total} files analyzed')
         rel = os.path.relpath(fp, root).replace('\\', '/')
-        inc, defs, calls, extra = scan_file(fp, root)
+        inc, defs, calls, extra, func_calls_by_func = scan_file(fp, root)
         ext = Path(fp).suffix.lower()
         bios_meta = {}
         if extra and 'meta' in extra:
@@ -643,6 +698,7 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
         file_incs[rel]  = inc
         file_defs[rel]  = defs
         file_calls[rel] = calls
+        file_func_calls[rel] = func_calls_by_func
         file_extra[rel] = extra
 
     _cb(60, 'Building module index...')
@@ -860,13 +916,18 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
 
     _cb(80, 'Building function index...')
     func_name_to_file = {}
+    func_name_ambiguous = set()
     for rel, defs in file_defs.items():
         for d in defs:
-            if d['label'] not in func_name_to_file:
-                func_name_to_file[d['label']] = rel
+            name = d['label']
+            if name not in func_name_to_file:
+                func_name_to_file[name] = rel
+            else:
+                func_name_ambiguous.add(name)
 
-    funcs_by_file      = {}
-    func_edges_by_file = {}
+    funcs_by_file       = {}
+    func_edges_by_file  = {}
+    func_calls_by_file  = {}
 
     _cb(85, 'Resolving call edges...')
     for rel, defs in file_defs.items():
@@ -882,12 +943,20 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
             }
             for i, d in enumerate(defs)
         ]
-        intra_calls = set(file_calls.get(rel, [])) & fid_map.keys()
+        calls_by_func = file_func_calls.get(rel, [])
+        if len(calls_by_func) < len(defs):
+            calls_by_func = calls_by_func + ([[]] * (len(defs) - len(calls_by_func)))
+        elif len(calls_by_func) > len(defs):
+            calls_by_func = calls_by_func[:len(defs)]
+        func_calls_by_file[rel] = calls_by_func
+
         edges = []
         seen_edge = set()
         for caller_idx, d in enumerate(defs):
-            for callee in intra_calls:
-                callee_idx = fid_map[callee]
+            for callee in calls_by_func[caller_idx]:
+                callee_idx = fid_map.get(callee)
+                if callee_idx is None:
+                    continue
                 if callee_idx == caller_idx:
                     continue
                 key = (caller_idx, callee_idx)
@@ -895,10 +964,6 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
                     seen_edge.add(key)
                     edges.append({'s': caller_idx, 't': callee_idx,
                                   'p': int(d['is_static'])})
-                    if len(edges) >= 300:
-                        break
-            if len(edges) >= 300:
-                break
         func_edges_by_file[rel] = edges
 
     _cb(95, 'Assembling output...')
@@ -926,6 +991,8 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
     for meta in file_meta.values():
         type_counts[meta['file_type']] += 1
 
+    file_to_module = {rel: meta['module'] for rel, meta in file_meta.items()}
+
     _cb(100, 'Done!')
     print()
     return {
@@ -935,6 +1002,10 @@ def build_graph(root_dir: str, progress_cb=None) -> dict:
         'file_edges_by_module': dict(file_edges_by_module),
         'funcs_by_file':        funcs_by_file,
         'func_edges_by_file':   func_edges_by_file,
+        'func_calls_by_file':   func_calls_by_file,
+        'func_name_to_file':    func_name_to_file,
+        'func_name_ambiguous':  sorted(func_name_ambiguous),
+        'file_to_module':       file_to_module,
         'edge_types':           EDGE_TYPES,
         'stats': {
             'files':      total,
@@ -1004,6 +1075,20 @@ HTML_SKELETON = """\
   </div>
   <div id="sidebar-resizer"></div>
   <div id="graph-wrap">
+    <div id="l2-toolbar" class="l2-toolbar hidden">
+      <div class="l2-left">
+        <div class="l2-title">Call Flow</div>
+        <div class="l2-sub" id="l2-file-label">No file</div>
+      </div>
+      <div class="l2-actions">
+        <button id="l2-prev" class="l2-btn">Prev</button>
+        <button id="l2-next" class="l2-btn">Next</button>
+        <button id="l2-toggle-ext" class="l2-btn">Ext Lines: On</button>
+        <button id="l2-expand-all" class="l2-btn">Expand All</button>
+        <button id="l2-collapse-all" class="l2-btn">Collapse All</button>
+        <span id="l2-stats" class="l2-stats"></span>
+      </div>
+    </div>
     <div id="cy"></div>
     <div id="func-view"></div>
     <div id="loading"><div class="spinner"></div><span id="loading-msg">Loading...</span></div>

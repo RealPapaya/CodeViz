@@ -863,7 +863,7 @@
                         if (pct >= nextThreshold || pct === 100) {
                             cliHtml += `<div class="cli-line done"><span class="step">${label}</span><span class="status">-&gt; done</span></div>`;
                         } else {
-                            cliHtml += `<div class="cli-line active"><span class="step">${label}</span><span class="status">(${msg})...</span></div>`;
+                            cliHtml += `<div class="cli-line active"><span class="step">${label}</span><span class="status">${msg}</span></div>`;
                         }
                     }
                 }
@@ -1021,10 +1021,10 @@
             }
 
             // Base absolute travel speed in 3D units per frame
-            const CONSTANT_SPEED = 7; // Slowed down from 15
+            const CONSTANT_SPEED = 3; // Slowed down from 15
 
             // Signal logic
-            if (window.bgAnalyzing && signals.length < 2) {
+            if (window.bgAnalyzing && signals.length < 3) {
                 if (Math.random() < 0.1) {
                     let startIdx = Math.floor(Math.random() * nodes.length);
                     let conns = nodes[startIdx].connections;

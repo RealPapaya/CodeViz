@@ -14,6 +14,16 @@ const state = {
     pinnedNodes: new Set(),
 };
 
+const l2State = {
+    activeFile: null,
+    activeFuncIdx: 0,
+    expandedModules: new Set(),
+    externalModules: [],
+    history: [],
+    historyIdx: -1,
+    showExternalEdges: true,
+};
+
 // Code panel state
 const codeState = {
     jobId: window.JOB_ID || null,
@@ -96,6 +106,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // Preferences init
                 initPreferences();
+
+                // L2 toolbar init
+                initL2Toolbar();
 
                 // Ensure Canvas redraws after Google Fonts are fully loaded
                 document.fonts.ready.then(() => {
@@ -194,6 +207,440 @@ function initPreferences() {
             fontSelect.style.fontFamily = font;
         });
     }
+}
+
+function initL2Toolbar() {
+    const prevBtn = document.getElementById('l2-prev');
+    const nextBtn = document.getElementById('l2-next');
+    const toggleExtBtn = document.getElementById('l2-toggle-ext');
+    const expandBtn = document.getElementById('l2-expand-all');
+    const collapseBtn = document.getElementById('l2-collapse-all');
+
+    if (prevBtn) prevBtn.addEventListener('click', goL2Prev);
+    if (nextBtn) nextBtn.addEventListener('click', goL2Next);
+    if (toggleExtBtn) {
+        toggleExtBtn.addEventListener('click', () => {
+            l2State.showExternalEdges = !l2State.showExternalEdges;
+            updateExternalToggle();
+            applyExternalEdgeVisibility();
+        });
+    }
+
+    if (expandBtn) {
+        expandBtn.addEventListener('click', () => {
+            if (!l2State.activeFile) return;
+            l2State.expandedModules = new Set(l2State.externalModules || []);
+            renderL2Flowchart(l2State.activeFile);
+        });
+    }
+
+    if (collapseBtn) {
+        collapseBtn.addEventListener('click', () => {
+            if (!l2State.activeFile) return;
+            l2State.expandedModules = new Set();
+            renderL2Flowchart(l2State.activeFile);
+        });
+    }
+
+    updateExternalToggle();
+    updateL2NavButtons();
+    window.addEventListener('mouseup', onL2MouseNav);
+}
+
+function onL2MouseNav(e) {
+    if (state.level !== 2) return;
+    if (e.button === 3) {
+        e.preventDefault();
+        goL2Prev();
+    } else if (e.button === 4) {
+        e.preventDefault();
+        goL2Next();
+    }
+}
+
+function updateExternalToggle() {
+    const btn = document.getElementById('l2-toggle-ext');
+    if (!btn) return;
+    btn.textContent = l2State.showExternalEdges ? 'Ext Lines: On' : 'Ext Lines: Off';
+    btn.classList.toggle('active', l2State.showExternalEdges);
+}
+
+function applyExternalEdgeVisibility() {
+    if (!cy) return;
+    const edges = cy.edges('[el="ext"]');
+    edges.style('display', l2State.showExternalEdges ? 'element' : 'none');
+}
+
+function updateL2NavButtons() {
+    const prevBtn = document.getElementById('l2-prev');
+    const nextBtn = document.getElementById('l2-next');
+    const canPrev = l2State.historyIdx > 0;
+    const canNext = l2State.historyIdx >= 0 && l2State.historyIdx < l2State.history.length - 1;
+    if (prevBtn) prevBtn.disabled = !canPrev;
+    if (nextBtn) nextBtn.disabled = !canNext;
+}
+
+function goL2Prev() {
+    if (l2State.historyIdx <= 0) return;
+    l2State.historyIdx -= 1;
+    const entry = l2State.history[l2State.historyIdx];
+    if (!entry) return;
+    if (entry.type === 'func') focusL2Func(l2State.activeFile, entry.idx, { pushHistory: false, center: true });
+    else focusL2External(entry, { center: true });
+}
+
+function goL2Next() {
+    if (l2State.historyIdx < 0 || l2State.historyIdx >= l2State.history.length - 1) return;
+    l2State.historyIdx += 1;
+    const entry = l2State.history[l2State.historyIdx];
+    if (!entry) return;
+    if (entry.type === 'func') focusL2Func(l2State.activeFile, entry.idx, { pushHistory: false, center: true });
+    else focusL2External(entry, { center: true });
+}
+
+function setL2ToolbarVisible(v) {
+    const bar = document.getElementById('l2-toolbar');
+    if (!bar) return;
+    bar.classList.toggle('hidden', !v);
+}
+
+function updateL2Toolbar(fileRel, stats) {
+    const label = document.getElementById('l2-file-label');
+    const statsEl = document.getElementById('l2-stats');
+    if (label) label.textContent = fileRel || 'No file';
+    if (statsEl && stats) {
+        const parts = [];
+        parts.push(`${stats.funcs || 0} funcs`);
+        parts.push(`${stats.internalEdges || 0} edges`);
+        if (stats.extModules) parts.push(`${stats.extModules} modules`);
+        if (stats.extFuncs) parts.push(`${stats.extFuncs} ext funcs`);
+        if (stats.legacy) parts.push('legacy edges');
+        statsEl.textContent = parts.join(' | ');
+    }
+}
+
+function clearFuncOverlay() {
+    const fv = document.getElementById('func-view');
+    if (!fv) return;
+    fv.classList.remove('active');
+    fv.innerHTML = '';
+    document.getElementById('cy').style.display = '';
+}
+
+function resetL2State(fileRel) {
+    l2State.activeFile = fileRel;
+    l2State.activeFuncIdx = 0;
+    l2State.expandedModules = new Set();
+    l2State.externalModules = [];
+    l2State.history = [];
+    l2State.historyIdx = -1;
+}
+
+function focusL2Func(fileRel, idx, opts = {}) {
+    const { pushHistory = true, center = false } = opts;
+    const funcs = DATA.funcs_by_file[fileRel] || [];
+    if (!funcs[idx]) return;
+    l2State.activeFuncIdx = idx;
+    const node = cy.$id(`fn-${idx}`);
+    if (node && node.length) {
+        cy.elements().unselect();
+        node.select();
+        if (center) {
+            cy.animate({ center: { eles: node }, duration: 200 });
+        }
+    }
+    _syncCodePanel(fileRel, funcs[idx].label);
+
+    if (pushHistory) {
+        pushL2History({ type: 'func', idx });
+    }
+    updateL2NavButtons();
+}
+
+function focusL2External(entry, opts = {}) {
+    const { center = false } = opts;
+    if (!entry) return;
+    let node = entry.nodeId ? cy.$id(entry.nodeId) : null;
+    if (!node || !node.length) {
+        node = cy.nodes().filter(n => n.data('_t') === 'ext_func'
+            && n.data('fn') === entry.func
+            && n.data('mod') === entry.mod);
+    }
+    if (node && node.length) {
+        cy.elements().unselect();
+        node.select();
+        highlightNode(node);
+        if (center) cy.animate({ center: { eles: node }, duration: 200 });
+    }
+    if (entry.file) _syncCodePanel(entry.file, entry.func);
+    updateL2NavButtons();
+}
+
+function sameL2Entry(a, b) {
+    if (!a || !b || a.type !== b.type) return false;
+    if (a.type === 'func') return a.idx === b.idx;
+    return a.func === b.func && a.mod === b.mod && a.file === b.file;
+}
+
+function pushL2History(entry) {
+    const current = l2State.history[l2State.historyIdx];
+    if (sameL2Entry(current, entry)) return;
+    if (l2State.historyIdx < l2State.history.length - 1) {
+        l2State.history = l2State.history.slice(0, l2State.historyIdx + 1);
+    }
+    l2State.history.push(entry);
+    l2State.historyIdx = l2State.history.length - 1;
+}
+
+function toggleExternalGroup(modName) {
+    if (!modName) return;
+    if (l2State.expandedModules.has(modName)) l2State.expandedModules.delete(modName);
+    else l2State.expandedModules.add(modName);
+    renderL2Flowchart(l2State.activeFile);
+}
+
+function _safeId(s) {
+    return String(s || '').replace(/[^a-zA-Z0-9_]+/g, '_').slice(0, 32) || 'x';
+}
+
+function _hashId(s) {
+    let h = 0;
+    const str = String(s || '');
+    for (let i = 0; i < str.length; i++) {
+        h = ((h << 5) - h) + str.charCodeAt(i);
+        h |= 0;
+    }
+    return Math.abs(h).toString(36);
+}
+
+function renderL2Flowchart(fileRel) {
+    if (!fileRel) return;
+    showLoading(true, 'Rendering call flow...');
+    clearFuncOverlay();
+    setL2ToolbarVisible(true);
+
+    if (l2State.activeFile !== fileRel) resetL2State(fileRel);
+
+    const funcs = DATA.funcs_by_file[fileRel] || [];
+    if (l2State.activeFuncIdx >= funcs.length) l2State.activeFuncIdx = 0;
+    updateL2Toolbar(fileRel, { funcs: funcs.length, internalEdges: 0, extModules: 0, extFuncs: 0 });
+
+    if (!funcs.length) {
+        showFuncViewEmpty(fileRel);
+        showLoading(false);
+        return;
+    }
+
+    const callList = (DATA.func_calls_by_file && DATA.func_calls_by_file[fileRel]) || null;
+    const hasCallList = Array.isArray(callList) && callList.length > 0;
+    const legacyEdges = DATA.func_edges_by_file[fileRel] || [];
+    const nameToFile = DATA.func_name_to_file || {};
+    const ambiguous = new Set(DATA.func_name_ambiguous || []);
+    const fileToModule = DATA.file_to_module || {};
+    const moduleColorMap = {};
+    (DATA.modules || []).forEach(m => { moduleColorMap[m.id] = m.color; });
+
+    const fidMap = new Map();
+    funcs.forEach((f, i) => fidMap.set(f.label, i));
+
+    const els = [];
+    funcs.forEach((f, i) => {
+        const isPublic = !!f.is_public;
+        const isEfi = !!f.is_efiapi;
+        const bg = isEfi ? '#3d2e00' : isPublic ? '#0b2745' : '#1e2433';
+        const bc = isEfi ? '#fbbf24' : isPublic ? '#60a5fa' : '#94a3b8';
+        const access = isPublic ? 'public' : 'static';
+        els.push({
+            data: {
+                id: `fn-${i}`,
+                label: f.label,
+                bg, bc, w: 150, h: 38, sh: 'roundrectangle', lvl: 2,
+                _t: 'func', fn: f.label, _f: fileRel, idx: i, access,
+                tt: `Function: ${f.label}\n${access}${isEfi ? ' EFIAPI' : ''}`,
+            }
+        });
+    });
+
+    const extMap = new Map();
+    let internalEdgeCount = 0;
+
+    if (hasCallList) {
+        for (let i = 0; i < funcs.length; i++) {
+            const calls = Array.isArray(callList[i]) ? callList[i] : [];
+            const uniq = new Set(calls);
+            for (const callee of uniq) {
+                const calleeIdx = fidMap.get(callee);
+                if (calleeIdx != null) {
+                    if (calleeIdx === i) continue;
+                    const id = `ie-${i}-${calleeIdx}`;
+                    els.push({
+                        data: {
+                            id,
+                            source: `fn-${i}`,
+                            target: `fn-${calleeIdx}`,
+                            w: 1.6, ec: '#38bdf8', es: 'solid', el: '',
+                            tt: `${funcs[i].label} -> ${callee}`,
+                        }
+                    });
+                    internalEdgeCount += 1;
+                    continue;
+                }
+
+                let modName = 'Unknown';
+                let targetFile = null;
+                if (!ambiguous.has(callee)) {
+                    targetFile = nameToFile[callee] || null;
+                    if (targetFile && targetFile !== fileRel) {
+                        modName = fileToModule[targetFile] || 'Unknown';
+                    } else if (!targetFile) {
+                        modName = 'Unknown';
+                    }
+                }
+                if (!extMap.has(modName)) extMap.set(modName, new Map());
+                const fnMap = extMap.get(modName);
+                if (!fnMap.has(callee)) fnMap.set(callee, { file: targetFile, callers: new Set() });
+                fnMap.get(callee).callers.add(i);
+            }
+        }
+    } else {
+        legacyEdges.forEach((e, idx) => {
+            els.push({
+                data: {
+                    id: `le-${idx}`,
+                    source: `fn-${e.s}`,
+                    target: `fn-${e.t}`,
+                    w: 1.4, ec: '#38bdf8', es: 'solid', el: '',
+                    tt: `Call`,
+                }
+            });
+        });
+        internalEdgeCount = legacyEdges.length;
+    }
+
+    l2State.externalModules = Array.from(extMap.keys()).sort();
+
+    for (const [modName, fnMap] of extMap.entries()) {
+        const modSlug = _safeId(modName) + '-' + _hashId(modName);
+        const modId = `extmod-${modSlug}`;
+        const funcCount = fnMap.size;
+        const isExpanded = l2State.expandedModules.has(modName);
+        const modColor = moduleColorMap[modName] || '#64748b';
+        const modBg = modName === 'Unknown' ? '#2a1515' : '#111827';
+
+        els.push({
+            data: {
+                id: modId,
+                label: `${modName}\n${funcCount} funcs`,
+                bg: modBg,
+                bc: modColor,
+                w: 170,
+                h: 52,
+                sh: 'roundrectangle',
+                lvl: 2,
+                _t: 'ext_group',
+                mod: modName,
+                tt: `External Module: ${modName}\nFunctions: ${funcCount}\n${isExpanded ? 'Expanded' : 'Collapsed'}`,
+            }
+        });
+
+        if (!isExpanded) {
+            const callerCounts = new Map();
+            fnMap.forEach(info => {
+                info.callers.forEach(idx => {
+                    callerCounts.set(idx, (callerCounts.get(idx) || 0) + 1);
+                });
+            });
+            for (const [callerIdx, count] of callerCounts.entries()) {
+                els.push({
+                    data: {
+                        id: `exte-${modId}-${callerIdx}`,
+                        source: `fn-${callerIdx}`,
+                        target: modId,
+                        w: Math.min(4, 1 + count / 2),
+                        ec: '#f59e0b',
+                        es: 'dashed',
+                        el: 'ext',
+                        tt: `${funcs[callerIdx].label} -> ${modName} (${count})`,
+                    }
+                });
+            }
+        } else {
+            let extIdx = 0;
+            fnMap.forEach((info, funcName) => {
+                const fnId = `extfn-${modSlug}-${_hashId(funcName)}`;
+                const targetFile = info.file;
+                const nodeBg = modName === 'Unknown' ? '#3b1f1f' : '#0f172a';
+                els.push({
+                    data: {
+                        id: fnId,
+                        label: funcName,
+                        bg: nodeBg,
+                        bc: modColor,
+                        w: 150,
+                        h: 34,
+                        sh: 'roundrectangle',
+                        lvl: 2,
+                        _t: 'ext_func',
+                        fn: funcName,
+                        _f: targetFile,
+                        mod: modName,
+                        tt: targetFile ? `External: ${funcName}\n${targetFile}` : `External: ${funcName}\nUnknown target`,
+                    }
+                });
+
+                els.push({
+                    data: {
+                        id: `extg-${modId}-${extIdx}`,
+                        source: modId,
+                        target: fnId,
+                        w: 1,
+                        ec: '#334155',
+                        es: 'dotted',
+                        el: 'group',
+                        tt: `${modName} contains ${funcName}`,
+                    }
+                });
+
+                info.callers.forEach(callerIdx => {
+                    els.push({
+                        data: {
+                            id: `extc-${modId}-${callerIdx}-${_hashId(funcName)}`,
+                            source: `fn-${callerIdx}`,
+                            target: fnId,
+                            w: 1.5,
+                            ec: '#f59e0b',
+                            es: 'solid',
+                            el: 'ext',
+                            tt: `${funcs[callerIdx].label} -> ${funcName}`,
+                        }
+                    });
+                });
+                extIdx += 1;
+            });
+        }
+    }
+
+    cy.elements().remove();
+    cy.add(els);
+    applyCyFont(getSavedFont());
+    applyExternalEdgeVisibility();
+
+    const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 26, rankSep: 80, padding: 50 });
+    lay.one('layoutstop', () => {
+        updateBreadcrumb();
+        showLoading(false);
+        updateL2Toolbar(fileRel, {
+            funcs: funcs.length,
+            internalEdges: internalEdgeCount,
+            extModules: extMap.size,
+            extFuncs: Array.from(extMap.values()).reduce((a, m) => a + m.size, 0),
+            legacy: !hasCallList,
+        });
+        updateExternalToggle();
+        const shouldPush = l2State.historyIdx < 0;
+        focusL2Func(fileRel, l2State.activeFuncIdx || 0, { pushHistory: shouldPush, center: true });
+    });
+    lay.run();
 }
 
 // Drill the currently active file (code panel or selected node) to L2 caller/callee
@@ -1001,10 +1448,9 @@ function drillToFile(fileRel) {
     state.level = 2; state.activeFile = fileRel;
     updateBreadcrumb();
 
-    const funcs = DATA.funcs_by_file[fileRel] || [];
-    const edges = DATA.func_edges_by_file[fileRel] || [];
     // showFuncView handles code panel sync — do NOT call loadFileInPanel separately
-    funcs.length === 0 ? showFuncViewEmpty(fileRel) : showFuncView(fileRel, funcs, edges, 0);
+    renderL2Flowchart(fileRel);
+    document.getElementById('graph-toggle-btn')?.classList.add('active');
 }
 
 // Dedicated code-panel sync — called only from showFuncView to avoid race conditions
@@ -1147,18 +1593,41 @@ function showFuncViewEmpty(fileRel) {
 }
 
 function hideFuncView() {
-    const fv = document.getElementById('func-view');
-    fv.classList.remove('active');
-    fv.innerHTML = '';
-    document.getElementById('cy').style.display = '';
+    clearFuncOverlay();
+    setL2ToolbarVisible(false);
+    l2State.activeFile = null;
+    l2State.activeFuncIdx = 0;
+    l2State.expandedModules = new Set();
+    l2State.externalModules = [];
     // Clear graph-toggle active state when leaving L2
     document.getElementById('graph-toggle-btn')?.classList.remove('active');
+    updateL2NavButtons();
+    updateExternalToggle();
 }
 
 // ─── Node Tap ─────────────────────────────────────────────────────────────────
 function onNodeTap(node) {
     clearHighlight();
     const d = node.data();
+
+    if (state.level === 2) {
+        if (d._t === 'func') {
+            highlightNode(node);
+            focusL2Func(d._f, d.idx, { pushHistory: true, center: true });
+            return;
+        }
+        if (d._t === 'ext_group') {
+            toggleExternalGroup(d.mod);
+            return;
+        }
+        if (d._t === 'ext_func') {
+            highlightNode(node);
+            const entry = { type: 'ext', file: d._f, func: d.fn, mod: d.mod, nodeId: node.id() };
+            pushL2History(entry);
+            focusL2External(entry, { center: true });
+            return;
+        }
+    }
 
     if (state.level === 0 && d._t === 'module') {
         drillToModule(d._m.id);
@@ -1430,6 +1899,7 @@ function showTooltip(e) {
                 'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
                 'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
                 'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+                'ext': 'external calls', 'group': 'group',
                 '': state.level === 2 ? 'calls' : 'includes'
             };
             const IN_MAP = {
@@ -1437,6 +1907,7 @@ function showTooltip(e) {
                 'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
                 'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
                 'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+                'ext': 'external callers', 'group': 'group',
                 '': state.level === 2 ? 'called by' : 'included by'
             };
 
