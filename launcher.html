@@ -648,15 +648,11 @@
 
             if (!prefBtn || !prefModal) return;
 
-            const savedFont = localStorage.getItem('biosviz_code_font');
-            if (savedFont) {
-                applyFont(savedFont);
-                if (fontSelect) {
-                    fontSelect.value = savedFont;
-                    fontSelect.style.fontFamily = savedFont;
-                }
-            } else if (fontSelect) {
-                fontSelect.style.fontFamily = fontSelect.value;
+            const savedFont = localStorage.getItem('biosviz_code_font') || "'JetBrains Mono', monospace";
+            applyFont(savedFont);
+            if (fontSelect) {
+                fontSelect.value = savedFont;
+                fontSelect.style.fontFamily = savedFont;
             }
 
             prefBtn.addEventListener('click', () => { prefModal.style.display = 'flex'; });

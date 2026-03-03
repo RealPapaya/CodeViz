@@ -26,6 +26,42 @@ const codeState = {
 };
 
 let cy = null;
+const DEFAULT_CODE_FONT = "'JetBrains Mono', monospace";
+
+function getSavedFont() {
+    try {
+        const saved = localStorage.getItem('biosviz_code_font');
+        return (saved && saved.trim()) ? saved : DEFAULT_CODE_FONT;
+    } catch (_) {
+        return DEFAULT_CODE_FONT;
+    }
+}
+
+function withFont(styleList, font) {
+    return styleList.map(s => {
+        if (!s || !s.selector || !s.style) return s;
+        const sel = s.selector;
+        if (sel === 'node' || sel.startsWith('node') || sel === 'edge' || sel.startsWith('edge')) {
+            return { ...s, style: { ...s.style, 'font-family': font } };
+        }
+        return s;
+    });
+}
+
+function applyCyFont(font) {
+    if (!cy || typeof cy.style !== 'function') return;
+    try {
+        const cyFont = (font || '').replace(/["']/g, '');
+        cy.style(withFont(CY_STYLE, cyFont));
+        // Ensure existing elements are updated immediately
+        cy.nodes().style('font-family', cyFont);
+        cy.edges().style('font-family', cyFont);
+        // Force a repaint for canvas labels
+        cy.resize();
+    } catch (e) {
+        console.warn('Failed to update cytoscape font', e);
+    }
+}
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -60,6 +96,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // Preferences init
                 initPreferences();
+
+                // Ensure Canvas redraws after Google Fonts are fully loaded
+                document.fonts.ready.then(() => {
+                    if (cy) applyCyFont(getSavedFont());
+                });
             } catch (e) {
                 showMsg('Error: ' + e.message + '\n' + (e.stack || ''));
             }
@@ -105,6 +146,8 @@ function applyFont(font) {
     document.documentElement.style.setProperty('--code-font', font);
     document.documentElement.style.setProperty('--ui-font', font);
     document.body.style.fontFamily = font + ', Inter, sans-serif';
+
+    applyCyFont(font);
 }
 
 function initPreferences() {
@@ -116,16 +159,12 @@ function initPreferences() {
 
     if (!prefBtn || !prefModal) return;
 
-    // Load saved font from localStorage
-    const savedFont = localStorage.getItem('biosviz_code_font');
-    if (savedFont) {
-        applyFont(savedFont);
-        if (fontSelect) {
-            fontSelect.value = savedFont;
-            fontSelect.style.fontFamily = savedFont;
-        }
-    } else if (fontSelect) {
-        fontSelect.style.fontFamily = fontSelect.value;
+    // Load saved font from localStorage or use default
+    const savedFont = getSavedFont();
+    applyFont(savedFont);
+    if (fontSelect) {
+        fontSelect.value = savedFont;
+        fontSelect.style.fontFamily = savedFont;
     }
 
     prefBtn.addEventListener('click', () => {
@@ -221,7 +260,7 @@ function initResizer() {
         document.getElementById('graph-wrap').style.pointerEvents = '';
         document.removeEventListener('mousemove', onDrag);
         document.removeEventListener('mouseup', stopDrag);
-        if (window.cy) cy.resize();
+        if (cy) cy.resize();
     }
 }
 
@@ -252,7 +291,7 @@ function initSidebarResizer() {
         document.getElementById('graph-wrap').style.pointerEvents = '';
         document.removeEventListener('mousemove', onDrag);
         document.removeEventListener('mouseup', stopDrag);
-        if (window.cy) cy.resize();
+        if (cy) cy.resize();
     }
 }
 
@@ -539,9 +578,14 @@ function escapeRe(s) {
 
 // ─── Cytoscape ────────────────────────────────────────────────────────────────
 function initCy() {
+    const savedFont = getSavedFont();
+
+    // Create a dynamic style config that includes the real font string
+    const dynamicStyle = withFont(CY_STYLE, savedFont);
+
     cy = cytoscape({
         container: document.getElementById('cy'),
-        style: CY_STYLE,
+        style: dynamicStyle,
         elements: [],
         minZoom: 0.04, maxZoom: 5,
         wheelSensitivity: 0.3,
@@ -615,7 +659,6 @@ const CY_STYLE = [
             'label': 'data(el)',
             'font-size': 10,
             'font-weight': '700',
-            'font-family': 'monospace',
             'color': 'data(ec)',
             'text-opacity': 1,
             'text-rotation': 'autorotate',
@@ -893,6 +936,7 @@ function loadLevel0() {
 
     cy.elements().remove();
     cy.add(els);
+    applyCyFont(getSavedFont());
 
     const lay = cy.layout({
         name: 'cose', animate: false, randomize: true,
@@ -944,6 +988,7 @@ function renderFilesFlat(modId, files) {
 
     cy.elements().remove();
     cy.add(els);
+    applyCyFont(getSavedFont());
 
     const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
     lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); });
