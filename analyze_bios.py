@@ -48,7 +48,7 @@ FILE_TYPE_MAP = {
 # ─── Edge type definitions ───────────────────────────────────────────────────
 # 每種 edge type 決定前端的線條樣式
 EDGE_TYPES = {
-    'include':       {'label': '',            'color': '#334155', 'style': 'solid'},
+    'include':       {'label': 'Include',            'color': '#c084fc', 'style': 'solid'},
     'sources':       {'label': 'Sources',     'color': '#ffd700', 'style': 'solid'},
     'package':       {'label': 'Package',     'color': '#00d4ff', 'style': 'dashed'},
     'library':       {'label': 'Library',     'color': '#a78bfa', 'style': 'dashed'},
@@ -60,7 +60,7 @@ EDGE_TYPES = {
     'str_ref':       {'label': 'Strings',     'color': '#e879f9', 'style': 'dashed'},
     'asl_include':   {'label': 'ASL',         'color': '#818cf8', 'style': 'solid'},
     'callback_ref':  {'label': 'Callback',    'color': '#f87171', 'style': 'dotted'},  # VFR/HFR 表單 → .c callback 函式
-    'hii_pkg':       {'label': 'HII-Pkg',     'color': '#c084fc', 'style': 'solid'},   # .inf → .vfr/.hfr/.uni
+    'hii_pkg':       {'label': 'HII-Pkg',     'color': '#94a3b8', 'style': 'solid'},   # .inf → .vfr/.hfr/.uni
 }
 
 C_KEYWORDS = {

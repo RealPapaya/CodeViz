@@ -306,7 +306,7 @@ const FILE_TYPE_SHAPE = {
 
 // ─── Edge type → color + style ───────────────────────────────────────────────
 const EDGE_TYPE_STYLE = {
-    'include': { color: '#334155', style: 'solid', label: '' },
+    'include': { color: '#c084fc', style: 'solid', label: 'Inc' },
     'sources': { color: '#ffd700', style: 'solid', label: 'Src' },
     'package': { color: '#00d4ff', style: 'dashed', label: 'Pkg' },
     'library': { color: '#a78bfa', style: 'dashed', label: 'Lib' },
@@ -318,7 +318,7 @@ const EDGE_TYPE_STYLE = {
     'str_ref': { color: '#e879f9', style: 'dashed', label: 'Strings' },
     'asl_include': { color: '#818cf8', style: 'solid', label: 'ASL' },
     'callback_ref': { color: '#f87171', style: 'dotted', label: 'Callback' },
-    'hii_pkg': { color: '#c084fc', style: 'solid', label: 'HII-Pkg' },
+    'hii_pkg': { color: '#94a3b8', style: 'solid', label: 'HII-Pkg' },
 };
 
 function fileNodeData(f, modColor) {
@@ -573,20 +573,16 @@ const CY_STYLE = [
     { selector: '.hl', style: { 'opacity': 1, 'border-width': 2.5, 'border-color': '#e2e8f0' } },
     {
         selector: '.hl-edge-out', style: {
-            'line-color': '#f59e0b',
-            'target-arrow-color': '#f59e0b',
             'opacity': 1, 'width': 3, 'z-index': 10,
         }
     },
     {
         selector: '.hl-edge-in', style: {
-            'line-color': '#10b981',
-            'target-arrow-color': '#10b981',
             'opacity': 1, 'width': 3, 'z-index': 10,
         }
     },
-    { selector: '.hl-node-out', style: { 'border-color': '#f59e0b', 'border-width': 3, 'opacity': 1 } },
-    { selector: '.hl-node-in', style: { 'border-color': '#10b981', 'border-width': 3, 'opacity': 1 } },
+    { selector: '.hl-node-out', style: { 'border-width': 3, 'opacity': 1 } },
+    { selector: '.hl-node-in', style: { 'border-width': 3, 'opacity': 1 } },
 ];
 
 // ─── File Type Filter ────────────────────────────────────────────────────────
@@ -689,9 +685,9 @@ function buildSidebar() {
             const arrow = modRow.querySelector('.tree-arrow');
             const isOpen = children.classList.contains('open');
 
-            if (!isOpen) {
-                children.classList.add('open');
-                arrow.classList.add('open');
+            if (hasSubdirs) {
+                children.classList.toggle('open', !isOpen);
+                arrow.classList.toggle('open', !isOpen);
             }
             // Always render all files in graph when clicking module name
             drillToModule(m.id);
@@ -1282,22 +1278,99 @@ function onNodeRightClick(ev, node) {
 function hideCtxMenu() { document.getElementById('ctx-menu').style.display = 'none'; }
 
 // ─── Tooltip ──────────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>"']/g, function (m) {
+        switch (m) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '"': return '&quot;';
+            case "'": return '&#039;';
+            default: return m;
+        }
+    });
+}
+
 function showTooltip(e) {
     const d = e.target.data();
-    let tt = d.tt || '';
-    if (!tt) return;
+    if (!d || !d.tt) return;
+
+    let html = '';
+
     if (e.target.isNode()) {
         const outCount = e.target.outgoers('edge').length;
         const inCount = e.target.incomers('edge').length;
-        if (outCount > 0 || inCount > 0) {
-            tt += `\n\nDependencies:`;
-            if (outCount > 0) tt += `\n• Calls: ${outCount} (Orange)`;
-            if (inCount > 0) tt += `\n• Called by: ${inCount} (Green)`;
+
+        // 取得 tooltip 原文字的第一行 (標題/路徑) 和剩餘內容
+        const lines = d.tt.split('\n');
+        const titleRaw = lines[0] || '';
+        const bodyLines = lines.slice(1).join('<br>').trim();
+
+        // 1. 處理檔名過長 (使用 css ellipsis 或截斷)
+        // 這裡加上 max-width 強制斷掉加上 '...'
+        html += `<div style="font-weight:bold; max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(titleRaw)}">${escapeHtml(titleRaw)}</div>`;
+
+        if (bodyLines) {
+            html += `<div style="margin-top:6px; font-size:11px; color:#cbd5e1;">${bodyLines}</div>`;
         }
-        tt += '\n\nClick → view code  |  Dbl-click or [G] → caller/callee';
+
+        // 2. 處理 dependencies 文字和顏色
+        if (outCount > 0 || inCount > 0) {
+            html += `<div style="margin-top:10px; border-top:1px solid #334155; padding-top:6px;">`;
+            html += `<div style="font-weight:bold; margin-bottom:4px">Dependencies:</div>`;
+
+            const OUT_MAP = {
+                'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
+                'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
+                'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
+                'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+                '': state.level === 2 ? 'calls' : 'includes'
+            };
+            const IN_MAP = {
+                'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
+                'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
+                'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
+                'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+                '': state.level === 2 ? 'called by' : 'included by'
+            };
+
+            const outGroups = {};
+            e.target.outgoers('edge').forEach(edge => {
+                const lbl = edge.data('el') || '';
+                const col = edge.data('ec') || '#f59e0b';
+                const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
+                const key = outTxt + '|' + col;
+                outGroups[key] = (outGroups[key] || 0) + 1;
+            });
+
+            const inGroups = {};
+            e.target.incomers('edge').forEach(edge => {
+                const lbl = edge.data('el') || '';
+                const col = edge.data('ec') || '#10b981';
+                const inTxt = IN_MAP[lbl] || lbl || 'incoming';
+                const key = inTxt + '|' + col;
+                inGroups[key] = (inGroups[key] || 0) + 1;
+            });
+
+            for (const [key, count] of Object.entries(outGroups)) {
+                const [lbl, col] = key.split('|');
+                html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
+            }
+            for (const [key, count] of Object.entries(inGroups)) {
+                const [lbl, col] = key.split('|');
+                html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
+            }
+
+            html += `</div>`;
+        }
+    } else {
+        // Edge tooltip
+        html = escapeHtml(d.tt).replace(/\n/g, '<br>');
     }
+
     const tip = document.getElementById('tooltip');
-    tip.textContent = tt;
+    tip.innerHTML = html;
     tip.style.display = 'block';
     tip.style.left = (e.originalEvent.clientX + 14) + 'px';
     tip.style.top = (e.originalEvent.clientY + 14) + 'px';
@@ -1318,8 +1391,9 @@ function dedupeBy(arr, key) { return [...new Map(arr.map(x => [x[key], x])).valu
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + 'MB' : b > 1e3 ? (b / 1e3).toFixed(0) + 'KB' : b + 'B'; }
 
 // ─── Graph Legend ─────────────────────────────────────────────────────────────
-// Edge types shown in legend (omit 'include' — it's the default invisible edge)
+// Edge types shown in legend
 const LEGEND_EDGES = [
+    { type: 'include', label: 'Include', color: '#c084fc', style: 'solid' },
     { type: 'sources', label: 'Src', color: '#ffd700', style: 'solid' },
     { type: 'package', label: 'Pkg', color: '#00d4ff', style: 'dashed' },
     { type: 'library', label: 'Lib', color: '#a78bfa', style: 'dashed' },
@@ -1328,7 +1402,7 @@ const LEGEND_EDGES = [
     { type: 'guid_ref', label: 'GUID', color: '#fb923c', style: 'dashed' },
     { type: 'elink', label: 'ELINK', color: '#ff6b35', style: 'dotted' },
     { type: 'str_ref', label: 'Strings', color: '#e879f9', style: 'dashed' },
-    { type: 'hii_pkg', label: 'HII-Pkg', color: '#c084fc', style: 'solid' },
+    { type: 'hii_pkg', label: 'HII-Pkg', color: '#94a3b8', style: 'solid' },
     { type: 'callback_ref', label: 'Callback', color: '#f87171', style: 'dotted' },
     { type: 'asl_include', label: 'ASL', color: '#818cf8', style: 'solid' },
     { type: 'depex', label: 'Depex', color: '#f472b6', style: 'dotted' },

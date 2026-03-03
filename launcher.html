@@ -299,69 +299,42 @@
             background: var(--green)
         }
 
-        .prog-steps {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 8px;
-            padding: 0 2px
-        }
-
-        .prog-step {
+        /* ── Progress CLI ── */
+        #cli-msg-area {
+            margin-top: 24px;
+            padding: 0 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            color: var(--text);
+            min-height: 140px;
+            max-height: 200px;
+            overflow-y: auto;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            gap: 2px;
-            opacity: .35;
-            transition: opacity .3s
+            gap: 8px;
         }
 
-        .prog-step.active {
-            opacity: 1
+        .cli-line {
+            line-height: 1.4;
         }
 
-        .prog-step.done {
-            opacity: .7
+        .cli-line .step {
+            color: var(--accent);
+            margin-right: 8px;
+            font-weight: 600;
+            text-transform: lowercase;
         }
 
-        .prog-step-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--border);
-            border: 2px solid var(--border);
-            transition: all .3s;
-        }
-
-        .prog-step.active .prog-step-dot {
-            background: var(--accent);
-            border-color: var(--accent);
-            box-shadow: 0 0 6px var(--accent)
-        }
-
-        .prog-step.done .prog-step-dot {
-            background: var(--green);
-            border-color: var(--green)
-        }
-
-        .prog-step-lbl {
-            font-size: 9px;
+        .cli-line .status {
             color: var(--muted);
-            white-space: nowrap
         }
 
-        .prog-msg {
-            font-size: 11px;
-            color: var(--muted);
-            margin-top: 8px;
-            font-family: monospace;
-            min-height: 16px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding: 4px 10px;
-            background: var(--panel2);
-            border-radius: 4px;
-            border-left: 2px solid var(--accent)44;
+        .cli-line.active .status {
+            color: var(--text);
+        }
+
+        .cli-line.done .status {
+            color: var(--green);
         }
 
         /* ── Stats Row ── */
@@ -519,33 +492,7 @@
             <div class="prog-bar-bg">
                 <div class="prog-bar" id="prog-bar"></div>
             </div>
-            <div class="prog-steps">
-                <div class="prog-step" id="step-scan">
-                    <div class="prog-step-dot"></div>
-                    <div class="prog-step-lbl">Scan</div>
-                </div>
-                <div class="prog-step" id="step-analyze">
-                    <div class="prog-step-dot"></div>
-                    <div class="prog-step-lbl">Analyze</div>
-                </div>
-                <div class="prog-step" id="step-index">
-                    <div class="prog-step-dot"></div>
-                    <div class="prog-step-lbl">Index</div>
-                </div>
-                <div class="prog-step" id="step-edges">
-                    <div class="prog-step-dot"></div>
-                    <div class="prog-step-lbl">Edges</div>
-                </div>
-                <div class="prog-step" id="step-funcs">
-                    <div class="prog-step-dot"></div>
-                    <div class="prog-step-lbl">Funcs</div>
-                </div>
-                <div class="prog-step" id="step-html">
-                    <div class="prog-step-dot"></div>
-                    <div class="prog-step-lbl">HTML</div>
-                </div>
-            </div>
-            <div class="prog-msg" id="prog-msg">Starting...</div>
+            <div id="cli-msg-area"></div>
         </div>
 
         <div id="stats-row">
@@ -588,14 +535,14 @@
         let lastPct = 0;
         let pctHistory = []; // [{t, pct}] for ETA estimation
 
-        // Step thresholds: [pct_start, step_id]
+        // Step thresholds: [pct_start, label]
         const STEPS = [
-            [0, 'step-scan'],
-            [10, 'step-analyze'],
-            [60, 'step-index'],
-            [70, 'step-edges'],
-            [85, 'step-funcs'],
-            [98, 'step-html'],
+            [0, 'scan'],
+            [10, 'analyze'],
+            [60, 'index'],
+            [70, 'edges'],
+            [85, 'funcs'],
+            [98, 'html'],
         ];
 
         // ─── Recents (localStorage) ───────────────────────────────────────────────────
@@ -701,11 +648,9 @@
             if (v) pw.classList.add('show');
             else pw.classList.remove('show');
             if (!v) { // reset steps
-                STEPS.forEach(([, id]) => {
-                    const el = document.getElementById(id);
-                    if (el) el.classList.remove('active', 'done');
-                });
                 document.getElementById('prog-bar').classList.remove('done');
+                const cliArea = document.getElementById('cli-msg-area');
+                if (cliArea) cliArea.innerHTML = '';
             }
         }
 
@@ -732,7 +677,6 @@
             const bar = document.getElementById('prog-bar');
             bar.style.width = pct + '%';
             document.getElementById('prog-pct').textContent = pct + '%';
-            document.getElementById('prog-msg').textContent = msg || '';
 
             // ETA estimation
             const now = Date.now();
@@ -760,20 +704,25 @@
                 document.getElementById('prog-label').textContent = 'Analyzing...';
             }
 
-            // Update step indicators
-            let activeSet = false;
-            for (let i = STEPS.length - 1; i >= 0; i--) {
-                const [threshold, id] = STEPS[i];
-                const el = document.getElementById(id);
-                if (!el) continue;
-                if (pct >= 100) { el.classList.remove('active'); el.classList.add('done'); }
-                else if (pct >= threshold && !activeSet) {
-                    el.classList.add('active'); el.classList.remove('done');
-                    activeSet = true;
-                } else if (pct > threshold) {
-                    el.classList.remove('active'); el.classList.add('done');
-                } else {
-                    el.classList.remove('active', 'done');
+            // Update CLI area
+            const cliArea = document.getElementById('cli-msg-area');
+            if (cliArea) {
+                let cliHtml = '';
+                for (let i = 0; i < STEPS.length; i++) {
+                    const [threshold, label] = STEPS[i];
+                    const nextThreshold = i < STEPS.length - 1 ? STEPS[i + 1][0] : 100;
+
+                    if (pct >= threshold || (pct === 0 && threshold === 0)) {
+                        if (pct >= nextThreshold || pct === 100) {
+                            cliHtml += `<div class="cli-line done"><span class="step">${label}</span><span class="status">-&gt; done</span></div>`;
+                        } else {
+                            cliHtml += `<div class="cli-line active"><span class="step">${label}</span><span class="status">(${msg})...</span></div>`;
+                        }
+                    }
+                }
+                if (cliArea.innerHTML !== cliHtml) {
+                    cliArea.innerHTML = cliHtml;
+                    cliArea.scrollTop = cliArea.scrollHeight;
                 }
             }
         }
