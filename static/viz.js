@@ -39,6 +39,9 @@ let cy = null;
 let tooltipPinned = false;
 let tooltipHideTimer = null;
 const DEFAULT_CODE_FONT = "'JetBrains Mono', monospace";
+const EXT_DOUBLE_CLICK_MS = 260;
+let extClickLastId = null;
+let extClickLastTime = 0;
 
 function getSavedFont() {
     try {
@@ -337,7 +340,10 @@ function setL2ToolbarVisible(v) {
 function updateL2Toolbar(fileRel, stats) {
     const label = document.getElementById('l2-file-label');
     const statsEl = document.getElementById('l2-stats');
-    if (label) label.textContent = fileRel || 'No file';
+    if (label) {
+        label.textContent = fileRel || 'No file';
+        label.title = fileRel || '';
+    }
     if (statsEl && stats) {
         const parts = [];
         parts.push(`${stats.funcs || 0} funcs`);
@@ -376,6 +382,33 @@ function resetL2History() {
     l2State.fileHistoryIdx = -1;
 }
 
+function resolveModuleForFile(fileRel) {
+    if (!fileRel || !DATA) return null;
+    const map = DATA.file_to_module || {};
+    let mod = map[fileRel] || null;
+    if (!mod) {
+        const first = fileRel.split('/')[0];
+        if (first && Array.isArray(DATA.modules) && DATA.modules.some(m => m.id === first)) {
+            mod = first;
+        }
+    }
+    return mod;
+}
+
+function syncBreadcrumbForFile(fileRel) {
+    if (!fileRel) return;
+    state.level = 2;
+    state.activeFile = fileRel;
+    const mod = resolveModuleForFile(fileRel);
+    state.activeModule = mod || null;
+    state.activeSubDir = null;
+    const last = state.history[state.history.length - 1];
+    if (mod && last && last.level === 1) {
+        last.activeModule = mod;
+    }
+    updateBreadcrumb();
+}
+
 function focusL2Func(fileRel, idx, opts = {}) {
     const { center = false } = opts;
     const funcs = DATA.funcs_by_file[fileRel] || [];
@@ -412,6 +445,31 @@ function focusL2External(entry, opts = {}) {
     updateL2NavButtons();
 }
 
+function syncActiveL2FuncCode() {
+    const fileRel = l2State.activeFile;
+    if (!fileRel) return;
+    const funcs = DATA.funcs_by_file[fileRel] || [];
+    let idx = l2State.activeFuncIdx || 0;
+    if (idx < 0 || idx >= funcs.length) idx = 0;
+    const funcName = funcs[idx]?.label || null;
+    _syncCodePanel(fileRel, funcName || null);
+}
+
+function pickCallerIdxForExternal(node) {
+    if (!node || !cy) return null;
+    const callers = node.incomers('edge').sources().filter(n => n.data('_t') === 'func');
+    if (!callers.length) return null;
+    const activeIdx = l2State.activeFuncIdx;
+    if (activeIdx != null) {
+        const activeNode = cy.$id(`fn-${activeIdx}`);
+        if (activeNode && activeNode.length) {
+            const isCaller = callers.some(n => n.id() === activeNode.id());
+            if (isCaller) return activeIdx;
+        }
+    }
+    return callers[0]?.data('idx') ?? null;
+}
+
 function pushL2FileHistory(fileRel) {
     const current = l2State.fileHistory[l2State.fileHistoryIdx];
     if (current === fileRel) return;
@@ -434,6 +492,7 @@ function openL2File(fileRel, opts = {}) {
     if (!fileRel) return;
     if (newSession) resetL2History();
     pushHistory && pushL2FileHistory(fileRel);
+    syncBreadcrumbForFile(fileRel);
     renderL2Flowchart(fileRel, focusFunc);
     updateL2NavButtons();
 }
@@ -1099,6 +1158,8 @@ function clearSelection() {
 }
 
 function highlightNode(node) {
+    // Always clear previous hover highlight so rapid mouseover doesn't stack.
+    clearHighlight();
     cy.elements().addClass('faded');
     node.removeClass('faded').addClass('hl');
     const outEdges = node.outgoers('edge');
@@ -1663,11 +1724,19 @@ function onNodeTap(node) {
             return;
         }
         if (d._t === 'ext_func') {
+            const now = performance.now();
+            const sameNode = extClickLastId === node.id();
+            const isDouble = sameNode && (now - extClickLastTime) < EXT_DOUBLE_CLICK_MS;
+
+            extClickLastId = node.id();
+            extClickLastTime = now;
             highlightNode(node);
-            if (d._f) {
-                openL2File(d._f, { pushHistory: true, focusFunc: d.fn });
+            if (isDouble) {
+                focusL2External({ file: d._f || null, func: d.fn, mod: d.mod, nodeId: node.id() }, { center: true });
             } else {
-                focusL2External({ file: null, func: d.fn, mod: d.mod, nodeId: node.id() }, { center: true });
+                const callerIdx = pickCallerIdxForExternal(node);
+                if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
+                syncActiveL2FuncCode();
             }
             return;
         }
@@ -1731,7 +1800,7 @@ function updateBreadcrumb() {
     const container = document.getElementById('bc-items');
     container.innerHTML = '';
 
-    function addSeg(label, clickFn, isCurrent) {
+    function addSeg(label, clickFn, isCurrent, title) {
         if (container.children.length > 0) {
             const sep = document.createElement('span');
             sep.className = 'bc-sep';
@@ -1741,12 +1810,13 @@ function updateBreadcrumb() {
         const seg = document.createElement('span');
         seg.className = 'bc-item' + (isCurrent ? ' bc-current' : '');
         seg.textContent = label;
+        seg.title = title || label || '';
         if (clickFn) seg.onclick = clickFn;
         container.appendChild(seg);
     }
 
     // Level 0: always show Modules
-    addSeg('Modules', () => { state.history = []; loadLevel0(); }, state.level === 0);
+    addSeg('Modules', () => { state.history = []; loadLevel0(); }, state.level === 0, 'Modules');
 
     if (state.level >= 1 && state.activeModule) {
         const isModActive = state.level === 1 && !state.activeSubDir;
@@ -1758,7 +1828,8 @@ function updateBreadcrumb() {
                     drillToModule(state.activeModule);
                 }
             },
-            isModActive);
+            isModActive,
+            state.activeModule);
     }
 
     // Level 1: Sub-directory
@@ -1767,12 +1838,14 @@ function updateBreadcrumb() {
         parts.forEach((part, i) => {
             const isLast = i === parts.length - 1;
             const subPath = parts.slice(0, i + 1).join('/');
+            const fullPath = (state.activeModule ? state.activeModule + '/' : '') + subPath;
             addSeg(part,
                 isLast ? null : () => {
                     filterGraphToSubPath(state.activeModule, subPath);
                     setSubdirActive(state.activeModule, subPath);
                 },
-                isLast);
+                isLast,
+                fullPath);
         });
     }
 
@@ -1789,6 +1862,7 @@ function updateBreadcrumb() {
         parts.forEach((part, i) => {
             const isLast = i === parts.length - 1;
             const subPath = parts.slice(0, i + 1).join('/');
+            const fullPath = (modId ? modId + '/' : '') + subPath;
             addSeg(part,
                 isLast ? null : () => {
                     state.level = 1;
@@ -1796,7 +1870,8 @@ function updateBreadcrumb() {
                     filterGraphToSubPath(state.activeModule, subPath);
                     setSubdirActive(state.activeModule, subPath);
                 },
-                isLast);
+                isLast,
+                fullPath);
         });
     }
 
