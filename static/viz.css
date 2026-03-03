@@ -14,6 +14,7 @@
     --code-panel: 700px;
     --node-w0: 190px;
     --node-w1: 160px;
+    --code-font: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
 }
 
 * {
@@ -669,7 +670,7 @@ body {
 #cp-code-wrap pre {
     margin: 0;
     padding: 16px 0;
-    font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-family: var(--code-font);
     font-size: 12px;
     line-height: 1.65;
     background: transparent !important;
@@ -683,6 +684,7 @@ body {
 #cp-code-wrap code {
     background: transparent !important;
     font-size: inherit;
+    font-family: inherit !important;
     white-space: pre
 }
 

@@ -57,6 +57,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // Code panel init
                 initCodePanel();
+
+                // Preferences init
+                initPreferences();
             } catch (e) {
                 showMsg('Error: ' + e.message + '\n' + (e.stack || ''));
             }
@@ -95,6 +98,63 @@ function initCodePanel() {
     // Resizer drag
     initResizer();
     initSidebarResizer();
+}
+
+// ─── Preferences ─────────────────────────────────────────────────────────────
+function applyFont(font) {
+    document.documentElement.style.setProperty('--code-font', font);
+    document.documentElement.style.setProperty('--ui-font', font);
+    document.body.style.fontFamily = font + ', Inter, sans-serif';
+}
+
+function initPreferences() {
+    const prefBtn = document.getElementById('pref-btn');
+    const prefModal = document.getElementById('pref-modal');
+    const closeX = document.getElementById('pref-close-x');
+    const closeBtn = document.getElementById('pref-close-btn');
+    const fontSelect = document.getElementById('font-select');
+
+    if (!prefBtn || !prefModal) return;
+
+    // Load saved font from localStorage
+    const savedFont = localStorage.getItem('biosviz_code_font');
+    if (savedFont) {
+        applyFont(savedFont);
+        if (fontSelect) {
+            fontSelect.value = savedFont;
+            fontSelect.style.fontFamily = savedFont;
+        }
+    } else if (fontSelect) {
+        fontSelect.style.fontFamily = fontSelect.value;
+    }
+
+    prefBtn.addEventListener('click', () => {
+        prefModal.style.display = 'flex';
+    });
+    prefBtn.addEventListener('mouseenter', () => { prefBtn.style.color = 'var(--accent)'; });
+    prefBtn.addEventListener('mouseleave', () => { prefBtn.style.color = 'var(--muted)'; });
+
+    const closeModal = () => {
+        prefModal.style.display = 'none';
+    };
+
+    if (closeX) closeX.addEventListener('click', closeModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+
+    // Close on outside click
+    prefModal.addEventListener('click', (e) => {
+        if (e.target === prefModal) closeModal();
+    });
+
+    // Handle font change
+    if (fontSelect) {
+        fontSelect.addEventListener('change', (e) => {
+            const font = e.target.value;
+            applyFont(font);
+            localStorage.setItem('biosviz_code_font', font);
+            fontSelect.style.fontFamily = font;
+        });
+    }
 }
 
 // Drill the currently active file (code panel or selected node) to L2 caller/callee

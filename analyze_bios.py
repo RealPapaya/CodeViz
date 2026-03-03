@@ -958,6 +958,7 @@ HTML_SKELETON = """\
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
@@ -980,9 +981,11 @@ HTML_SKELETON = """\
     <div class="stat">Modules <strong id="st-mods">0</strong></div>
     <div class="stat">Functions <strong id="st-funcs">0</strong></div>
   </div>
-  <div id="search-wrap">
-    <span class="search-icon">🔍</span>
-    <input id="search" type="text" placeholder="Search... (/)">
+  <div style="flex:1"></div>
+  <div id="search-wrap" style="display:flex;align-items:center;position:relative;">
+    <span class="search-icon" style="position:absolute;left:10px;color:var(--muted);font-size:14px;">🔍</span>
+    <input id="search" type="text" placeholder="Search... (/)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px 8px 32px;border-radius:6px;font-size:13px;width:100%;outline:none;">
+    <button id="pref-btn" title="Preferences" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:12px;padding:4px;transition:color 0.2s;">⚙</button>
   </div>
 </div>
 
@@ -1053,6 +1056,31 @@ HTML_SKELETON = """\
   <div class="ctx-item" id="ctx-pin">📌 Pin node</div>
 </div>
 <div id="tooltip"></div>
+
+<!-- Preferences Modal -->
+<div id="pref-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999;align-items:center;justify-content:center;backdrop-filter:blur(2px);">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,0.7);display:flex;flex-direction:column;overflow:hidden;animation:flip-in-x 0.2s ease-out;">
+    <div style="background:var(--panel2);padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between;align-items:center;">
+      <span>Preferences</span>
+      <button id="pref-close-x" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;">✕</button>
+    </div>
+    <div style="padding:20px 16px;display:flex;flex-direction:column;gap:12px;">
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <label for="font-select" style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Code Editor Font</label>
+        <select id="font-select" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px;outline:none;cursor:pointer;font-family:inherit;">
+          <option value="'JetBrains Mono', monospace" style="font-family:'JetBrains Mono', monospace;font-size:14px;">JetBrains Mono</option>
+          <option value="'Fira Code', monospace" style="font-family:'Fira Code', monospace;font-size:14px;">Fira Code</option>
+          <option value="'Cascadia Code', monospace" style="font-family:'Cascadia Code', monospace;font-size:14px;">Cascadia Code</option>
+          <option value="Consolas, monospace" style="font-family:Consolas, monospace;font-size:14px;">Consolas</option>
+          <option value="'Space Mono', monospace" style="font-family:'Space Mono', monospace;font-size:14px;">Space Mono</option>
+        </select>
+      </div>
+    </div>
+    <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
+      <button id="pref-close-btn" style="background:var(--accent);color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;">Done</button>
+    </div>
+  </div>
+</div>
 
 <!-- Data embedded as JSON text — parsed by JSON.parse(), not JS engine (10x faster) -->
 <script type="application/json" id="viz-data">{DATA}</script>
