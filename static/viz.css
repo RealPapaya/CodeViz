@@ -1293,6 +1293,25 @@ body {
     color: var(--muted)
 }
 
+#loading-cancel-btn {
+    display: none;
+    margin-top: 6px;
+    padding: 6px 22px;
+    background: transparent;
+    border: 1px solid #dc2626;
+    color: #f87171;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    letter-spacing: .05em;
+    transition: background .15s, color .15s;
+}
+
+#loading-cancel-btn:hover {
+    background: rgba(220, 38, 38, 0.14);
+    color: #fca5a5;
+}
+
 /* ── Scrollbars ── */
 ::-webkit-scrollbar {
     width: 6px;

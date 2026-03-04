@@ -80,6 +80,10 @@ const EXT_DOUBLE_CLICK_MS = 260;
 let extClickLastId = null;
 let extClickLastTime = 0;
 
+// ─── Render cancel token ──────────────────────────────────────────────────────
+// Incremented every time a render starts; async callbacks check staleness.
+let _renderToken = 0;
+
 function getSavedFont() {
     try {
         const saved = localStorage.getItem('biosviz_code_font');
@@ -1329,100 +1333,109 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
     }
 
     l2State._animGen++;
-    cy.elements().stop(true, false);
-    l2State._prevNodeIds = new Set(cy.nodes().map(n => n.id()));
 
-    cy.elements().remove();
-    cy.add(els);
-    applyCyFont(getSavedFont());
-    applyExternalEdgeVisibility();
+    // ── Yield to browser so the loading spinner can paint before heavy work ──
+    const _l2Token = ++_renderToken;
+    setTimeout(() => {
+        if (_renderToken !== _l2Token) return; // cancelled
 
-    const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 26, rankSep: 80, padding: 50 });
-    lay.one('layoutstop', () => {
-        updateBreadcrumb();
-        showLoading(false);
-        updateL2Toolbar(fileRel, {
-            funcs: funcs.length,
-            internalEdges: internalEdgeCount,
-            extModules: extMap.size,
-            extFuncs: Array.from(extMap.values()).reduce((a, m) => a + m.size, 0),
-            legacy: !hasCallList,
-        });
-        updateExternalToggle();
-        focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: false });
+        cy.elements().stop(true, false);
+        l2State._prevNodeIds = new Set(cy.nodes().map(n => n.id()));
 
-        const savedVP = l2State.preserveViewport;
-        const originPos = l2State.expandOriginPos;
-        const prevIds = l2State._prevNodeIds || new Set();
+        cy.elements().remove();
+        cy.add(els);
+        applyCyFont(getSavedFont());
+        applyExternalEdgeVisibility();
 
-        if (savedVP && originPos) {
-            cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
+        const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 26, rankSep: 80, padding: 50 });
+        lay.one('layoutstop', () => {
+            if (_renderToken !== _l2Token) return;
 
-            const newNodes = cy.nodes('[_t="ext_func"]').filter(n => !prevIds.has(n.id()));
+            updateBreadcrumb();
+            showLoading(false);
+            updateL2Toolbar(fileRel, {
+                funcs: funcs.length,
+                internalEdges: internalEdgeCount,
+                extModules: extMap.size,
+                extFuncs: Array.from(extMap.values()).reduce((a, m) => a + m.size, 0),
+                legacy: !hasCallList,
+            });
+            updateExternalToggle();
+            focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: false });
 
-            if (newNodes.length > 0) {
-                const finalPos = new Map();
-                newNodes.forEach(n => finalPos.set(n.id(), { ...n.position() }));
-                newNodes.forEach(n => n.position({ x: originPos.x, y: originPos.y }));
+            const savedVP = l2State.preserveViewport;
+            const originPos = l2State.expandOriginPos;
+            const prevIds = l2State._prevNodeIds || new Set();
 
-                const myGen = l2State._animGen;
-                let idx = 0;
-                newNodes.forEach(n => {
-                    const fp = finalPos.get(n.id());
-                    const nid = n.id();
-                    const delay = idx * 18;
-                    setTimeout(() => {
-                        if (l2State._animGen !== myGen) return;
-                        if (!cy.hasElementWithId(nid)) return;
-                        cy.$id(nid).animate({ position: fp }, { duration: 360, easing: 'ease-out-cubic' });
-                    }, delay);
-                    idx++;
-                });
-            } else {
-                cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
-            }
-        } else if (focusFuncName) {
-            const targetNode = cy.$id(`fn-${l2State.activeFuncIdx}`);
-            if (targetNode && targetNode.length) {
-                setTimeout(() => {
-                    highlightNode(targetNode);
-                    cy.animate({
-                        center: { eles: targetNode },
-                        zoom: Math.max(cy.zoom(), 1.8),
-                    }, {
-                        duration: 700,
-                        easing: 'ease-in-out-cubic',
-                        complete: () => {
-                            let count = 0;
-                            const originalBc = targetNode.data('bc');
-                            const flashInterval = setInterval(() => {
-                                count++;
-                                if (!cy.hasElementWithId(targetNode.id())) { clearInterval(flashInterval); return; }
-                                targetNode.style('border-color', count % 2 === 1 ? '#ffffff' : originalBc);
-                                targetNode.style('border-width', count % 2 === 1 ? 4 : 2);
-                                if (count >= 6) {
-                                    clearInterval(flashInterval);
-                                    targetNode.style('border-color', originalBc);
-                                    targetNode.style('border-width', 2);
-                                }
-                            }, 200);
-                        }
+            if (savedVP && originPos) {
+                cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
+
+                const newNodes = cy.nodes('[_t="ext_func"]').filter(n => !prevIds.has(n.id()));
+
+                if (newNodes.length > 0) {
+                    const finalPos = new Map();
+                    newNodes.forEach(n => finalPos.set(n.id(), { ...n.position() }));
+                    newNodes.forEach(n => n.position({ x: originPos.x, y: originPos.y }));
+
+                    const myGen = l2State._animGen;
+                    let idx = 0;
+                    newNodes.forEach(n => {
+                        const fp = finalPos.get(n.id());
+                        const nid = n.id();
+                        const delay = idx * 18;
+                        setTimeout(() => {
+                            if (l2State._animGen !== myGen) return;
+                            if (!cy.hasElementWithId(nid)) return;
+                            cy.$id(nid).animate({ position: fp }, { duration: 360, easing: 'ease-out-cubic' });
+                        }, delay);
+                        idx++;
                     });
-                }, 80);
+                } else {
+                    cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
+                }
+            } else if (focusFuncName) {
+                const targetNode = cy.$id(`fn-${l2State.activeFuncIdx}`);
+                if (targetNode && targetNode.length) {
+                    setTimeout(() => {
+                        highlightNode(targetNode);
+                        cy.animate({
+                            center: { eles: targetNode },
+                            zoom: Math.max(cy.zoom(), 1.8),
+                        }, {
+                            duration: 700,
+                            easing: 'ease-in-out-cubic',
+                            complete: () => {
+                                let count = 0;
+                                const originalBc = targetNode.data('bc');
+                                const flashInterval = setInterval(() => {
+                                    count++;
+                                    if (!cy.hasElementWithId(targetNode.id())) { clearInterval(flashInterval); return; }
+                                    targetNode.style('border-color', count % 2 === 1 ? '#ffffff' : originalBc);
+                                    targetNode.style('border-width', count % 2 === 1 ? 4 : 2);
+                                    if (count >= 6) {
+                                        clearInterval(flashInterval);
+                                        targetNode.style('border-color', originalBc);
+                                        targetNode.style('border-width', 2);
+                                    }
+                                }, 200);
+                            }
+                        });
+                    }, 80);
+                } else {
+                    cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
+                }
             } else {
                 cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
             }
-        } else {
-            cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
-        }
 
-        l2State.preserveViewport = null;
-        l2State.expandOriginPos = null;
-        l2State._prevNodeIds = null;
+            l2State.preserveViewport = null;
+            l2State.expandOriginPos = null;
+            l2State._prevNodeIds = null;
 
-        renderL2Legend();
-    });
-    lay.run();
+            renderL2Legend();
+        });
+        lay.run();
+    }, 0);
 }
 
 // Drill the currently active file (code panel or selected node) to L2 caller/callee
@@ -2789,77 +2802,86 @@ function renderFilesFlat(modId, files, subPath) {
     // Invalidate any in-flight expand animations from previous render
     depMapState._animGen++;
 
-    // Stop any running animations to avoid corrupting cytoscape state
-    cy.elements().stop(true, false);   // jumpToEnd=false so we don't flash final positions
+    // ── Yield to browser so the loading spinner can paint before heavy work ──
+    const _l1Token = ++_renderToken;
+    setTimeout(() => {
+        if (_renderToken !== _l1Token) return; // cancelled
 
-    // Snapshot existing node IDs so expand animation knows which are truly new
-    const prevNodeIds = new Set(cy.nodes().map(n => n.id()));
-    depMapState._prevNodeIds = prevNodeIds;
+        // Stop any running animations to avoid corrupting cytoscape state
+        cy.elements().stop(true, false);   // jumpToEnd=false so we don't flash final positions
 
-    cy.elements().remove();
-    cy.add(els);
-    applyCyFont(getSavedFont());
+        // Snapshot existing node IDs so expand animation knows which are truly new
+        const prevNodeIds = new Set(cy.nodes().map(n => n.id()));
+        depMapState._prevNodeIds = prevNodeIds;
 
-    // ── Two-pass layout ──────────────────────────────────────────────────────
-    // Pass 1: dagre on ONLY the analysed nodes (no extra nodes yet positioned)
-    // Pass 2: grid-wrap the extra nodes below the analysed bounding box
+        cy.elements().remove();
+        cy.add(els);
+        applyCyFont(getSavedFont());
 
-    const mainEls = cy.elements().filter(el => !el.data('isExtra'));
-    const extraEls = cy.nodes().filter(n => n.data('isExtra'));
+        // ── Two-pass layout ──────────────────────────────────────────────────────
+        // Pass 1: dagre on ONLY the analysed nodes (no extra nodes yet positioned)
+        // Pass 2: grid-wrap the extra nodes below the analysed bounding box
 
-    if (extraEls.length === 0) {
-        // Simple path: no extras, just run dagre normally
-        const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
-        lay.one('layoutstop', () => {
+        const mainEls = cy.elements().filter(el => !el.data('isExtra'));
+        const extraEls = cy.nodes().filter(n => n.data('isExtra'));
+
+        if (extraEls.length === 0) {
+            // Simple path: no extras, just run dagre normally
+            const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
+            lay.one('layoutstop', () => {
+                if (_renderToken !== _l1Token) return;
+                updateBreadcrumb();
+                showLoading(false);
+                _postLayoutL1();
+            });
+            lay.run();
+            return;
+        }
+
+        // Hide extra nodes while dagre runs so they don't affect the layout
+        extraEls.style('display', 'none');
+
+        const layMain = cy.layout({
+            name: 'dagre', rankDir: 'LR', animate: false,
+            nodeSep: 30, rankSep: 90, padding: 40,
+        });
+
+        layMain.one('layoutstop', () => {
+            if (_renderToken !== _l1Token) return;
+
+            // Restore extra nodes
+            extraEls.style('display', 'element');
+
+            // Compute bounding box of main graph
+            const bb = mainEls.length ? mainEls.boundingBox() : { x1: 40, y1: 40, x2: 400, y2: 200 };
+            const graphWidth = Math.max(bb.x2 - bb.x1, 600);
+
+            // Grid parameters
+            const NODE_W = 155;   // matches FILE_TYPE_SHAPE 'other'/'binary' width
+            const NODE_H = 42;
+            const H_GAP = 14;
+            const V_GAP = 10;
+            const COLS = Math.max(1, Math.floor(graphWidth / (NODE_W + H_GAP)));
+
+            const startX = bb.x1;
+            const startY = bb.y2 + 60;   // 60px below main graph
+
+            extraEls.forEach((n, idx) => {
+                const col = idx % COLS;
+                const row = Math.floor(idx / COLS);
+                n.position({
+                    x: startX + col * (NODE_W + H_GAP) + NODE_W / 2,
+                    y: startY + row * (NODE_H + V_GAP) + NODE_H / 2,
+                });
+            });
+
             updateBreadcrumb();
             showLoading(false);
             _postLayoutL1();
         });
-        lay.run();
-        return;
-    }
 
-    // Hide extra nodes while dagre runs so they don't affect the layout
-    extraEls.style('display', 'none');
-
-    const layMain = cy.layout({
-        name: 'dagre', rankDir: 'LR', animate: false,
-        nodeSep: 30, rankSep: 90, padding: 40,
-    });
-
-    layMain.one('layoutstop', () => {
-        // Restore extra nodes
-        extraEls.style('display', 'element');
-
-        // Compute bounding box of main graph
-        const bb = mainEls.length ? mainEls.boundingBox() : { x1: 40, y1: 40, x2: 400, y2: 200 };
-        const graphWidth = Math.max(bb.x2 - bb.x1, 600);
-
-        // Grid parameters
-        const NODE_W = 155;   // matches FILE_TYPE_SHAPE 'other'/'binary' width
-        const NODE_H = 42;
-        const H_GAP = 14;
-        const V_GAP = 10;
-        const COLS = Math.max(1, Math.floor(graphWidth / (NODE_W + H_GAP)));
-
-        const startX = bb.x1;
-        const startY = bb.y2 + 60;   // 60px below main graph
-
-        extraEls.forEach((n, idx) => {
-            const col = idx % COLS;
-            const row = Math.floor(idx / COLS);
-            n.position({
-                x: startX + col * (NODE_W + H_GAP) + NODE_W / 2,
-                y: startY + row * (NODE_H + V_GAP) + NODE_H / 2,
-            });
-        });
-
-        updateBreadcrumb();
-        showLoading(false);
-        _postLayoutL1();
-    });
-
-    layMain.run();
+        layMain.run();
+    }, 0);
 }
 
 // ── Post-layout handler: handles expand animation OR focus fly-in ──────────────
@@ -3568,6 +3590,14 @@ function showLoading(v, msg) {
     el.classList.toggle('show', v);
     if (v && msg) document.getElementById('loading-msg').textContent = msg;
     if (sp) sp.style.display = '';
+    const cancelBtn = document.getElementById('loading-cancel-btn');
+    if (cancelBtn) cancelBtn.style.display = v ? '' : 'none';
+}
+
+function cancelRender() {
+    _renderToken++; // invalidate any in-flight render
+    showLoading(false);
+    showToast('已取消渲染 (Render cancelled)', 'info');
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

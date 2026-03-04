@@ -1271,7 +1271,7 @@ HTML_SKELETON = """\
     </div>
     <div id="cy"></div>
     <div id="func-view"></div>
-    <div id="loading"><div class="spinner"></div><span id="loading-msg">Loading...</span></div>
+    <div id="loading"><div class="spinner"></div><span id="loading-msg">Loading...</span><button id="loading-cancel-btn" onclick="cancelRender()">✕ Cancel</button></div>
   </div>
   <!-- Resizer handle -->
   <div id="resizer" style="display:none"></div>
