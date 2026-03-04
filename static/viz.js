@@ -541,7 +541,7 @@ function updateL2Toolbar(fileRel, stats) {
         if (stats.extModules) parts.push(`${stats.extModules} modules`);
         if (stats.extFuncs) parts.push(`${stats.extFuncs} ext funcs`);
         if (stats.legacy) parts.push('legacy edges');
-        statsEl.textContent = parts.join(' | ');
+        statsEl.textContent = parts.join('\n');
     }
 }
 

@@ -513,9 +513,26 @@ body {
 }
 
 .l2-stats {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    border-radius: 8px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
     font-size: 11px;
     color: var(--muted);
-    padding-left: 6px;
+    font-family: monospace;
+    white-space: pre;
+    line-height: 1.6;
+    text-align: right;
+    z-index: 100;
+}
+
+.l2-toolbar:hover .l2-stats {
+    display: block;
 }
 
 /* ── Resizer ── */
