@@ -97,8 +97,60 @@ class Handler(BaseHTTPRequestHandler):
                 if not (abs_path.startswith(root_norm + os.sep) or abs_path == root_norm):
                     self.json_resp({'error': 'Path traversal not allowed'}, 403)
                     return
+
+                import base64
+                ext = Path(abs_path).suffix.lower()
+
+                # ── Image files → base64 ──────────────────────────────────────
+                IMAGE_EXTS = {
+                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                    '.png': 'image/png',  '.bmp': 'image/bmp',
+                    '.gif': 'image/gif',  '.ico': 'image/x-icon',
+                    '.tiff': 'image/tiff', '.tif': 'image/tiff',
+                    '.webp': 'image/webp',
+                }
+                if ext in IMAGE_EXTS:
+                    raw = Path(abs_path).read_bytes()
+                    b64 = base64.b64encode(raw).decode('ascii')
+                    self.json_resp({
+                        'content_type': 'image',
+                        'mime': IMAGE_EXTS[ext],
+                        'data': b64,
+                        'size': len(raw),
+                        'path': rel,
+                    })
+                    return
+
+                # ── Known binary / object files → hex dump ───────────────────
+                BINARY_EXTS = {
+                    '.bin', '.rom', '.efi', '.lib', '.obj',
+                    '.veb', '.map', '.pdb', '.exe', '.dll',
+                }
+                if ext in BINARY_EXTS:
+                    MAX_HEX = 8192   # show first 8 KB
+                    raw = Path(abs_path).read_bytes()
+                    chunk = raw[:MAX_HEX]
+                    lines = []
+                    for i in range(0, len(chunk), 16):
+                        row = chunk[i:i+16]
+                        hex_part  = ' '.join(f'{b:02X}' for b in row)
+                        hex_pad   = hex_part.ljust(47)
+                        ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)
+                        lines.append(f'{i:08X}  {hex_pad}  |{ascii_part}|')
+                    truncated = len(raw) > MAX_HEX
+                    self.json_resp({
+                        'content_type': 'binary',
+                        'content': '\n'.join(lines),
+                        'size': len(raw),
+                        'truncated': truncated,
+                        'path': rel,
+                    })
+                    return
+
+                # ── Default: text ─────────────────────────────────────────────
                 content = Path(abs_path).read_text(encoding='utf-8', errors='replace')
-                self.json_resp({'content': content, 'path': rel})
+                self.json_resp({'content_type': 'text', 'content': content, 'path': rel})
+
             except FileNotFoundError:
                 self.json_resp({'error': f'File not found: {rel}'}, 404)
             except Exception as e:

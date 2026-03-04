@@ -95,7 +95,8 @@ window.addEventListener('DOMContentLoaded', () => {
                 if (!window.DATA?.stats) { showMsg('Error: invalid data format'); return; }
 
                 const s = DATA.stats;
-                document.getElementById('st-files').textContent = s.files.toLocaleString();
+                const totalFiles = s.files + (s.other_files || 0);
+                document.getElementById('st-files').textContent = totalFiles.toLocaleString();
                 document.getElementById('st-mods').textContent = s.modules;
                 document.getElementById('st-funcs').textContent = s.functions.toLocaleString();
 
@@ -1311,14 +1312,12 @@ async function loadFileInPanel(filePath, funcName) {
     hideFuncBar();
     showCpLoading(true);
 
-    // Fetch from server only if JOB_ID is available; else try file:// or show error
     if (!codeState.jobId) {
         showCpError('No job ID — code preview only available via the local server (launch.bat).');
         return;
     }
 
     if (filePath === codeState.currentFile) {
-        // File already loaded — just scroll to function
         showCpLoading(false);
         if (funcName) jumpToFunc(funcName);
         return;
@@ -1328,16 +1327,11 @@ async function loadFileInPanel(filePath, funcName) {
         const url = `/file?job=${encodeURIComponent(codeState.jobId)}&path=${encodeURIComponent(filePath)}`;
         const res = await fetch(url);
         const data = await res.json();
-        if (data.error) {
-            showCpError('Could not load file: ' + data.error);
-            return;
-        }
+        if (data.error) { showCpError('Could not load file: ' + data.error); return; }
         codeState.currentFile = filePath;
-        renderCode(data.content, ext, fname);
+        renderFileContent(data, ext, fname);
         showCpLoading(false);
-        if (funcName) {
-            setTimeout(() => jumpToFunc(funcName), 80);
-        }
+        if (funcName) setTimeout(() => jumpToFunc(funcName), 80);
     } catch (e) {
         showCpError('Fetch error: ' + e.message);
     }
@@ -1352,7 +1346,7 @@ function extColor(ext) {
         // UEFI / EDK2
         '.inf': '#ffd700', '.dec': '#00d4ff', '.dsc': '#e2e8f0', '.fdf': '#c084fc',
         // AMI 特有
-        '.sdl': '#34d399', '.cif': '#60a5fa', '.mak': '#94a3b8',
+        '.sdl': '#34d399', '.sd': '#2dd4a0', '.cif': '#60a5fa', '.mak': '#94a3b8',
         // HII (UEFI 標準 + AMI 擴充)
         '.vfr': '#f472b6',  // UEFI HII Form
         '.hfr': '#e940a0',  // AMI HII Form Resource (較深的籉红)
@@ -1382,6 +1376,7 @@ const FILE_TYPE_SHAPE = {
     'hii_string': { sh: 'round-rectangle', w: 155, h: 44 },  // UNI 字串包
     'acpi_asl': { sh: 'pentagon', w: 160, h: 56 },
     'other': { sh: 'round-rectangle', w: 155, h: 46 },
+    'binary': { sh: 'round-rectangle', w: 150, h: 42 },
 };
 
 // ─── Edge type → color + style ───────────────────────────────────────────────
@@ -1431,6 +1426,31 @@ function edgeTypeStyle(type) {
     return EDGE_TYPE_STYLE[type] || EDGE_TYPE_STYLE['include'];
 }
 
+// ─── Other/Binary file node (not deeply analysed) ────────────────────────────
+function otherFileNodeData(f) {
+    const ft = f.file_type || 'other';
+    const shape = FILE_TYPE_SHAPE[ft] || FILE_TYPE_SHAPE['other'];
+    const isBin = ft === 'binary';
+    // Muted gray palette — distinct from analysed files
+    const bg = isBin ? '#0c0c0e' : '#0d0f12';
+    const bc = isBin ? '#374151' : '#4b5563';
+    const extLbl = f.ext ? f.ext.toUpperCase() : 'FILE';
+    const ttLines = [
+        f.path,
+        `Type: ${extLbl}${isBin ? ' (binary/obj — not analysed)' : ' (unrecognised — not analysed)'}`,
+        `Size: ${fmtSize(f.size)}`,
+    ];
+    return {
+        id: `f${f.id}`, label: f.label,
+        bg, bc,
+        lvl: 1, w: shape.w, h: shape.h, sh: shape.sh,
+        ft,
+        isExtra: true,   // used by CY_STYLE selector for dimmed rendering
+        tt: ttLines.join('\n'),
+        _t: 'file', _f: f,
+    };
+}
+
 function showCpLoading(v) {
     document.getElementById('cp-loading').classList.toggle('hidden', !v);
     document.getElementById('cp-empty').style.display = 'none';
@@ -1444,6 +1464,70 @@ function showCpError(msg) {
     const empty = document.getElementById('cp-empty');
     empty.style.display = '';
     empty.innerHTML = `<div class="cp-empty-icon">⚠</div><p>${msg}</p>`;
+}
+
+// ─── File Content Renderers ───────────────────────────────────────────────────
+// Top-level dispatcher: routes to the right renderer by content_type
+function renderFileContent(data, ext, fname) {
+    const ct = data.content_type || 'text';
+    if (ct === 'image') {
+        renderImage(data);
+    } else if (ct === 'binary') {
+        renderHexDump(data);
+    } else {
+        // Legacy: server may still return {content} without content_type
+        renderCode(data.content || data.content || '', ext, fname);
+    }
+}
+
+// Render image files (jpg, png, bmp, gif, ico …)
+function renderImage(data) {
+    const wrap = document.getElementById('cp-code-wrap');
+    const src = `data:${data.mime};base64,${data.data}`;
+    const kb = data.size ? (data.size / 1024).toFixed(1) + ' KB' : '';
+    wrap.innerHTML = `
+<div style="display:flex;flex-direction:column;align-items:center;padding:20px;gap:12px;min-height:200px">
+  <img src="${src}" alt="${escapeHtml(data.path || '')}"
+       style="max-width:100%;max-height:calc(100vh - 180px);border-radius:4px;
+              border:1px solid var(--border);background:#111;object-fit:contain"
+       onerror="this.parentElement.innerHTML='<div style=\\'color:var(--muted)\\'>Failed to render image</div>'"
+  />
+  <div style="font-size:11px;color:var(--muted);font-family:var(--code-font)">${escapeHtml(data.path || '')} &nbsp;·&nbsp; ${escapeHtml(kb)}</div>
+</div>`;
+    wrap.style.display = '';
+    // Reset func-related state — no functions in images
+    codeState.funcLineMap = {};
+    codeState.funcList = [];
+}
+
+// Render binary files as a hex dump
+function renderHexDump(data) {
+    const wrap = document.getElementById('cp-code-wrap');
+    const lines = (data.content || '').split('\n');
+    const kb = data.size ? (data.size / 1024).toFixed(1) + ' KB' : '';
+    const trunc = data.truncated
+        ? `<div style="color:#f59e0b;font-size:11px;padding:8px 0">⚠ Showing first 8 KB of ${escapeHtml(kb)} file</div>`
+        : '';
+    const rows = lines.map(ln => {
+        // offset  |  hex bytes  |  ascii
+        const [addr, ...rest] = ln.split('  ');
+        const body = rest.join('  ');
+        const asciiIdx = body.lastIndexOf('|');
+        const hexPart = asciiIdx > 0 ? body.slice(0, asciiIdx) : body;
+        const asciiPart = asciiIdx > 0 ? body.slice(asciiIdx) : '';
+        return `<div class="hex-row"><span class="hex-addr">${escapeHtml(addr || '')}</span>` +
+            `<span class="hex-bytes">${escapeHtml(hexPart)}</span>` +
+            `<span class="hex-ascii">${escapeHtml(asciiPart)}</span></div>`;
+    }).join('');
+
+    wrap.innerHTML = `
+<div style="padding:12px">
+  ${trunc}
+  <pre class="hex-dump"><code>${rows}</code></pre>
+</div>`;
+    wrap.style.display = '';
+    codeState.funcLineMap = {};
+    codeState.funcList = [];
 }
 
 function renderCode(src, ext, fname) {
@@ -1681,6 +1765,14 @@ const CY_STYLE = [
         }
     },
     { selector: '.faded', style: { 'opacity': 0.06 } },
+    // Other / binary file nodes — visibly distinct: dimmed + dashed border
+    {
+        selector: 'node[?isExtra]', style: {
+            'opacity': 0.50,
+            'border-style': 'dashed',
+            'border-width': 1.5,
+        }
+    },
     { selector: '.hl', style: { 'opacity': 1, 'border-width': 2.5, 'border-color': '#e2e8f0' } },
     {
         selector: '.hl-edge-out', style: {
@@ -1705,13 +1797,16 @@ const FT_GROUPS = [
     { key: 'package_dec', label: '.dec', exts: ['.dec'] },
     { key: 'platform_dsc', label: '.dsc', exts: ['.dsc'] },
     { key: 'flash_desc', label: '.fdf', exts: ['.fdf'] },
-    { key: 'ami_sdl', label: '.sdl', exts: ['.sdl'] },
+    { key: 'ami_sdl', label: '.sdl/.sd', exts: ['.sdl', '.sd'] },
     { key: 'ami_cif', label: '.cif', exts: ['.cif'] },
     { key: 'makefile', label: '.mak', exts: ['.mak'] },
     { key: 'hii_vfr', label: '.vfr', exts: ['.vfr'] },
     { key: 'hii_hfr', label: '.hfr', exts: ['.hfr'] },
     { key: 'hii_string', label: '.uni', exts: ['.uni'] },
     { key: 'acpi_asl', label: '.asl', exts: ['.asl'] },
+    // ── files not deeply analysed ──────────────────────────────────
+    { key: 'other', label: 'Other (undef)', exts: [], isExtra: true },
+    { key: 'binary', label: 'Binary/Obj', exts: [], isExtra: true },
 ];
 // 預設全部勾選顯示
 const ftActiveFilter = new Set([
@@ -1729,20 +1824,48 @@ function buildFtFilter() {
     Object.values(DATA.files_by_module).forEach(files =>
         files.forEach(f => presentTypes.add(f.file_type || 'other'))
     );
+    // Also check other_files_by_module
+    const otherByMod = DATA.other_files_by_module || {};
+    Object.values(otherByMod).forEach(files =>
+        files.forEach(f => presentTypes.add(f.file_type || 'other'))
+    );
 
-    const groups = FT_GROUPS.filter(g => presentTypes.has(g.key));
+    // Count other/binary totals for display
+    const otherTotal = (DATA.stats?.other_files || 0) - (DATA.stats?.binary_files || 0);
+    const binaryTotal = DATA.stats?.binary_files || 0;
+
+    const groups = FT_GROUPS.filter(g => {
+        if (g.isExtra) {
+            if (g.key === 'other') return otherTotal > 0;
+            if (g.key === 'binary') return binaryTotal > 0;
+        }
+        return presentTypes.has(g.key);
+    });
     if (!groups.length) return;
 
-    wrap.innerHTML = '<div class="ft-filter-title">File Types</div>' +
-        groups.map(g => {
-            const col = extColor(g.exts[0]);
-            const checked = ftActiveFilter.has(g.key) ? 'checked' : '';
-            return `<label class="ft-chip" style="--ft-col:${col}">
+    const analysed = groups.filter(g => !g.isExtra);
+    const extra = groups.filter(g => g.isExtra);
+
+    function chipHtml(g) {
+        const col = g.isExtra ? '#4b5563' : extColor(g.exts[0]);
+        const checked = ftActiveFilter.has(g.key) ? 'checked' : '';
+        const count = g.key === 'other' ? otherTotal :
+            g.key === 'binary' ? binaryTotal : '';
+        const countBadge = count !== '' ? `<span class="ft-count">${count}</span>` : '';
+        return `<label class="ft-chip${g.isExtra ? ' ft-chip-extra' : ''}" style="--ft-col:${col}">
   <input type="checkbox" data-ft="${g.key}" ${checked}>
   <span class="ft-dot" style="background:${col}"></span>
-  <span>${g.label}</span>
+  <span>${g.label}</span>${countBadge}
 </label>`;
-        }).join('');
+    }
+
+    wrap.innerHTML =
+        '<div class="ft-filter-title">File Types</div>' +
+        analysed.map(chipHtml).join('') +
+        (extra.length
+            ? '<div class="ft-separator" title="These files are visible in the graph but not deeply analysed for dependencies">— unanalysed —</div>' +
+            extra.map(chipHtml).join('')
+            : '');
 
     wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
         cb.addEventListener('change', () => {
@@ -1781,7 +1904,7 @@ function buildSidebar() {
             `<span class="tree-arrow ${hasSubdirs ? '▶' : 'leaf'}">▶</span>` +
             `<span class="mod-dot" style="background:${m.color}"></span>` +
             `<span class="mod-name" title="${m.id}">${m.id}</span>` +
-            `<span class="mod-count">${m.file_count}</span>`;
+            `<span class="mod-count" title="${m.file_count} analysed${m.other_count ? ` + ${m.other_count} other` : ''}">${m.file_count}${m.other_count ? `<span class="mod-count-extra">+${m.other_count}</span>` : ''}</span>`;
 
         // ── Sub-folder children container ──
         const children = document.createElement('div');
@@ -1908,7 +2031,7 @@ function filterGraphToSubPath(modId, subPath) {
     const allFiles = DATA.files_by_module[modId] || [];
     // Include files directly in this dir AND in any nested dirs
     const filtered = allFiles.filter(f => f.path.startsWith(prefix) || f.path === modId + '/' + subPath);
-    renderFilesFlat(modId, filtered);
+    renderFilesFlat(modId, filtered, subPath);
     updateBreadcrumb();
 }
 
@@ -1921,12 +2044,17 @@ function loadLevel0() {
 
     const els = [];
     DATA.modules.forEach(m => {
+        const otherCount = m.other_count || 0;
+        const totalLabel = otherCount
+            ? `${m.id}\n${m.file_count} + ${otherCount} files`
+            : `${m.id}\n${m.file_count} files`;
+        const ttExtra = otherCount ? `\nOther/binary: ${otherCount}` : '';
         els.push({
             data: {
-                id: m.id, label: `${m.id}\n${m.file_count} files`,
+                id: m.id, label: totalLabel,
                 bg: m.color + '18', bc: m.color, lvl: 0,
                 w: 190, h: 68, sh: 'roundrectangle',
-                tt: `${m.id}\nFiles: ${m.file_count} | Funcs: ${m.func_count}`,
+                tt: `${m.id}\nAnalysed: ${m.file_count} | Funcs: ${m.func_count}${ttExtra}`,
                 _t: 'module', _m: m,
             }
         });
@@ -1968,18 +2096,40 @@ function drillToModule(modId) {
 }
 
 // Render flat file nodes in graph — the only graph view for L1
-function renderFilesFlat(modId, files) {
-    // Apply File Type Filter
+function renderFilesFlat(modId, files, subPath) {
+    // Apply File Type Filter (for fully-analysed files)
     const visible = files.filter(f => ftActiveFilter.has(f.file_type || 'other') || ftActiveFilter.size === 0);
+
+    // Optionally add other/binary files
+    const showOther = ftActiveFilter.has('other');
+    const showBinary = ftActiveFilter.has('binary');
+    let otherFiles = [];
+    if (showOther || showBinary) {
+        const allOther = (DATA.other_files_by_module || {})[modId] || [];
+        // Filter by subpath if we're in a sub-directory view
+        const pathFiltered = subPath
+            ? allOther.filter(f => f.path.startsWith(modId + '/' + subPath + '/') || f.path === modId + '/' + subPath)
+            : allOther;
+        otherFiles = pathFiltered.filter(f =>
+            (f.file_type === 'other' && showOther) ||
+            (f.file_type === 'binary' && showBinary)
+        );
+    }
+
     const capped = visible.slice(0, 250);
-    const visIds = new Set(capped.map(f => f.id));
+    const cappedOther = otherFiles.slice(0, Math.max(0, 400 - capped.length));
+
+    const visIds = new Set(capped.map(f => `f${f.id}`));
     const allEdges = DATA.file_edges_by_module[modId] || [];
     const edges = allEdges
-        .filter(e => visIds.has(e.s) && visIds.has(e.t)).slice(0, 600);
+        .filter(e => visIds.has(`f${e.s}`) && visIds.has(`f${e.t}`)).slice(0, 600);
 
     const els = [];
     capped.forEach(f => {
         els.push({ data: fileNodeData(f) });
+    });
+    cappedOther.forEach(f => {
+        els.push({ data: otherFileNodeData(f) });
     });
     edges.forEach((e, i) => {
         const es = edgeTypeStyle(e.type);
@@ -1998,9 +2148,62 @@ function renderFilesFlat(modId, files) {
     cy.add(els);
     applyCyFont(getSavedFont());
 
-    const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
-    lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); });
-    lay.run();
+    // ── Two-pass layout ──────────────────────────────────────────────────────
+    // Pass 1: dagre on ONLY the analysed nodes (no extra nodes yet positioned)
+    // Pass 2: grid-wrap the extra nodes below the analysed bounding box
+
+    const mainEls = cy.elements().filter(el => !el.data('isExtra'));
+    const extraEls = cy.nodes().filter(n => n.data('isExtra'));
+
+    if (extraEls.length === 0) {
+        // Simple path: no extras, just run dagre normally
+        const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
+        lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); });
+        lay.run();
+        return;
+    }
+
+    // Hide extra nodes while dagre runs so they don't affect the layout
+    extraEls.style('display', 'none');
+
+    const layMain = cy.layout({
+        name: 'dagre', rankDir: 'LR', animate: false,
+        nodeSep: 30, rankSep: 90, padding: 40,
+    });
+
+    layMain.one('layoutstop', () => {
+        // Restore extra nodes
+        extraEls.style('display', 'element');
+
+        // Compute bounding box of main graph
+        const bb = mainEls.length ? mainEls.boundingBox() : { x1: 40, y1: 40, x2: 400, y2: 200 };
+        const graphWidth = Math.max(bb.x2 - bb.x1, 600);
+
+        // Grid parameters
+        const NODE_W = 155;   // matches FILE_TYPE_SHAPE 'other'/'binary' width
+        const NODE_H = 42;
+        const H_GAP = 14;
+        const V_GAP = 10;
+        const COLS = Math.max(1, Math.floor(graphWidth / (NODE_W + H_GAP)));
+
+        const startX = bb.x1;
+        const startY = bb.y2 + 60;   // 60px below main graph
+
+        extraEls.forEach((n, idx) => {
+            const col = idx % COLS;
+            const row = Math.floor(idx / COLS);
+            n.position({
+                x: startX + col * (NODE_W + H_GAP) + NODE_W / 2,
+                y: startY + row * (NODE_H + V_GAP) + NODE_H / 2,
+            });
+        });
+
+        cy.fit(cy.elements(), 40);
+        updateBreadcrumb();
+        showLoading(false);
+    });
+
+    layMain.run();
 }
 
 // ─── L2: Function View ────────────────────────────────────────────────────────
@@ -2051,7 +2254,7 @@ async function _syncCodePanel(fileRel, funcName, targetCallText = null) {
         const data = await res.json();
         if (data.error) { showCpError('Could not load file: ' + data.error); return; }
         codeState.currentFile = fileRel;
-        renderCode(data.content, ext, fname);
+        renderFileContent(data, ext, fname);
         showCpLoading(false);
         if (funcName) requestAnimationFrame(() => jumpToFunc(funcName, targetCallText));
     } catch (e) {

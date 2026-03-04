@@ -18,7 +18,7 @@ SCAN_EXT   = {
     # UEFI / EDK2 build system
     '.inf', '.dec', '.dsc', '.fdf',
     # AMI BIOS 特有
-    '.sdl', '.cif', '.mak',
+    '.sdl', '.sd', '.cif', '.mak',
     # HII (Human Interface Infrastructure)
     '.vfr',   # UEFI 標準 HII 表單語言
     '.hfr',   # AMI 擴充 HII Form Resource（類似 VFR）
@@ -38,6 +38,7 @@ FILE_TYPE_MAP = {
     '.dsc': 'platform_dsc',
     '.fdf': 'flash_desc',
     '.sdl': 'ami_sdl',
+    '.sd':  'ami_sdl',   # AMI SDL variant (same format as .sdl)
     '.cif': 'ami_cif',
     '.mak': 'makefile',
     '.vfr': 'hii_vfr',      # UEFI 標準 HII 表單
@@ -577,7 +578,7 @@ def scan_file(filepath: str, root: str):
         data = scan_fdf(src)
         return data['infs'], [], [], data, []
 
-    if ext == '.sdl':
+    if ext in ('.sdl', '.sd'):
         data = scan_sdl(src)
         refs = data['inf_components']
         return refs, [], [], data, []
@@ -706,6 +707,44 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         file_calls[rel] = calls
         file_func_calls[rel] = func_calls_by_func
         file_extra[rel] = extra
+
+    # ── Phase X: Collect ALL other files (not in SCAN_EXT/SKIP_EXT) ──────────────
+    # These are never analysed for dependencies but ARE shown in the UI
+    # so the engineer has a complete picture of what lives in the codebase.
+    _cb(59, 'Scanning other files...')
+    other_files_all: dict = {}   # rel_path → simple meta
+    _oth_idx = len(file_meta)    # numeric IDs continue from where file_meta ends
+
+    for _dp, _dns, _fns in os.walk(root):
+        _dns[:] = [d for d in _dns if d not in skip_dirs]
+        for _fn in _fns:
+            _fp  = os.path.join(_dp, _fn)
+            _rel = os.path.relpath(_fp, root).replace('\\', '/')
+            if _rel in file_meta:
+                continue            # already fully analysed
+            _ext = Path(_fn).suffix.lower()
+            try:
+                _sz = os.path.getsize(_fp)
+            except OSError:
+                _sz = 0
+            _ft = 'binary' if _ext in SKIP_EXT else 'other'
+            other_files_all[_rel] = {
+                'id':        _oth_idx,
+                'label':     _fn,
+                'path':      _rel,
+                'ext':       _ext,
+                'size':      _sz,
+                'module':    get_module(_rel),
+                'file_type': _ft,
+            }
+            _oth_idx += 1
+
+    # Group by module
+    other_files_by_module: dict = defaultdict(list)
+    for _rel, _meta in other_files_all.items():
+        other_files_by_module[_meta['module']].append({
+            k: _meta[k] for k in ('id','label','path','ext','size','file_type')
+        })
 
     _cb(60, 'Building module index...')
 
@@ -973,12 +1012,13 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     _cb(95, 'Assembling output...')
     modules = [
         {
-            'id':         mod,
-            'label':      mod,
-            'color':      module_color[mod],
-            'file_count': len(files_by_module[mod]),
-            'func_count': sum(len(file_defs.get(f['path'], []))
-                              for f in files_by_module[mod]),
+            'id':          mod,
+            'label':       mod,
+            'color':       module_color[mod],
+            'file_count':  len(files_by_module[mod]),
+            'func_count':  sum(len(file_defs.get(f['path'], []))
+                               for f in files_by_module[mod]),
+            'other_count': len(other_files_by_module.get(mod, [])),
         }
         for mod in all_modules
     ]
@@ -989,6 +1029,9 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
 
     total_funcs = sum(len(v) for v in file_defs.values())
     total_calls = sum(len(v) for v in file_calls.values())
+
+    total_other  = len(other_files_all)
+    total_binary = sum(1 for m in other_files_all.values() if m['file_type'] == 'binary')
 
     # Count by file type for stats
     type_counts = defaultdict(int)
@@ -1004,6 +1047,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         'module_edges':         module_edges,
         'files_by_module':      dict(files_by_module),
         'file_edges_by_module': dict(file_edges_by_module),
+        'other_files_by_module': dict(other_files_by_module),
         'funcs_by_file':        funcs_by_file,
         'func_edges_by_file':   func_edges_by_file,
         'func_calls_by_file':   func_calls_by_file,
@@ -1013,12 +1057,14 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         'file_to_module':       file_to_module,
         'edge_types':           EDGE_TYPES,
         'stats': {
-            'files':      total,
-            'modules':    len(modules),
-            'functions':  total_funcs,
-            'calls':      total_calls,
-            'type_counts': dict(type_counts),
-            'root':       root.replace('\\', '/'),
+            'files':        total,
+            'modules':      len(modules),
+            'functions':    total_funcs,
+            'calls':        total_calls,
+            'other_files':  total_other,
+            'binary_files': total_binary,
+            'type_counts':  dict(type_counts),
+            'root':         root.replace('\\', '/'),
         }
     }
 

@@ -1355,6 +1355,45 @@ body {
     flex-shrink: 0
 }
 
+/* ── Extra (unanalysed) file type chips ── */
+.ft-chip-extra {
+    opacity: 0.7;
+    font-style: italic;
+}
+
+.ft-chip-extra input[type=checkbox]:checked + .ft-dot + span {
+    color: var(--text);
+    opacity: 1;
+}
+
+.ft-count {
+    font-size: 9px;
+    color: var(--muted);
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    padding: 0 4px;
+    margin-left: 2px;
+}
+
+.ft-separator {
+    font-size: 9px;
+    color: var(--muted);
+    text-align: center;
+    padding: 4px 2px 2px;
+    opacity: 0.6;
+    letter-spacing: 0.5px;
+}
+
+/* ── Sidebar extra file count badge ── */
+.mod-count-extra {
+    font-size: 9px;
+    color: #4b5563;
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    padding: 0 3px;
+    margin-left: 2px;
+}
+
 /* Scrollable area for module list (below filter) */
 #module-list {
     flex: 1;
@@ -1465,4 +1504,44 @@ body {
     width: 32px;
     text-align: center;
     flex-shrink: 0
+}
+/* ── Hex Dump Viewer ── */
+.hex-dump {
+    font-family: var(--code-font);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text);
+    overflow-x: auto;
+    white-space: pre;
+    background: none;
+    margin: 0;
+}
+
+.hex-row {
+    display: flex;
+    gap: 0;
+    white-space: pre;
+}
+
+.hex-addr {
+    color: #64748b;
+    min-width: 9ch;
+    user-select: none;
+}
+
+.hex-bytes {
+    color: #94a3b8;
+    min-width: 49ch;
+    letter-spacing: 0.03em;
+}
+
+.hex-ascii {
+    color: #4ade80;
+    min-width: 18ch;
+    opacity: 0.8;
+}
+
+/* ── Image Viewer ── */
+#cp-code-wrap img {
+    display: block;
 }
