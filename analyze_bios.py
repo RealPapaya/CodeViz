@@ -1216,6 +1216,18 @@ HTML_SKELETON = """\
   </div>
   <div id="sidebar-resizer"></div>
   <div id="graph-wrap">
+    <div id="l1-toolbar" class="l2-toolbar hidden">
+      <div class="l2-left">
+        <div class="l2-title">Dependency Map</div>
+        <div class="l2-sub" id="l1-mod-label">No module</div>
+      </div>
+      <div class="l2-actions">
+        <button id="l1-toggle-ext" class="l2-btn">Ext Files: Off</button>
+        <button id="l1-expand-all-ext" class="l2-btn" style="display:none">Expand All</button>
+        <button id="l1-collapse-all-ext" class="l2-btn" style="display:none">Collapse All</button>
+        <span id="l1-stats" class="l2-stats"></span>
+      </div>
+    </div>
     <div id="l2-toolbar" class="l2-toolbar hidden">
       <div class="l2-left">
         <div class="l2-title">Call Flow</div>

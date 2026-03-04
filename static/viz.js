@@ -24,6 +24,27 @@ const l2State = {
     showExternalEdges: true,
 };
 
+// ─── Dependency Map (L1) external-files state ─────────────────────────────────
+const depMapState = {
+    showExternalFiles: false,
+    expandedExtModules: new Set(),
+    currentExtModules: [],   // populated after each render
+    currentModId: null,
+};
+
+// File-ID → module/file lookup, built once after DATA is parsed
+let _fileIdToModule = {};
+let _fileIdToFile = {};
+
+function buildFileIdLookup() {
+    Object.entries(DATA.files_by_module).forEach(([modId, files]) => {
+        files.forEach(f => { _fileIdToModule[f.id] = modId; _fileIdToFile[f.id] = f; });
+    });
+    Object.entries(DATA.other_files_by_module || {}).forEach(([modId, files]) => {
+        files.forEach(f => { _fileIdToModule[f.id] = modId; _fileIdToFile[f.id] = f; });
+    });
+}
+
 // Code panel state
 const codeState = {
     jobId: window.JOB_ID || null,
@@ -101,6 +122,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('st-funcs').textContent = s.functions.toLocaleString();
 
                 buildSidebar();
+                buildFileIdLookup();
                 initCy();
                 loadLevel0();
 
@@ -113,6 +135,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // Preferences init
                 initPreferences();
+
+                // L1 toolbar init
+                initL1Toolbar();
 
                 // L2 toolbar init
                 initL2Toolbar();
@@ -217,6 +242,73 @@ function initPreferences() {
             fontSelect.style.fontFamily = font;
         });
     }
+}
+
+// ─── L1 Toolbar (Dependency Map) ─────────────────────────────────────────────
+function initL1Toolbar() {
+    const toggleBtn = document.getElementById('l1-toggle-ext');
+    const expandBtn = document.getElementById('l1-expand-all-ext');
+    const collapseBtn = document.getElementById('l1-collapse-all-ext');
+
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            depMapState.showExternalFiles = !depMapState.showExternalFiles;
+            updateDepMapExtToggle();
+            rerenderCurrentL1();
+        });
+    }
+    if (expandBtn) {
+        expandBtn.addEventListener('click', () => {
+            depMapState.expandedExtModules = new Set(depMapState.currentExtModules);
+            rerenderCurrentL1();
+        });
+    }
+    if (collapseBtn) {
+        collapseBtn.addEventListener('click', () => {
+            depMapState.expandedExtModules = new Set();
+            rerenderCurrentL1();
+        });
+    }
+
+    updateDepMapExtToggle();
+}
+
+function setL1ToolbarVisible(v) {
+    const bar = document.getElementById('l1-toolbar');
+    if (!bar) return;
+    bar.classList.toggle('hidden', !v);
+}
+
+function updateDepMapExtToggle() {
+    const btn = document.getElementById('l1-toggle-ext');
+    if (!btn) return;
+    btn.textContent = depMapState.showExternalFiles ? 'Ext Files: On' : 'Ext Files: Off';
+    btn.classList.toggle('active', depMapState.showExternalFiles);
+}
+
+function updateL1Toolbar(modId, fileCount) {
+    const labelEl = document.getElementById('l1-mod-label');
+    if (labelEl) { labelEl.textContent = modId || 'No module'; labelEl.title = modId || ''; }
+    const statsEl = document.getElementById('l1-stats');
+    if (statsEl) statsEl.textContent = `${fileCount} files`;
+}
+
+function toggleDepMapExtGroup(extModId) {
+    if (depMapState.expandedExtModules.has(extModId)) {
+        depMapState.expandedExtModules.delete(extModId);
+    } else {
+        depMapState.expandedExtModules.add(extModId);
+    }
+    rerenderCurrentL1();
+}
+
+function rerenderCurrentL1() {
+    if (state.level !== 1 || !state.activeModule) return;
+    const allFiles = DATA.files_by_module[state.activeModule] || [];
+    const filtered = state.activeSubDir
+        ? allFiles.filter(f => f.path.startsWith(state.activeModule + '/' + state.activeSubDir + '/'))
+        : allFiles;
+    renderFilesFlat(state.activeModule, filtered, state.activeSubDir || undefined);
 }
 
 function initL2Toolbar() {
@@ -2079,6 +2171,7 @@ function loadLevel0() {
     hideFuncView();
     state.level = 0; state.activeModule = null; state.activeFile = null; state.activeSubDir = null;
     updateBreadcrumb(); setSidebarActive(null);
+    setL1ToolbarVisible(false);
 
     const els = [];
     DATA.modules.forEach(m => {
@@ -2129,7 +2222,16 @@ function drillToModule(modId) {
     // Clear sub-dir active highlight
     document.querySelectorAll('.subdir-row').forEach(el => el.classList.remove('active'));
 
+    // Reset external-files state for new module
+    if (depMapState.currentModId !== modId) {
+        depMapState.expandedExtModules = new Set();
+        depMapState.currentModId = modId;
+    }
+    setL1ToolbarVisible(true);
+    updateDepMapExtToggle();
+
     const allFiles = DATA.files_by_module[modId] || [];
+    updateL1Toolbar(modId, allFiles.length);
     renderFilesFlat(modId, allFiles);
 }
 
@@ -2181,6 +2283,140 @@ function renderFilesFlat(modId, files, subPath) {
             }
         });
     });
+
+    // ─── External modules (if toggle is ON) ──────────────────────────────────
+    const moduleColorMap = {};
+    (DATA.modules || []).forEach(m => { moduleColorMap[m.id] = m.color; });
+
+    if (depMapState.showExternalFiles) {
+        const extEdges = allEdges.filter(e => visIds.has(`f${e.s}`) && !visIds.has(`f${e.t}`));
+
+        // Group target files by their module
+        // extModMap: extModId → Map<fileId, { file, edgeType, sources:Set<srcFileId> }>
+        const extModMap = new Map();
+        extEdges.forEach(e => {
+            const targetMod = _fileIdToModule[e.t] || '_external';
+            if (!extModMap.has(targetMod)) extModMap.set(targetMod, new Map());
+            const modFiles = extModMap.get(targetMod);
+            if (!modFiles.has(e.t)) {
+                modFiles.set(e.t, {
+                    file: _fileIdToFile[e.t] || null,
+                    edgeType: e.type || 'include',
+                    sources: new Set(),
+                });
+            }
+            modFiles.get(e.t).sources.add(e.s);
+        });
+
+        depMapState.currentExtModules = Array.from(extModMap.keys());
+
+        let extEdgeSeq = 0;
+        for (const [extModId, fileMap] of extModMap.entries()) {
+            const modSlug = _safeId(extModId) + '-' + _hashId(extModId);
+            const groupId = `depext-${modSlug}`;
+            const fileCount = fileMap.size;
+            const isExpanded = depMapState.expandedExtModules.has(extModId);
+            const modColor = moduleColorMap[extModId] || '#64748b';
+
+            if (!isExpanded) {
+                // ── Collapsed: one group node per external module ─────────────
+                els.push({
+                    data: {
+                        id: groupId,
+                        label: `${extModId}\n${fileCount} file${fileCount !== 1 ? 's' : ''}`,
+                        bg: '#111827', bc: modColor, w: 170, h: 52,
+                        sh: 'roundrectangle', lvl: 1,
+                        _t: 'dep_ext_group', mod: extModId,
+                        tt: `External Module: ${extModId}\nReferenced files: ${fileCount}\nClick to expand`,
+                    }
+                });
+                // Aggregate edges from each internal source to the group node
+                const sourceCounts = new Map();
+                fileMap.forEach(info => {
+                    info.sources.forEach(srcId => {
+                        sourceCounts.set(srcId, (sourceCounts.get(srcId) || 0) + 1);
+                    });
+                });
+                for (const [srcId, count] of sourceCounts.entries()) {
+                    els.push({
+                        data: {
+                            id: `depexte-${modSlug}-${srcId}`,
+                            source: `f${srcId}`, target: groupId,
+                            w: Math.min(3.5, 1 + count * 0.4),
+                            ec: modColor, es: 'dashed', el: 'Ext',
+                            tt: `→ ${extModId} (${count} ref${count !== 1 ? 's' : ''})`,
+                        }
+                    });
+                    extEdgeSeq++;
+                }
+            } else {
+                // ── Expanded: individual file nodes for this external module ──
+                fileMap.forEach((info, fileId) => {
+                    const f = info.file;
+                    if (!f) return;
+                    const fnId = `depextf-${modSlug}-${fileId}`;
+                    const ft = f.file_type || 'other';
+                    const shape = FILE_TYPE_SHAPE[ft] || FILE_TYPE_SHAPE['other'];
+                    const fileColor = extColor(f.ext || '');   // 依副檔名決定顏色，與內部節點一致
+
+                    // Extract parent folder for display below filename
+                    const pathParts = f.path.split('/');
+                    const folderName = pathParts.length >= 2 ? pathParts[pathParts.length - 2] : '';
+                    const nodeLabel = folderName ? `${f.label}\n(${folderName})` : f.label;
+                    // Adjust node height slightly to accommodate the second line
+                    const nodeH = folderName ? Math.max(shape.h, 54) : shape.h;
+
+                    els.push({
+                        data: {
+                            id: fnId, label: nodeLabel,
+                            bg: '#0a1520', bc: fileColor,
+                            w: shape.w, h: nodeH, sh: shape.sh, lvl: 1,
+                            _t: 'dep_ext_file', _f: f, mod: extModId,
+                            tt: `${f.path}\nModule: ${extModId}\nType: ${ft}\n(External file)`,
+                        }
+                    });
+                    const es = edgeTypeStyle(info.edgeType);
+                    info.sources.forEach(srcId => {
+                        els.push({
+                            data: {
+                                id: `depextfe-${modSlug}-${srcId}-${fileId}`,
+                                source: `f${srcId}`, target: fnId,
+                                w: 1.4, ec: es.color, es: es.style, el: es.label,
+                                tt: `→ ${f.label} (${info.edgeType})`,
+                            }
+                        });
+                        extEdgeSeq++;
+                    });
+                });
+            }
+        }
+
+        // Show/hide Expand All / Collapse All buttons based on whether ext nodes exist
+        const hasExt = extModMap.size > 0;
+        const expandBtn = document.getElementById('l1-expand-all-ext');
+        const collapseBtn = document.getElementById('l1-collapse-all-ext');
+        if (expandBtn) expandBtn.style.display = hasExt ? '' : 'none';
+        if (collapseBtn) collapseBtn.style.display = hasExt ? '' : 'none';
+
+        // Update stats to reflect external count
+        const statsEl = document.getElementById('l1-stats');
+        if (statsEl) {
+            const parts = [`${capped.length} files`];
+            if (hasExt) parts.push(`${extModMap.size} ext module${extModMap.size !== 1 ? 's' : ''}`);
+            statsEl.textContent = parts.join(' | ');
+        }
+    } else {
+        // External off — hide expand/collapse buttons
+        const expandBtn = document.getElementById('l1-expand-all-ext');
+        const collapseBtn = document.getElementById('l1-collapse-all-ext');
+        if (expandBtn) expandBtn.style.display = 'none';
+        if (collapseBtn) collapseBtn.style.display = 'none';
+        depMapState.currentExtModules = [];
+
+        // Update stats (files only)
+        const statsEl = document.getElementById('l1-stats');
+        if (statsEl) statsEl.textContent = `${capped.length} files`;
+    }
 
     cy.elements().remove();
     cy.add(els);
@@ -2249,6 +2485,7 @@ function drillToFile(fileRel) {
     state.history.push({ level: 1, activeModule: state.activeModule });
     state.level = 2; state.activeFile = fileRel;
     updateBreadcrumb();
+    setL1ToolbarVisible(false);
 
     // showFuncView handles code panel sync — do NOT call loadFileInPanel separately
     openL2File(fileRel, { newSession: true, pushHistory: true });
@@ -2462,6 +2699,19 @@ function onNodeTap(node) {
 
     if (state.level === 0 && d._t === 'module') {
         drillToModule(d._m.id);
+        return;
+    }
+
+    // ─── L1 external module group: toggle expand/collapse ────────────────────
+    if (state.level === 1 && d._t === 'dep_ext_group') {
+        toggleDepMapExtGroup(d.mod);
+        return;
+    }
+
+    // ─── L1 external file node: preview in code panel ────────────────────────
+    if (state.level === 1 && d._t === 'dep_ext_file') {
+        highlightNode(node);
+        if (d._f?.path) loadFileInPanel(d._f.path);
         return;
     }
 
