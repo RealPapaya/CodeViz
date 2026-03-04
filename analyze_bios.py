@@ -792,20 +792,35 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         file_func_calls[rel] = func_calls_by_func
         file_extra[rel] = extra
 
-    # ── Phase X: Collect ALL other files (not in SCAN_EXT/SKIP_EXT) ──────────────
-    # These are never analysed for dependencies but ARE shown in the UI
-    # so the engineer has a complete picture of what lives in the codebase.
+    # ── Phase X: Collect ALL other files + count skipped dirs + total dirs ───────
+    # Other files are not analysed for deps but shown in UI for full codebase picture.
     _cb(59, 'Scanning other files...')
-    other_files_all: dict = {}   # rel_path → simple meta
-    _oth_idx = len(file_meta)    # numeric IDs continue from where file_meta ends
+    other_files_all: dict = {}
+    _oth_idx = len(file_meta)
 
+    total_dirs_scanned   = 0   # all subdirectory count (excluding skipped)
+    total_dirs_skipped   = 0   # directories we skip entirely
+    total_files_skipped  = 0   # files inside skipped directories
+
+    # First count what's hidden inside SKIP_DIRS
+    for _skip_name in sorted(skip_dirs):
+        _skip_path = os.path.join(root, _skip_name)
+        if not os.path.isdir(_skip_path):
+            continue
+        total_dirs_skipped += 1
+        for _sdp, _sdn, _sfn in os.walk(_skip_path):
+            total_dirs_skipped += len(_sdn)  # count sub-dirs inside skip dir
+            total_files_skipped += len(_sfn)
+
+    # Now scan the non-skipped tree for other files + count dirs
     for _dp, _dns, _fns in os.walk(root):
         _dns[:] = [d for d in _dns if d not in skip_dirs]
+        total_dirs_scanned += len(_dns)
         for _fn in _fns:
             _fp  = os.path.join(_dp, _fn)
             _rel = os.path.relpath(_fp, root).replace('\\', '/')
             if _rel in file_meta:
-                continue            # already fully analysed
+                continue
             _ext = Path(_fn).suffix.lower()
             try:
                 _sz = os.path.getsize(_fp)
@@ -1117,6 +1132,11 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     total_other  = len(other_files_all)
     total_binary = sum(1 for m in other_files_all.values() if m['file_type'] == 'binary')
 
+    # Total visible files = analysed + other (excludes skipped dirs content)
+    total_visible_files = total + total_other
+    # Grand total including skipped dirs
+    total_all_files = total_visible_files + total_files_skipped
+
     # Count by file type for stats
     type_counts = defaultdict(int)
     for meta in file_meta.values():
@@ -1141,14 +1161,23 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         'file_to_module':       file_to_module,
         'edge_types':           EDGE_TYPES,
         'stats': {
-            'files':        total,
-            'modules':      len(modules),
-            'functions':    total_funcs,
-            'calls':        total_calls,
-            'other_files':  total_other,
-            'binary_files': total_binary,
-            'type_counts':  dict(type_counts),
-            'root':         root.replace('\\', '/'),
+            # ── Analysed (shown in graph) ──
+            'files':              total,          # SCAN_EXT files actually analysed
+            'modules':            len(modules),   # top-level dirs = "modules"
+            'functions':          total_funcs,
+            'calls':              total_calls,
+            # ── Visibility breakdown ──
+            'other_files':        total_other,    # non-SCAN_EXT, non-skipped files shown as grey nodes
+            'binary_files':       total_binary,   # subset of other_files that are binary
+            # ── Full codebase counts (matches Windows Properties) ──
+            'total_visible_files':total_visible_files,  # analysed + other (no skip dirs)
+            'total_all_files':    total_all_files,      # includes skipped-dir content
+            'total_dirs':         total_dirs_scanned,   # non-skipped subdirectory count
+            'total_dirs_skipped': total_dirs_skipped,   # dirs completely ignored
+            'skipped_files':      total_files_skipped,  # files inside skipped dirs
+            'skipped_dir_names':  sorted(skip_dirs),    # which dirs were skipped
+            'type_counts':        dict(type_counts),
+            'root':               root.replace('\\', '/'),
         }
     }
 

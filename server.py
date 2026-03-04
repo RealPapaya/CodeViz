@@ -257,7 +257,13 @@ class Handler(BaseHTTPRequestHandler):
                             'pct': 100, 'done': True,
                             'msg': f"Done! {s['files']} files, {s['functions']} functions",
                             'data': graph_data,
-                            'stats': {k: s[k] for k in ('files', 'modules', 'functions', 'calls')},
+                            'stats': {k: s[k] for k in (
+                        'files', 'modules', 'functions', 'calls',
+                        'other_files', 'binary_files',
+                        'total_visible_files', 'total_all_files',
+                        'total_dirs', 'total_dirs_skipped',
+                        'skipped_files', 'skipped_dir_names',
+                    ) if k in s},
                         })
                     print(f'\n[DONE] Job {jid}: {s["files"]} files, {s["functions"]} funcs')
 

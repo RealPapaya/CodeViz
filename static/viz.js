@@ -2306,6 +2306,8 @@ function filterGraphToSubPath(modId, subPath) {
     // Include files directly in this dir AND in any nested dirs
     const filtered = allFiles.filter(f => f.path.startsWith(prefix) || f.path === modId + '/' + subPath);
     pushL1History(modId, subPath);
+    setL1ToolbarVisible(true);
+    updateL1Toolbar(`${modId} / ${subPath}`, filtered.length);
     renderFilesFlat(modId, filtered, subPath);
     updateBreadcrumb();
 }

@@ -385,7 +385,9 @@
         }
 
         .stat-box {
-            text-align: center
+            text-align: center;
+            position: relative;
+            cursor: default;
         }
 
         .stat-box .val {
@@ -398,6 +400,40 @@
             font-size: 11px;
             color: var(--muted);
             margin-top: 2px
+        }
+
+        .stat-box .sub {
+            font-size: 9.5px;
+            color: #4b5563;
+            margin-top: 1px;
+            line-height: 1.3;
+        }
+
+        .stat-box .sub em {
+            color: #6b7280;
+            font-style: normal;
+        }
+
+        /* Tooltip */
+        .stat-box[data-tip]:hover::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e2939;
+            border: 1px solid #374151;
+            color: #d1d5db;
+            font-size: 11px;
+            line-height: 1.5;
+            padding: 7px 10px;
+            border-radius: 6px;
+            white-space: pre;
+            text-align: left;
+            min-width: 200px;
+            z-index: 100;
+            pointer-events: none;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
         }
 
         /* ── Error / Done ── */
@@ -540,13 +576,15 @@
 
     </div>
     <div id="stats-row">
-        <div class="stat-box">
+        <div class="stat-box" id="sb-files">
             <div class="val" id="s-files">—</div>
-            <div class="lbl">Files</div>
+            <div class="lbl">Files Analysed</div>
+            <div class="sub" id="s-files-sub"></div>
         </div>
-        <div class="stat-box">
+        <div class="stat-box" id="sb-mods">
             <div class="val" id="s-mods">—</div>
             <div class="lbl">Modules</div>
+            <div class="sub" id="s-mods-sub"></div>
         </div>
         <div class="stat-box">
             <div class="val" id="s-funcs">—</div>
@@ -876,10 +914,60 @@
 
         function showStats(s) {
             const row = document.getElementById('stats-row');
-            document.getElementById('s-files').textContent = s.files?.toLocaleString() || '—';
+            const fmt = n => (n ?? 0).toLocaleString();
+
+            // ── Files box ────────────────────────────────────────────────────
+            document.getElementById('s-files').textContent = fmt(s.files);
+
+            // subtitle: "/ X total  (+Y skipped)"
+            const totalVis = s.total_visible_files ?? (s.files + (s.other_files || 0));
+            const totalAll = s.total_all_files ?? totalVis;
+            const skipped = s.skipped_files ?? 0;
+            const subParts = [`/ ${fmt(totalAll)} total`];
+            if (skipped > 0) subParts.push(`+${fmt(skipped)} in skipped dirs`);
+            document.getElementById('s-files-sub').innerHTML =
+                subParts.map(p => `<em>${p}</em>`).join('<br>');
+
+            // tooltip for Files
+            const skipNames = (s.skipped_dir_names || []).join(', ') || '—';
+            const otherFiles = s.other_files || 0;
+            const binaryFiles = s.binary_files || 0;
+            const tip = [
+                `Analysed (source):  ${fmt(s.files)}`,
+                `Other visible:      ${fmt(otherFiles)}  (incl. ${fmt(binaryFiles)} binary)`,
+                `In skipped dirs:    ${fmt(skipped)}`,
+                `─────────────────────────────`,
+                `Windows total:      ${fmt(totalAll)}`,
+                ``,
+                `Skipped dirs: ${skipNames}`,
+            ].join('\n');
+            document.getElementById('sb-files').setAttribute('data-tip', tip);
+
+            // ── Modules box ──────────────────────────────────────────────────
             document.getElementById('s-mods').textContent = s.modules || '—';
-            document.getElementById('s-funcs').textContent = s.functions?.toLocaleString() || '—';
-            document.getElementById('s-calls').textContent = s.calls?.toLocaleString() || '—';
+
+            const totalDirs = s.total_dirs ?? 0;
+            const skipDirs = s.total_dirs_skipped ?? 0;
+            document.getElementById('s-mods-sub').innerHTML =
+                `<em>/ ${fmt(totalDirs + skipDirs)} folders total</em>`;
+
+            const modTip = [
+                `Modules = top-level dirs:  ${s.modules}`,
+                `All subdirectories:        ${fmt(totalDirs)}`,
+                `Skipped dir trees:         ${fmt(skipDirs)}`,
+                `─────────────────────────────`,
+                `Windows total folders:     ${fmt(totalDirs + skipDirs)}`,
+                ``,
+                `"Modules" in BIOSVIZ only`,
+                `counts first-level dirs,`,
+                `not every subfolder.`,
+            ].join('\n');
+            document.getElementById('sb-mods').setAttribute('data-tip', modTip);
+
+            // ── Functions / Calls ─────────────────────────────────────────────
+            document.getElementById('s-funcs').textContent = fmt(s.functions);
+            document.getElementById('s-calls').textContent = fmt(s.calls);
+
             row.classList.add('visible');
         }
 
