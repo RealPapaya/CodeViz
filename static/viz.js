@@ -359,7 +359,7 @@ function showNodeModal(node) {
         title = d.fn ? `Ambiguous: ${d.fn}` : lines[0] || '';
     } else {
         title = lines[0] || '';
-        subtitle = lines.slice(1).map(escapeHtml).join(' <span style="margin:0 6px;opacity:0.4">•</span> ').trim();
+        subtitle = lines.slice(1).map(escapeHtml).join('<br>').trim();
     }
 
     // Header
@@ -380,7 +380,7 @@ function showNodeModal(node) {
         }
         html += `</div></div>`;
     } else if (subtitle) {
-        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase;">${subtitle}</div>`;
+        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.4; color: rgba(255,255,255,0.85);">${subtitle}</div>`;
     }
 
     // Actions
@@ -1408,9 +1408,11 @@ function fileNodeData(f, modColor) {
 
     // Build tooltip with BIOS metadata
     const bm = f.bios_meta || {};
-    let ttLines = [`${f.path}`, `${f.ext.toUpperCase()} · ${fmtSize(f.size)}`];
-    if (f.func_count > 0) ttLines.push(`${f.func_count} funcs`);
-    if (bm.MODULE_TYPE || bm.module_type) ttLines.push(`Type: ${bm.MODULE_TYPE || bm.module_type}`);
+    let ttLines = [`${f.path}`];
+    ttLines.push(`File Type: ${f.ext.toUpperCase() || 'FILE'}`);
+    ttLines.push(`File Size: ${fmtSize(f.size)}`);
+    if (f.func_count > 0) ttLines.push(`Funcs: ${f.func_count}`);
+    if (bm.MODULE_TYPE || bm.module_type) ttLines.push(`Mod Type: ${bm.MODULE_TYPE || bm.module_type}`);
     if (bm.BASE_NAME || bm.base_name) ttLines.push(`Module: ${bm.BASE_NAME || bm.base_name}`);
     if (bm.ENTRY_POINT || bm.entry_point) ttLines.push(`Entry: ${bm.ENTRY_POINT || bm.entry_point}`);
     if (bm.FILE_GUID || bm.file_guid) ttLines.push(`GUID: ${bm.FILE_GUID || bm.file_guid}`);
@@ -1613,6 +1615,7 @@ function clearSelection() {
 }
 
 function highlightNode(node) {
+    if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
     // Always clear previous hover highlight so rapid mouseover doesn't stack.
     clearHighlight();
     cy.elements().addClass('faded');
@@ -2472,6 +2475,8 @@ function escapeHtml(str) {
 }
 
 function showTooltip(e) {
+    if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+
     const d = e.target.data();
     if (!d || !d.tt) return;
 
