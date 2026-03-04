@@ -993,6 +993,7 @@ function toggleExternalGroup(modName) {
 function openL2File(fileRel, opts = {}) {
     const { pushHistory = true, newSession = false, focusFunc = null } = opts;
     if (!fileRel) return;
+    document.getElementById('cy')?.classList.add('l2-view');
     if (newSession) resetL2History();
     pushHistory && pushL2FileHistory(fileRel);
     syncBreadcrumbForFile(fileRel);
@@ -3046,6 +3047,7 @@ function hideFuncView() {
     clearFuncOverlay();
     setL2ToolbarVisible(false);
     clearL2Legend();
+    document.getElementById('cy')?.classList.remove('l2-view');
     l2State.activeFile = null;
     l2State.activeFuncIdx = 0;
     l2State.expandedModules = new Set();

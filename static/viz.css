@@ -424,7 +424,17 @@ body {
 
 #cy {
     width: 100%;
-    height: 100%
+    height: 100%;
+    transition: background 0.8s ease;
+}
+
+#cy.l2-view {
+    background-color: #050a0f;
+    background-image:
+        radial-gradient(circle at center, rgba(0, 48, 80, 0.4) 0%, rgba(5, 10, 15, 1) 70%),
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
 }
 
 /* L2 Flowchart Toolbar */
@@ -1361,7 +1371,7 @@ body {
     font-style: italic;
 }
 
-.ft-chip-extra input[type=checkbox]:checked + .ft-dot + span {
+.ft-chip-extra input[type=checkbox]:checked+.ft-dot+span {
     color: var(--text);
     opacity: 1;
 }
@@ -1369,7 +1379,7 @@ body {
 .ft-count {
     font-size: 9px;
     color: var(--muted);
-    background: rgba(255,255,255,0.06);
+    background: rgba(255, 255, 255, 0.06);
     border-radius: 8px;
     padding: 0 4px;
     margin-left: 2px;
@@ -1388,7 +1398,7 @@ body {
 .mod-count-extra {
     font-size: 9px;
     color: #4b5563;
-    background: rgba(255,255,255,0.04);
+    background: rgba(255, 255, 255, 0.04);
     border-radius: 6px;
     padding: 0 3px;
     margin-left: 2px;
@@ -1505,6 +1515,7 @@ body {
     text-align: center;
     flex-shrink: 0
 }
+
 /* ── Hex Dump Viewer ── */
 .hex-dump {
     font-family: var(--code-font);
