@@ -1015,7 +1015,8 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
             legacy: !hasCallList,
         });
         updateExternalToggle();
-        focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: true });
+        focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: false });
+        cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
         renderL2Legend();
     });
     lay.run();
