@@ -1556,3 +1556,68 @@ body {
 #cp-code-wrap img {
     display: block;
 }
+
+/* Toast / Snackbar */
+#toast-container {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast {
+    background: rgba(13, 21, 32, 0.92);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: toast-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    pointer-events: auto;
+}
+
+.toast.error {
+    border-color: var(--red);
+}
+
+.toast.success {
+    border-color: var(--green);
+}
+
+.toast.info {
+    border-color: var(--accent);
+}
+
+.toast-hide {
+    animation: toast-out 0.3s ease forwards;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.9);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes toast-out {
+    to {
+        opacity: 0;
+        transform: translateY(10px) scale(0.95);
+    }
+}

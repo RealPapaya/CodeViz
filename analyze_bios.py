@@ -1189,7 +1189,7 @@ HTML_SKELETON = """\
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BIOSVIZ — {root_name}</title>
+<title>VIZCODE — {root_name}</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
@@ -1212,11 +1212,7 @@ HTML_SKELETON = """\
 <script>window.JOB_ID = {JOB_ID_JSON};</script>
 
 <div id="topbar">
-  <div class="logo">BIOS<span>VIZ</span></div>
-  <div class="tabs">
-    <button class="tab active" id="tab-files" onclick="switchTab('files')">File Dependencies</button>
-    <button class="tab" id="tab-calls"  onclick="switchTab('calls')">Call Graph</button>
-  </div>
+  <div class="logo">VIZCODE</div>
   <div class="stats-bar">
     <div class="stat">Files <strong id="st-files">0</strong></div>
     <div class="stat">Modules <strong id="st-mods">0</strong></div>

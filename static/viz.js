@@ -171,12 +171,65 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+
+
 function showMsg(msg) {
     const el = document.getElementById('loading');
+    if (!el) return;
     el.classList.add('show');
-    document.querySelector('#loading .spinner').style.display = 'none';
+    const spinner = document.querySelector('#loading .spinner');
+    if (spinner) spinner.style.display = 'none';
     document.getElementById('loading-msg').textContent = msg;
 }
+
+function isAlreadyAtLocation(node) {
+    if (!node) return false;
+    const d = node.data();
+    // Normalize paths
+    const normalize = p => (p || '').replace(/\\/g, '/').toLowerCase();
+
+    const srcPath = normalize(state.level === 2 ? (l2State.activeFile || '') : (state.activeModule || ''));
+    const tgtPath = normalize((typeof d._f === 'object' ? d._f?.path : d._f) || d.mod || d.id || '');
+
+    if (!srcPath || !tgtPath) return false;
+
+    // Level 1: Dependency Map (Module level)
+    if (state.level === 1) {
+        // If target is the current module itself
+        if (tgtPath === srcPath) return true;
+        // If target is a file or submodule INSIDE the current module
+        if (tgtPath.startsWith(srcPath + '/')) return true;
+    }
+
+    // Level 2: Call Flow (File level)
+    if (state.level === 2) {
+        // If target is the current file or a function within it
+        if (tgtPath === srcPath) return true;
+    }
+
+    return false;
+}
+
+
+function showToast(msg, type = 'info') {
+
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
+    }
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<span>${msg}</span>`;
+    container.appendChild(el);
+
+    setTimeout(() => {
+        el.classList.add('toast-hide');
+        setTimeout(() => el.remove(), 300);
+    }, 3000);
+}
+
 
 // ─── Code Panel ──────────────────────────────────────────────────────────────
 function initCodePanel() {
@@ -467,6 +520,13 @@ function initTooltipActions() {
         const func = decodeURIComponent(btn.dataset.func || '');
         if (action === 'open') {
             const nodeType = btn.dataset.nodeType || '';
+            const node = window._currentHoverNode;
+
+            if (isAlreadyAtLocation(node)) {
+                showToast('您已在此位置 (Already at this location)');
+                return;
+            }
+
             if (nodeType === 'dep_ext_file' || nodeType === 'dep_ext_group') {
                 const extMod = decodeURIComponent(btn.dataset.mod || '');
                 const extFile = decodeURIComponent(btn.dataset.file || '');
@@ -514,7 +574,7 @@ function showNodeModal(node) {
             if (action === 'open-ambiguous' || action === 'view-ambiguous') {
                 const selected = document.querySelector('input[name="ambiguous-file-select"]:checked');
                 if (!selected) {
-                    alert('請先選擇一個檔案 (Please select a file first)');
+                    showToast('請先選擇一個檔案 (Please select a file first)', 'error');
                     return;
                 }
                 file = selected.value;
@@ -530,6 +590,12 @@ function showNodeModal(node) {
 
             if (action === 'open') {
                 const nodeType = btn.dataset.nodeType || '';
+                // Check guardrail
+                if (isAlreadyAtLocation(window._currentHoverNode)) {
+                    showToast('您已在此位置 (Already at this location)');
+                    return;
+                }
+
                 // dep_ext_file / dep_ext_group → navigate to that module's Dependency Map (L1)
                 if (nodeType === 'dep_ext_file' || nodeType === 'dep_ext_group') {
                     const extMod = decodeURIComponent(btn.dataset.mod || '');
