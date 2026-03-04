@@ -566,14 +566,12 @@ function showNodeModal(node) {
         }
         html += `</div></div>`;
     } else if (d._t === 'dep_ext_file' || d._t === 'dep_ext_group') {
-        // Show subtitle lines + a distance badge on the same block
-        const extMod = d.mod || '';
-        const dist = _pathDist(state.activeModule || '', extMod);
-        const distColor = dist === 0 ? '#38bdf8'
-            : dist === 1 ? '#10b981'
-                : dist === 2 ? '#f59e0b'
-                    : '#f87171';
-        const distLabel = dist === 0 ? 'same module' : `distance: ${dist}`;
+        // Use full file path if available; fall back to module name
+        const srcPath = state.activeModule || '';
+        const tgtPath = (typeof d._f === 'object' ? d._f?.path : d._f) || d.mod || '';
+        const dist = _pathDist(srcPath, tgtPath);
+        const distColor = _distColor(dist);
+        const distLabel = dist === 0 ? 'same module' : `${dist} layer${dist !== 1 ? 's' : ''} away`;
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
         if (subtitle) html += subtitle + '<br>';
         html += `<span style="
@@ -669,12 +667,9 @@ function showNodeModal(node) {
                     let distBadge = '';
                     const isExtNode = nd._t === 'dep_ext_file' || nd._t === 'dep_ext_group';
                     if (isExtNode) {
-                        const extMod = nd.mod || '';
-                        const dist = _pathDist(state.activeModule || '', extMod);
-                        const distColor = dist === 0 ? '#38bdf8'
-                            : dist === 1 ? '#10b981'
-                                : dist === 2 ? '#f59e0b'
-                                    : '#f87171';
+                        const tgtPath = (typeof nd._f === 'object' ? nd._f?.path : nd._f) || nd.mod || '';
+                        const dist = _pathDist(state.activeModule || '', tgtPath);
+                        const distColor = _distColor(dist);
                         const distLabel = dist === 0 ? 'same' : `d=${dist}`;
                         distBadge = `<span style="
                             margin-left: auto;
@@ -1013,23 +1008,10 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
 
     const currentModule = fileToModule[fileRel] || resolveModuleForFile(fileRel) || '';
 
-    // Distance between two module path strings (slash-separated hierarchy)
-    function moduleDistance(modA, modB) {
-        if (!modA || !modB || modA === modB) return modA === modB ? 0 : 99;
-        const pa = modA.split('/'), pb = modB.split('/');
-        let shared = 0;
-        const minLen = Math.min(pa.length, pb.length);
-        for (let i = 0; i < minLen; i++) { if (pa[i] === pb[i]) shared++; else break; }
-        return pa.length + pb.length - 2 * shared;
-    }
-
-    // Edge color by distance (0=same module blue, 1=near green, 2=mid amber, 3+=far red)
-    function distColor(targetMod) {
-        const d = moduleDistance(currentModule, targetMod);
-        if (d === 0) return '#38bdf8';
-        if (d === 1) return '#10b981';
-        if (d === 2) return '#f59e0b';
-        return '#f87171';
+    // Edge color by file-path distance from current file (steps up + steps down from common prefix)
+    // Pass full file path (e.g. "AmiChipsetPkg/Include/Protocol/X.h") for accurate distance
+    function distColor(targetFilePath) {
+        return _distColor(_pathDist(fileRel, targetFilePath || ''));
     }
 
     const fidMap = new Map();
@@ -1128,7 +1110,9 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const funcCount = fnMap.size;
         const isExpanded = l2State.expandedModules.has(modName);
         const modColor = moduleColorMap[modName] || '#64748b';
-        const ec = distColor(modName);
+        // Use a representative file path from this module for accurate distance
+        const repFile = fnMap.values().next().value?.files?.[0] || modName;
+        const ec = distColor(repFile);
 
         if (!isExpanded) {
             // Unexpanded: show the big group node and aggregate edges
@@ -1159,6 +1143,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
             fnMap.forEach((info, funcName) => {
                 const fnId = `extfn-${modSlug}-${_hashId(funcName)}`;
                 const tf = info.files[0] || null;
+                const fnEc = distColor(tf || modName); // use actual file path for accurate distance
                 els.push({
                     data: {
                         id: fnId,
@@ -1174,7 +1159,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                         data: {
                             id: `extc-${modId}-${callerIdx}-${_hashId(funcName)}`,
                             source: `fn-${callerIdx}`, target: fnId,
-                            w: 1.5, ec, es: 'solid', el: 'ext',
+                            w: 1.5, ec: fnEc, es: 'solid', el: 'ext',
                             tt: `${funcs[callerIdx].label} → ${funcName}`,
                         }
                     });
@@ -1190,7 +1175,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const slug = _safeId(callee) + '-' + _hashId(callee);
         const potId = `pot-${slug}`;
         const firstMod = fileToModule[files[0]] || '';
-        const ec = firstMod ? distColor(firstMod) : '#a78bfa';
+        const ec = files[0] ? distColor(files[0]) : '#a78bfa';
         els.push({
             data: {
                 id: potId, label: `${callee}\n(${files.length} paths)`,
@@ -1327,19 +1312,9 @@ function drillDownExtFunc(node) {
     const newEls = [];
     let added = 0;
 
-    function distColor2(tMod) {
-        function dist(a, b) {
-            if (!a || !b || a === b) return a === b ? 0 : 99;
-            const pa = a.split('/'), pb = b.split('/');
-            let s = 0, ml = Math.min(pa.length, pb.length);
-            for (let i = 0; i < ml; i++) { if (pa[i] === pb[i]) s++; else break; }
-            return pa.length + pb.length - 2 * s;
-        }
-        const d = dist(targetMod, tMod);
-        if (d === 0) return '#38bdf8';
-        if (d === 1) return '#10b981';
-        if (d === 2) return '#f59e0b';
-        return '#f87171';
+    // Color by file-path distance from targetFile (the drilled source file)
+    function distColor2(tFilePath) {
+        return _distColor(_pathDist(targetFile, tFilePath || ''));
     }
 
     for (const callee of callees) {
@@ -1354,7 +1329,7 @@ function drillDownExtFunc(node) {
         } else if (nameToFile[callee]) {
             tf = nameToFile[callee];
             modName = fileToModule[tf] || '';
-            ec = bc = distColor2(modName);
+            ec = bc = distColor2(tf);  // pass full file path for accurate distance
         }
 
         newEls.push({
@@ -1513,6 +1488,22 @@ function initSidebarResizer() {
     }
 }
 
+// Continuously call cy.resize() during the code-panel CSS transition so the
+// cytoscape canvas tracks the panel width frame-by-frame (no black artifacts).
+let _panelRafId = null;
+function _startPanelResizeLoop(durationMs) {
+    if (!cy) return;
+    if (_panelRafId) cancelAnimationFrame(_panelRafId);
+    const end = performance.now() + durationMs + 32; // +32ms safety margin
+    function tick() {
+        cy.resize();
+        if (performance.now() < end) _panelRafId = requestAnimationFrame(tick);
+        else _panelRafId = null;
+    }
+    _panelRafId = requestAnimationFrame(tick);
+}
+const _PANEL_TRANSITION_MS = 200; // must match CSS transition: width .2s
+
 function openCodePanel() {
     const panel = document.getElementById('code-panel');
     panel.classList.add('open');
@@ -1520,6 +1511,7 @@ function openCodePanel() {
     codeState.isOpen = true;
     const resizer = document.getElementById('resizer');
     if (resizer) resizer.style.display = 'flex';
+    _startPanelResizeLoop(_PANEL_TRANSITION_MS);
 }
 
 function closeCodePanel() {
@@ -1529,6 +1521,7 @@ function closeCodePanel() {
     codeState.isOpen = false;
     const resizer = document.getElementById('resizer');
     if (resizer) resizer.style.display = 'none';
+    _startPanelResizeLoop(_PANEL_TRANSITION_MS);
 }
 
 // Load a file into the code panel; optionally jump to a function
@@ -3397,10 +3390,15 @@ function showLoading(v, msg) {
 function dedupeBy(arr, key) { return [...new Map(arr.map(x => [x[key], x])).values()]; }
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + 'MB' : b > 1e3 ? (b / 1e3).toFixed(0) + 'KB' : b + 'B'; }
 
-// Path distance: count differing segments between two module/folder paths
+// ─── Path Distance ────────────────────────────────────────────────────────────
+// Steps-up from a to common ancestor + steps-down to b.
+// e.g. A/B/C/F ↔ A/D/E/F  →  shared=1  →  (3-1)+(3-1) = 4
+// Color thresholds: 0=blue  ≤2=green  ≤4=amber  >4=red
 function _pathDist(a, b) {
     if (!a || !b) return a === b ? 0 : 99;
-    const pa = a.split('/'), pb = b.split('/');
+    if (a === b) return 0;
+    const pa = a.replace(/\\/g, '/').split('/');
+    const pb = b.replace(/\\/g, '/').split('/');
     let shared = 0;
     const ml = Math.min(pa.length, pb.length);
     for (let i = 0; i < ml; i++) {
@@ -3408,6 +3406,20 @@ function _pathDist(a, b) {
         else break;
     }
     return (pa.length - shared) + (pb.length - shared);
+}
+
+function _distColor(d) {
+    if (d === 0) return '#38bdf8'; // blue  — same file / same module
+    if (d <= 2) return '#10b981'; // green — nearby (same folder/package)
+    if (d <= 4) return '#f59e0b'; // amber — different subfolder
+    if (d >= 99) return '#64748b'; // grey  — unknown
+    return '#f87171';               // red   — far / cross-package
+}
+
+function _distLabel(d) {
+    if (d === 0) return 'same file';
+    if (d >= 99) return 'external';
+    return `${d} layer${d !== 1 ? 's' : ''} away`;
 }
 
 // ─── Graph Legend ─────────────────────────────────────────────────────────────
