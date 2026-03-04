@@ -287,6 +287,7 @@ function initL1Toolbar() {
 
     updateDepMapExtToggle();
     updateL1NavButtons();
+    window.addEventListener('mouseup', onL1MouseNav);
 }
 
 function setL1ToolbarVisible(v) {
@@ -356,6 +357,17 @@ function _jumpL1History() {
     }
     depMapState._navigating = false;
     updateL1NavButtons();
+}
+
+function onL1MouseNav(e) {
+    if (state.level !== 1) return;
+    if (e.button === 3) {
+        e.preventDefault();
+        goL1Prev();
+    } else if (e.button === 4) {
+        e.preventDefault();
+        goL1Next();
+    }
 }
 
 function toggleDepMapExtGroup(extModId) {
@@ -2380,10 +2392,7 @@ function drillToModule(modId, opts) {
     }
     setL1ToolbarVisible(true);
     updateDepMapExtToggle();
-    pushL1History(modId, null);
-
     const allFiles = DATA.files_by_module[modId] || [];
-    updateL1Toolbar(modId, allFiles.length);
 
     // If a focusFile is given, zoom into its parent subfolder instead of showing all files
     if (opts?.focusFile) {
@@ -2398,6 +2407,10 @@ function drillToModule(modId, opts) {
             const filtered = allFiles.filter(f =>
                 f.path.startsWith(prefix) || f.path === modId + '/' + subPath
             );
+
+            pushL1History(modId, subPath);
+            updateL1Toolbar(`${modId} / ${subPath}`, filtered.length);
+
             state.activeSubDir = subPath;
             setSubdirActive(modId, subPath);
 
@@ -2417,6 +2430,8 @@ function drillToModule(modId, opts) {
         }
     }
 
+    pushL1History(modId, null);
+    updateL1Toolbar(modId, allFiles.length);
     renderFilesFlat(modId, allFiles);
 }
 
