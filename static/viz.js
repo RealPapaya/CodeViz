@@ -472,6 +472,30 @@ function showNodeModal(node) {
             });
         }
         html += `</div></div>`;
+    } else if (d._t === 'dep_ext_file' || d._t === 'dep_ext_group') {
+        // Show subtitle lines + a distance badge on the same block
+        const extMod = d.mod || '';
+        const dist = _pathDist(state.activeModule || '', extMod);
+        const distColor = dist === 0 ? '#38bdf8'
+            : dist === 1 ? '#10b981'
+                : dist === 2 ? '#f59e0b'
+                    : '#f87171';
+        const distLabel = dist === 0 ? 'same module' : `distance: ${dist}`;
+        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
+        if (subtitle) html += subtitle + '<br>';
+        html += `<span style="
+            display: inline-block;
+            margin-top: 6px;
+            font-size: 11px;
+            color: ${distColor};
+            background: ${distColor}22;
+            border: 1px solid ${distColor}66;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+        ">⬡ ${distLabel}</span>`;
+        html += `</div>`;
     } else if (subtitle) {
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.4; color: rgba(255,255,255,0.85);">${subtitle}</div>`;
     }
@@ -547,11 +571,38 @@ function showNodeModal(node) {
                     if (nd._t === 'file') {
                         nSub = nd._f?.ext ? nd._f.ext.toUpperCase() : 'FILE';
                     }
+
+                    // ── Distance badge for external dep-map nodes ─────────────
+                    let distBadge = '';
+                    const isExtNode = nd._t === 'dep_ext_file' || nd._t === 'dep_ext_group';
+                    if (isExtNode) {
+                        const extMod = nd.mod || '';
+                        const dist = _pathDist(state.activeModule || '', extMod);
+                        const distColor = dist === 0 ? '#38bdf8'
+                            : dist === 1 ? '#10b981'
+                                : dist === 2 ? '#f59e0b'
+                                    : '#f87171';
+                        const distLabel = dist === 0 ? 'same' : `d=${dist}`;
+                        distBadge = `<span style="
+                            margin-left: auto;
+                            font-size: 10px;
+                            font-family: monospace;
+                            color: ${distColor};
+                            background: ${distColor}22;
+                            border: 1px solid ${distColor}66;
+                            border-radius: 4px;
+                            padding: 1px 6px;
+                            white-space: nowrap;
+                            flex-shrink: 0;
+                        ">${distLabel}</span>`;
+                    }
+
                     html += `<div class="modal-dep-item" style="font-size: 12px; background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: baseline; gap: 8px; transition: background 0.15s;" data-nav-node="${n.id()}">`;
                     html += `<span style="color: #e2e8f0; font-weight: 500; font-family: monospace;">${escapeHtml(nTitle)}</span>`;
                     if (nSub && nSub !== nTitle) {
                         html += `<span style="color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace;">${escapeHtml(nSub)}</span>`;
                     }
+                    if (distBadge) html += distBadge;
                     html += `</div>`;
                 });
                 html += `</div></div>`;
@@ -3094,6 +3145,19 @@ function showLoading(v, msg) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function dedupeBy(arr, key) { return [...new Map(arr.map(x => [x[key], x])).values()]; }
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + 'MB' : b > 1e3 ? (b / 1e3).toFixed(0) + 'KB' : b + 'B'; }
+
+// Path distance: count differing segments between two module/folder paths
+function _pathDist(a, b) {
+    if (!a || !b) return a === b ? 0 : 99;
+    const pa = a.split('/'), pb = b.split('/');
+    let shared = 0;
+    const ml = Math.min(pa.length, pb.length);
+    for (let i = 0; i < ml; i++) {
+        if (pa[i] === pb[i]) shared++;
+        else break;
+    }
+    return (pa.length - shared) + (pb.length - shared);
+}
 
 // ─── Graph Legend ─────────────────────────────────────────────────────────────
 // Edge types shown in legend
