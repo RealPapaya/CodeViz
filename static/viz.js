@@ -30,11 +30,12 @@ const depMapState = {
     expandedExtModules: new Set(),
     currentExtModules: [],   // populated after each render
     currentModId: null,
+    pendingFocusFile: null,  // file path to pan+highlight after next layout
 };
 
 // File-ID → module/file lookup, built once after DATA is parsed
 let _fileIdToModule = {};
-let _fileIdToFile = {};
+let _fileIdToFile   = {};
 
 function buildFileIdLookup() {
     Object.entries(DATA.files_by_module).forEach(([modId, files]) => {
@@ -246,8 +247,8 @@ function initPreferences() {
 
 // ─── L1 Toolbar (Dependency Map) ─────────────────────────────────────────────
 function initL1Toolbar() {
-    const toggleBtn = document.getElementById('l1-toggle-ext');
-    const expandBtn = document.getElementById('l1-expand-all-ext');
+    const toggleBtn  = document.getElementById('l1-toggle-ext');
+    const expandBtn  = document.getElementById('l1-expand-all-ext');
     const collapseBtn = document.getElementById('l1-collapse-all-ext');
 
     if (toggleBtn) {
@@ -373,8 +374,16 @@ function initTooltipActions() {
         const file = decodeURIComponent(btn.dataset.file || '');
         const func = decodeURIComponent(btn.dataset.func || '');
         if (action === 'open') {
-            openL2File(file, { pushHistory: true, focusFunc: func || null });
-            hideNodeModal();
+            const nodeType = btn.dataset.nodeType || '';
+            if (nodeType === 'dep_ext_file' || nodeType === 'dep_ext_group') {
+                const extMod  = decodeURIComponent(btn.dataset.mod  || '');
+                const extFile = decodeURIComponent(btn.dataset.file || '');
+                hideTooltip();
+                if (extMod) drillToModule(extMod, { focusFile: extFile || null, closeExt: true });
+            } else {
+                openL2File(file, { pushHistory: true, focusFunc: func || null });
+                hideNodeModal();
+            }
         } else if (action === 'view') {
             _syncCodePanel(file, func || null);
             hideNodeModal();
@@ -428,8 +437,17 @@ function showNodeModal(node) {
             }
 
             if (action === 'open') {
-                openL2File(file, { pushHistory: true, focusFunc: func || null });
-                hideNodeModal();
+                const nodeType = btn.dataset.nodeType || '';
+                // dep_ext_file / dep_ext_group → navigate to that module's Dependency Map (L1)
+                if (nodeType === 'dep_ext_file' || nodeType === 'dep_ext_group') {
+                    const extMod  = decodeURIComponent(btn.dataset.mod  || '');
+                    const extFile = decodeURIComponent(btn.dataset.file || '');
+                    hideNodeModal();
+                    if (extMod) drillToModule(extMod, { focusFile: extFile || null, closeExt: true });
+                } else {
+                    openL2File(file, { pushHistory: true, focusFunc: func || null });
+                    hideNodeModal();
+                }
             } else if (action === 'view') {
                 _syncCodePanel(file, func || null);
                 hideNodeModal();
@@ -478,8 +496,8 @@ function showNodeModal(node) {
         const dist = _pathDist(state.activeModule || '', extMod);
         const distColor = dist === 0 ? '#38bdf8'
             : dist === 1 ? '#10b981'
-                : dist === 2 ? '#f59e0b'
-                    : '#f87171';
+            : dist === 2 ? '#f59e0b'
+            : '#f87171';
         const distLabel = dist === 0 ? 'same module' : `distance: ${dist}`;
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
         if (subtitle) html += subtitle + '<br>';
@@ -506,7 +524,7 @@ function showNodeModal(node) {
         html += `<button class="tip-btn" data-action="open-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
             `<button class="tip-btn" data-action="view-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">View File</button>`;
     } else {
-        html += `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
+        html += `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}" data-node-type="${d._t || ''}" data-mod="${encodeURIComponent(d.mod || '')}">Open Location</button>` +
             `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">View File</button>`;
     }
     html += `</div>`;
@@ -580,8 +598,8 @@ function showNodeModal(node) {
                         const dist = _pathDist(state.activeModule || '', extMod);
                         const distColor = dist === 0 ? '#38bdf8'
                             : dist === 1 ? '#10b981'
-                                : dist === 2 ? '#f59e0b'
-                                    : '#f87171';
+                            : dist === 2 ? '#f59e0b'
+                            : '#f87171';
                         const distLabel = dist === 0 ? 'same' : `d=${dist}`;
                         distBadge = `<span style="
                             margin-left: auto;
@@ -1930,7 +1948,7 @@ const CY_STYLE = [
             // Edge label — floating badge, readable on dark background
             'label': 'data(el)',
             'font-size': 10,
-            'font-weight': '700',
+            'font-weight': 'bold',
             'color': 'data(ec)',
             'text-opacity': 1,
             'text-rotation': 'autorotate',
@@ -2265,7 +2283,8 @@ function loadLevel0() {
 }
 
 // ─── L1: Module → show ALL files flat (no folder nodes ever) ─────────────────
-function drillToModule(modId) {
+function drillToModule(modId, opts) {
+    // opts: { focusFile?: string, closeExt?: bool }
     if (state.level === 0) state.history.push({ level: 0 });
     state.level = 1; state.activeModule = modId; state.activeSubDir = null;
     showLoading(true, `Loading ${modId}...`);
@@ -2278,11 +2297,50 @@ function drillToModule(modId) {
         depMapState.expandedExtModules = new Set();
         depMapState.currentModId = modId;
     }
+    if (opts?.closeExt) {
+        depMapState.showExternalFiles = false;
+    }
+    if (opts?.focusFile) {
+        depMapState.pendingFocusFile = opts.focusFile;
+    }
     setL1ToolbarVisible(true);
     updateDepMapExtToggle();
 
     const allFiles = DATA.files_by_module[modId] || [];
     updateL1Toolbar(modId, allFiles.length);
+
+    // If a focusFile is given, zoom into its parent subfolder instead of showing all files
+    if (opts?.focusFile) {
+        const focusPath = opts.focusFile;                // e.g. "AmiCompatibilityPkg/Include/Setup.h"
+        const modPrefix = modId + '/';
+        const relPath = focusPath.startsWith(modPrefix) ? focusPath.slice(modPrefix.length) : focusPath;
+        const parts = relPath.split('/');
+        if (parts.length >= 2) {
+            // File is in a subfolder — show that subfolder
+            const subPath = parts.slice(0, -1).join('/');  // e.g. "Include"
+            const prefix = modId + '/' + subPath + '/';
+            const filtered = allFiles.filter(f =>
+                f.path.startsWith(prefix) || f.path === modId + '/' + subPath
+            );
+            state.activeSubDir = subPath;
+            setSubdirActive(modId, subPath);
+
+            // Expand the sidebar tree so the active subdir row is visible
+            const modRow = document.getElementById(`mi-${modId}`);
+            if (modRow) {
+                const children = modRow.nextElementSibling;
+                if (children && !children.classList.contains('open')) {
+                    children.classList.add('open');
+                    modRow.querySelector('.tree-arrow')?.classList.add('open');
+                }
+            }
+
+            renderFilesFlat(modId, filtered, subPath);
+            updateBreadcrumb();
+            return;
+        }
+    }
+
     renderFilesFlat(modId, allFiles);
 }
 
@@ -2363,11 +2421,11 @@ function renderFilesFlat(modId, files, subPath) {
 
         let extEdgeSeq = 0;
         for (const [extModId, fileMap] of extModMap.entries()) {
-            const modSlug = _safeId(extModId) + '-' + _hashId(extModId);
-            const groupId = `depext-${modSlug}`;
+            const modSlug  = _safeId(extModId) + '-' + _hashId(extModId);
+            const groupId  = `depext-${modSlug}`;
             const fileCount = fileMap.size;
             const isExpanded = depMapState.expandedExtModules.has(extModId);
-            const modColor = moduleColorMap[extModId] || '#64748b';
+            const modColor  = moduleColorMap[extModId] || '#64748b';
 
             if (!isExpanded) {
                 // ── Collapsed: one group node per external module ─────────────
@@ -2406,7 +2464,7 @@ function renderFilesFlat(modId, files, subPath) {
                     const f = info.file;
                     if (!f) return;
                     const fnId = `depextf-${modSlug}-${fileId}`;
-                    const ft = f.file_type || 'other';
+                    const ft    = f.file_type || 'other';
                     const shape = FILE_TYPE_SHAPE[ft] || FILE_TYPE_SHAPE['other'];
                     const fileColor = extColor(f.ext || '');   // 依副檔名決定顏色，與內部節點一致
 
@@ -2444,9 +2502,9 @@ function renderFilesFlat(modId, files, subPath) {
 
         // Show/hide Expand All / Collapse All buttons based on whether ext nodes exist
         const hasExt = extModMap.size > 0;
-        const expandBtn = document.getElementById('l1-expand-all-ext');
+        const expandBtn   = document.getElementById('l1-expand-all-ext');
         const collapseBtn = document.getElementById('l1-collapse-all-ext');
-        if (expandBtn) expandBtn.style.display = hasExt ? '' : 'none';
+        if (expandBtn)   expandBtn.style.display   = hasExt ? '' : 'none';
         if (collapseBtn) collapseBtn.style.display = hasExt ? '' : 'none';
 
         // Update stats to reflect external count
@@ -2458,9 +2516,9 @@ function renderFilesFlat(modId, files, subPath) {
         }
     } else {
         // External off — hide expand/collapse buttons
-        const expandBtn = document.getElementById('l1-expand-all-ext');
+        const expandBtn   = document.getElementById('l1-expand-all-ext');
         const collapseBtn = document.getElementById('l1-collapse-all-ext');
-        if (expandBtn) expandBtn.style.display = 'none';
+        if (expandBtn)   expandBtn.style.display   = 'none';
         if (collapseBtn) collapseBtn.style.display = 'none';
         depMapState.currentExtModules = [];
 
@@ -2483,7 +2541,7 @@ function renderFilesFlat(modId, files, subPath) {
     if (extraEls.length === 0) {
         // Simple path: no extras, just run dagre normally
         const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
-        lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); });
+        lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); _applyPendingFocus(); });
         lay.run();
         return;
     }
@@ -2526,9 +2584,54 @@ function renderFilesFlat(modId, files, subPath) {
         cy.fit(cy.elements(), 40);
         updateBreadcrumb();
         showLoading(false);
+        _applyPendingFocus();
     });
 
     layMain.run();
+}
+
+// ── After layout: pan+zoom to pendingFocusFile node with flash highlight ───────
+function _applyPendingFocus() {
+    const targetPath = depMapState.pendingFocusFile;
+    if (!targetPath) return;
+    depMapState.pendingFocusFile = null;
+
+    // Find the node whose _f.path matches
+    const target = cy.nodes().filter(n => {
+        const f = n.data('_f');
+        return f && (f.path === targetPath);
+    }).first();
+
+    if (!target || !target.length) return;
+
+    // First fit to full graph, then animate to target
+    cy.fit(cy.elements(), 40);
+
+    setTimeout(() => {
+        highlightNode(target);
+        cy.animate({
+            center: { eles: target },
+            zoom: Math.max(cy.zoom(), 1.8),
+        }, {
+            duration: 700,
+            easing: 'ease-in-out-cubic',
+            complete: () => {
+                // Flash the node border 3 times to draw attention
+                let count = 0;
+                const originalBc = target.data('bc');
+                const flashInterval = setInterval(() => {
+                    count++;
+                    target.style('border-color', count % 2 === 1 ? '#ffffff' : originalBc);
+                    target.style('border-width', count % 2 === 1 ? 4 : 2);
+                    if (count >= 6) {
+                        clearInterval(flashInterval);
+                        target.style('border-color', originalBc);
+                        target.style('border-width', 2);
+                    }
+                }, 200);
+            }
+        });
+    }, 80);
 }
 
 // ─── L2: Function View ────────────────────────────────────────────────────────
