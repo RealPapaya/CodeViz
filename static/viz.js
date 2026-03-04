@@ -21,7 +21,12 @@ const l2State = {
     externalModules: [],
     fileHistory: [],
     fileHistoryIdx: -1,
+    fileHistoryIdx: -1,
     showExternalEdges: true,
+    expandOriginPos: null,
+    preserveViewport: null,
+    _prevNodeIds: null,
+    _animGen: 0,
 };
 
 // ─── Dependency Map (L1) external-files state ─────────────────────────────────
@@ -577,15 +582,26 @@ function showNodeModal(node) {
             });
         }
         html += `</div></div>`;
-    } else if (d._t === 'dep_ext_file' || d._t === 'dep_ext_group') {
-        // Use full file path if available; fall back to module name
-        const srcPath = state.activeModule || '';
+    } else if (d._t === 'dep_ext_file' || d._t === 'dep_ext_group' || d._t === 'ext_func' || d._t === 'ext_group' || d._t === 'drilled_func') {
+        const srcPath = state.level === 2 ? (l2State.activeFile || '') : (state.activeModule || '');
         const tgtPath = (typeof d._f === 'object' ? d._f?.path : d._f) || d.mod || '';
         const dist = _pathDist(srcPath, tgtPath);
         const distColor = _distColor(dist);
-        const distLabel = dist === 0 ? 'same module' : `${dist} layer${dist !== 1 ? 's' : ''} away`;
+        const distLabel = dist === 0 ? (state.level === 2 ? 'SAME FILE' : 'SAME MODULE') : `${dist} LAYER${dist !== 1 ? 'S' : ''} AWAY`;
+
+        let displaySubtitle = subtitle;
+        const typeStr = (d._t === 'ext_group' || d._t === 'dep_ext_group') ? 'EXTERNAL MODULE' : 'EXTERNAL FILE';
+
+        // Clean up redundant (EXTERNAL FILE) strings from subtitle across L1/L2
+        displaySubtitle = displaySubtitle
+            .replace(/\(External file\)/gi, '')
+            .replace(/\(EXTERNAL FILE\)/gi, '')
+            .replace(/\(EXTERNAL MODULE\)/gi, '')
+            .replace(/<br><br>$/, '')
+            .trim();
+
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
-        if (subtitle) html += subtitle + '<br>';
+        if (displaySubtitle) html += displaySubtitle + '<br>';
         html += `<span style="
             display: inline-block;
             margin-top: 6px;
@@ -597,7 +613,7 @@ function showNodeModal(node) {
             padding: 2px 8px;
             font-weight: 700;
             letter-spacing: 0.05em;
-        ">⬡ ${distLabel}</span>`;
+        ">⬡ ${typeStr} · ${distLabel}</span>`;
         html += `</div>`;
     } else if (subtitle) {
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.4; color: rgba(255,255,255,0.85);">${subtitle}</div>`;
@@ -955,8 +971,22 @@ function pushL2FileHistory(fileRel) {
 
 function toggleExternalGroup(modName) {
     if (!modName) return;
-    if (l2State.expandedModules.has(modName)) l2State.expandedModules.delete(modName);
-    else l2State.expandedModules.add(modName);
+    const modSlug = _safeId(modName) + '-' + _hashId(modName);
+    const groupNode = cy.$id(`extmod-${modSlug}`);
+
+    if (l2State.expandedModules.has(modName)) {
+        l2State.expandedModules.delete(modName);
+        l2State.expandOriginPos = null; // collapse 不做展開動畫
+    } else {
+        l2State.expandedModules.add(modName);
+        if (groupNode && groupNode.length) {
+            l2State.expandOriginPos = { ...groupNode.position() };
+        } else {
+            l2State.expandOriginPos = null;
+        }
+    }
+    l2State.preserveViewport = { pan: { ...cy.pan() }, zoom: cy.zoom() };
+
     renderL2Flowchart(l2State.activeFile);
 }
 
@@ -1019,12 +1049,6 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
     (DATA.modules || []).forEach(m => { moduleColorMap[m.id] = m.color; });
 
     const currentModule = fileToModule[fileRel] || resolveModuleForFile(fileRel) || '';
-
-    // Edge color by file-path distance from current file (steps up + steps down from common prefix)
-    // Pass full file path (e.g. "AmiChipsetPkg/Include/Protocol/X.h") for accurate distance
-    function distColor(targetFilePath) {
-        return _distColor(_pathDist(fileRel, targetFilePath || ''));
-    }
 
     const fidMap = new Map();
     funcs.forEach((f, i) => fidMap.set(f.label, i));
@@ -1124,7 +1148,9 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const modColor = moduleColorMap[modName] || '#64748b';
         // Use a representative file path from this module for accurate distance
         const repFile = fnMap.values().next().value?.files?.[0] || modName;
-        const ec = distColor(repFile);
+        const distVal = _pathDist(fileRel, repFile);
+        const ec = _distColor(distVal);
+        const dLabel = _distLabel(distVal);
 
         if (!isExpanded) {
             // Unexpanded: show the big group node and aggregate edges
@@ -1133,7 +1159,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                     id: modId, label: `${modName}\n${funcCount} funcs`,
                     bg: '#111827', bc: modColor, w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
                     _t: 'ext_group', mod: modName,
-                    tt: `External Module: ${modName}\nFunctions: ${funcCount}\nClick to expand`,
+                    tt: `External Module: ${modName}\nFunctions: ${funcCount}\n\nClick to expand`,
                 }
             });
 
@@ -1155,7 +1181,9 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
             fnMap.forEach((info, funcName) => {
                 const fnId = `extfn-${modSlug}-${_hashId(funcName)}`;
                 const tf = info.files[0] || null;
-                const fnEc = distColor(tf || modName); // use actual file path for accurate distance
+                const fnDist = _pathDist(fileRel, tf || modName);
+                const fnEc = _distColor(fnDist); // use actual file path for accurate distance
+                const fnDLabel = _distLabel(fnDist);
                 els.push({
                     data: {
                         id: fnId,
@@ -1187,7 +1215,8 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const slug = _safeId(callee) + '-' + _hashId(callee);
         const potId = `pot-${slug}`;
         const firstMod = fileToModule[files[0]] || '';
-        const ec = files[0] ? distColor(files[0]) : '#a78bfa';
+        const dVal = files[0] ? _pathDist(fileRel, files[0]) : 99;
+        const ec = files[0] ? _distColor(dVal) : '#a78bfa';
         els.push({
             data: {
                 id: potId, label: `${callee}\n(${files.length} paths)`,
@@ -1232,6 +1261,10 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         });
     }
 
+    l2State._animGen++;
+    cy.elements().stop(true, false);
+    l2State._prevNodeIds = new Set(cy.nodes().map(n => n.id()));
+
     cy.elements().remove();
     cy.add(els);
     applyCyFont(getSavedFont());
@@ -1250,7 +1283,76 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         });
         updateExternalToggle();
         focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: false });
-        cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
+
+        const savedVP = l2State.preserveViewport;
+        const originPos = l2State.expandOriginPos;
+        const prevIds = l2State._prevNodeIds || new Set();
+
+        if (savedVP && originPos) {
+            cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
+
+            const newNodes = cy.nodes('[_t="ext_func"]').filter(n => !prevIds.has(n.id()));
+
+            if (newNodes.length > 0) {
+                const finalPos = new Map();
+                newNodes.forEach(n => finalPos.set(n.id(), { ...n.position() }));
+                newNodes.forEach(n => n.position({ x: originPos.x, y: originPos.y }));
+
+                const myGen = l2State._animGen;
+                let idx = 0;
+                newNodes.forEach(n => {
+                    const fp = finalPos.get(n.id());
+                    const nid = n.id();
+                    const delay = idx * 18;
+                    setTimeout(() => {
+                        if (l2State._animGen !== myGen) return;
+                        if (!cy.hasElementWithId(nid)) return;
+                        cy.$id(nid).animate({ position: fp }, { duration: 360, easing: 'ease-out-cubic' });
+                    }, delay);
+                    idx++;
+                });
+            } else {
+                cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
+            }
+        } else if (focusFuncName) {
+            const targetNode = cy.$id(`fn-${l2State.activeFuncIdx}`);
+            if (targetNode && targetNode.length) {
+                setTimeout(() => {
+                    highlightNode(targetNode);
+                    cy.animate({
+                        center: { eles: targetNode },
+                        zoom: Math.max(cy.zoom(), 1.8),
+                    }, {
+                        duration: 700,
+                        easing: 'ease-in-out-cubic',
+                        complete: () => {
+                            let count = 0;
+                            const originalBc = targetNode.data('bc');
+                            const flashInterval = setInterval(() => {
+                                count++;
+                                if (!cy.hasElementWithId(targetNode.id())) { clearInterval(flashInterval); return; }
+                                targetNode.style('border-color', count % 2 === 1 ? '#ffffff' : originalBc);
+                                targetNode.style('border-width', count % 2 === 1 ? 4 : 2);
+                                if (count >= 6) {
+                                    clearInterval(flashInterval);
+                                    targetNode.style('border-color', originalBc);
+                                    targetNode.style('border-width', 2);
+                                }
+                            }, 200);
+                        }
+                    });
+                }, 80);
+            } else {
+                cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
+            }
+        } else {
+            cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
+        }
+
+        l2State.preserveViewport = null;
+        l2State.expandOriginPos = null;
+        l2State._prevNodeIds = null;
+
         renderL2Legend();
     });
     lay.run();
@@ -1325,30 +1427,29 @@ function drillDownExtFunc(node) {
     let added = 0;
 
     // Color by file-path distance from targetFile (the drilled source file)
-    function distColor2(tFilePath) {
-        return _distColor(_pathDist(targetFile, tFilePath || ''));
-    }
-
     for (const callee of callees) {
         const childId = `drill-${_hashId(nodeId)}-${_hashId(callee)}`;
         if (cy.$id(childId).length) continue;  // already in graph
 
-        let tf = null, modName = '', ec = '#64748b', bc = '#64748b';
+        let tf = null, modName = '', ec = '#64748b', bc = '#64748b', dLabel = '';
         if (nameToFiles[callee]) {
             tf = nameToFiles[callee][0];
             modName = fileToModule[tf] || '';
             ec = bc = '#a78bfa';   // ambiguous — purple
+            dLabel = 'ambiguous';
         } else if (nameToFile[callee]) {
             tf = nameToFile[callee];
             modName = fileToModule[tf] || '';
-            ec = bc = distColor2(tf);  // pass full file path for accurate distance
+            const dVal = _pathDist(targetFile, tf);
+            ec = bc = _distColor(dVal);
+            dLabel = _distLabel(dVal);
         }
 
         newEls.push({
             data: {
                 id: childId, label: callee,
                 bg: '#0d1f33', bc: bc || '#64748b',
-                w: 140, h: 30, sh: 'roundrectangle', lvl: 2,
+                w: 160, h: 30, sh: 'roundrectangle', lvl: 2,
                 _t: 'drilled_func', fn: callee, _f: tf, mod: modName, _drilled: false,
                 tt: tf ? `${callee}\n${tf}\n\nDouble-click to drill further` : `${callee}\n(no file found)`,
             }
@@ -1380,10 +1481,10 @@ function drillDownExtFunc(node) {
 
 // ─── Call Flow Legend ─────────────────────────────────────────────────────────
 const L2_LEGEND_ITEMS = [
-    { color: '#38bdf8', label: 'Internal call', style: 'solid' },
-    { color: '#10b981', label: 'Near module (d=1)', style: 'solid' },
-    { color: '#f59e0b', label: 'Mid module (d=2)', style: 'solid' },
-    { color: '#f87171', label: 'Far module (d≥3)', style: 'solid' },
+    { color: '#38bdf8', label: 'Internal / Same file', style: 'solid' },
+    { color: '#10b981', label: '1 - 2 layers away', style: 'solid' },
+    { color: '#f59e0b', label: '3 - 4 layers away', style: 'solid' },
+    { color: '#f87171', label: '5+ layers away', style: 'solid' },
     { color: '#a78bfa', label: 'Ambiguous (multi)', style: 'dashed' },
     { color: '#64748b', label: 'System / unknown', style: 'dotted' },
 ];
