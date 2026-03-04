@@ -1100,7 +1100,121 @@ body {
     display: none;
     max-width: 300px;
     line-height: 1.6;
-    white-space: pre-line
+    white-space: pre-line;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    transition: max-width 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s;
+}
+
+#tooltip:hover {
+    max-width: 600px;
+    box-shadow: 0 0 12px var(--accent);
+}
+
+.tip-title {
+    font-weight: bold;
+    max-width: 280px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#tooltip:hover .tip-title {
+    max-width: none;
+    white-space: normal;
+    word-break: break-all;
+}
+
+.tip-body {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #cbd5e1;
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+#tooltip:hover .tip-body {
+    display: block;
+    overflow: visible;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+/* ── Node details Modal ── */
+#node-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+#node-modal-backdrop.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#node-modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    min-width: 400px;
+    max-width: 80vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.8);
+    transform: scale(0.95);
+    transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    position: relative;
+    color: var(--text);
+}
+
+#node-modal-backdrop.show #node-modal {
+    transform: scale(1);
+}
+
+#node-modal-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 24px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+#node-modal-close:hover {
+    color: var(--text);
+}
+
+#node-modal-content {
+    font-size: 14px;
+    line-height: 1.6;
+    margin-top: 4px;
+}
+
+#node-modal-content .tip-body {
+    font-size: 13px;
+    display: block;
+    overflow: visible;
+}
+
+#node-modal-content .tip-title {
+    font-size: 20px;
+    max-width: none;
+    white-space: normal;
 }
 
 .tip-actions {

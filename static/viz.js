@@ -33,6 +33,7 @@ const codeState = {
     funcList: [],      // list of {name, line} for current file
     funcIdx: 0,        // current func index in funcList
     isOpen: false,
+    rawLines: [],      // cache raw contents for exact callsite matching
 };
 
 let cy = null;
@@ -269,17 +270,206 @@ function initTooltipActions() {
         clearHighlight();
     });
     tip.addEventListener('click', (e) => {
+        if (window.getSelection()?.toString()) return; // avoid toggling when selecting text
         const btn = e.target.closest('[data-action]');
-        if (!btn) return;
+        if (!btn) {
+            showNodeModal(window._currentHoverNode);
+            return;
+        }
         const action = btn.dataset.action;
         const file = decodeURIComponent(btn.dataset.file || '');
         const func = decodeURIComponent(btn.dataset.func || '');
         if (action === 'open') {
             openL2File(file, { pushHistory: true, focusFunc: func || null });
+            hideNodeModal();
         } else if (action === 'view') {
             _syncCodePanel(file, func || null);
+            hideNodeModal();
         }
     });
+}
+
+function showNodeModal(node) {
+    if (!node) return;
+
+    let backdrop = document.getElementById('node-modal-backdrop');
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = 'node-modal-backdrop';
+        backdrop.innerHTML = `
+            <div id="node-modal">
+                <button id="node-modal-close">&times;</button>
+                <div id="node-modal-content"></div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+
+        document.getElementById('node-modal-close').addEventListener('click', hideNodeModal);
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) hideNodeModal();
+        });
+
+        // Delegate tip-btn clicks inside modal
+        document.getElementById('node-modal-content').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const action = btn.dataset.action;
+            const file = decodeURIComponent(btn.dataset.file || '');
+            const func = decodeURIComponent(btn.dataset.func || '');
+            if (action === 'open') {
+                openL2File(file, { pushHistory: true, focusFunc: func || null });
+                hideNodeModal();
+            } else if (action === 'view') {
+                _syncCodePanel(file, func || null);
+                hideNodeModal();
+            }
+        });
+    }
+
+    const d = node.data();
+    let html = '';
+
+    // Subtitle inline formatting
+    const lines = (d.tt || '').split('\n');
+    let title = '';
+    let subtitle = '';
+
+    if (d._t === 'ext_func') {
+        title = d.fn || '';
+        subtitle = escapeHtml(d._f || 'Unknown target');
+    } else {
+        title = lines[0] || '';
+        subtitle = lines.slice(1).map(escapeHtml).join(' <span style="margin:0 6px;opacity:0.4">•</span> ').trim();
+    }
+
+    // Header
+    html += `<div class="modal-header">`;
+    html += `<div class="tip-title" style="font-size: 18px; line-height: 1.4; font-family: monospace; white-space: normal; word-break: break-all;" title="${escapeHtml(title)}">${escapeHtml(title)}</div>`;
+    if (subtitle) {
+        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase;">${subtitle}</div>`;
+    }
+
+    // Actions
+    html += `<div class="tip-actions" style="margin-top: 16px;">` +
+        `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
+        `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">View File</button>` +
+        `</div>`;
+    html += `</div>`;
+
+    // Dependencies
+    const outEdges = node.outgoers('edge');
+    const inEdges = node.incomers('edge');
+
+    if (outEdges.length > 0 || inEdges.length > 0) {
+        html += `<div class="modal-deps">`;
+        html += `<div style="font-weight:bold; margin: 20px 0 12px; padding-top:16px; border-top: 1px solid var(--border); font-size: 14px;">Dependencies:</div>`;
+
+        const OUT_MAP = {
+            'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
+            'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
+            'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
+            'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+            'ext': 'external calls', 'group': 'group',
+            '': state.level === 2 ? 'calls' : 'includes'
+        };
+        const IN_MAP = {
+            'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
+            'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
+            'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
+            'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+            'ext': 'external callers', 'group': 'group',
+            '': state.level === 2 ? 'called by' : 'included by'
+        };
+
+        const outGroups = {};
+        outEdges.forEach(edge => {
+            const lbl = edge.data('el') || '';
+            const col = edge.data('ec') || '#f59e0b';
+            const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
+            const key = outTxt + '|' + col;
+            if (!outGroups[key]) outGroups[key] = [];
+            outGroups[key].push(edge.target());
+        });
+
+        const inGroups = {};
+        inEdges.forEach(edge => {
+            const lbl = edge.data('el') || '';
+            const col = edge.data('ec') || '#10b981';
+            const inTxt = IN_MAP[lbl] || lbl || 'incoming';
+            const key = inTxt + '|' + col;
+            if (!inGroups[key]) inGroups[key] = [];
+            inGroups[key].push(edge.source());
+        });
+
+        const renderList = (groups) => {
+            for (const [key, nodes] of Object.entries(groups)) {
+                const [lbl, col] = key.split('|');
+                html += `<div style="margin-bottom: 12px;">`;
+                html += `<div style="color:${col}; font-weight: 600; font-size: 13px; margin-bottom: 6px; font-family: monospace;">• ${lbl}: ${nodes.length}</div>`;
+                html += `<div style="padding-left: 14px; display: flex; flex-direction: column; gap: 4px;">`;
+                nodes.forEach(n => {
+                    const nd = n.data();
+                    let nTitle = nd.fn || nd.label || nd.id;
+                    let nSub = nd._f?.path || nd._f || '';
+                    if (nTitle.includes('\n')) nTitle = nTitle.split('\n')[0];
+                    if (nd._t === 'file') {
+                        nSub = nd._f?.ext ? nd._f.ext.toUpperCase() : 'FILE';
+                    }
+                    html += `<div class="modal-dep-item" style="font-size: 12px; background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: baseline; gap: 8px; transition: background 0.15s;" data-nav-node="${n.id()}">`;
+                    html += `<span style="color: #e2e8f0; font-weight: 500; font-family: monospace;">${escapeHtml(nTitle)}</span>`;
+                    if (nSub && nSub !== nTitle) {
+                        html += `<span style="color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace;">${escapeHtml(nSub)}</span>`;
+                    }
+                    html += `</div>`;
+                });
+                html += `</div></div>`;
+            }
+        };
+
+        renderList(outGroups);
+        renderList(inGroups);
+        html += `</div>`;
+    }
+
+    const content = document.getElementById('node-modal-content');
+    content.innerHTML = html;
+    hideTooltip();
+
+    // Bind click events to graph nav rows
+    content.querySelectorAll('.modal-dep-item').forEach(el => {
+        el.addEventListener('mouseover', () => el.style.background = 'rgba(255,255,255,0.08)');
+        el.addEventListener('mouseout', () => el.style.background = 'rgba(255,255,255,0.03)');
+        el.addEventListener('click', () => {
+            const targetId = el.dataset.navNode;
+            const targetNode = cy.getElementById(targetId);
+            if (targetNode && targetNode.length) {
+                hideNodeModal();
+                const d = targetNode.data();
+                if (d._t === 'module') drillToModule(d._m.id);
+                else {
+                    highlightNode(targetNode);
+                    setTimeout(() => {
+                        cy.animate({
+                            center: { eles: targetNode },
+                            zoom: Math.max(cy.zoom(), 1.0)
+                        }, {
+                            duration: 500,
+                            easing: 'ease-in-out-cubic'
+                        });
+                    }, 0);
+                }
+            }
+        });
+    });
+
+    requestAnimationFrame(() => {
+        backdrop.classList.add('show');
+    });
+}
+
+function hideNodeModal() {
+    const backdrop = document.getElementById('node-modal-backdrop');
+    if (backdrop) backdrop.classList.remove('show');
 }
 
 function onL2MouseNav(e) {
@@ -445,14 +635,14 @@ function focusL2External(entry, opts = {}) {
     updateL2NavButtons();
 }
 
-function syncActiveL2FuncCode() {
+function syncActiveL2FuncCode(targetCallText = null) {
     const fileRel = l2State.activeFile;
     if (!fileRel) return;
     const funcs = DATA.funcs_by_file[fileRel] || [];
     let idx = l2State.activeFuncIdx || 0;
     if (idx < 0 || idx >= funcs.length) idx = 0;
     const funcName = funcs[idx]?.label || null;
-    _syncCodePanel(fileRel, funcName || null);
+    _syncCodePanel(fileRel, funcName || null, targetCallText);
 }
 
 function pickCallerIdxForExternal(node) {
@@ -730,7 +920,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 id: potId, label: `${callee}\n(${files.length} paths)`,
                 bg: '#1a1040', bc: '#a78bfa', w: 160, h: 44, sh: 'roundrectangle', lvl: 2,
                 _t: 'potential_func', fn: callee, _files: files,
-                tt: `Ambiguous: ${callee}\nPossible files:\n${files.slice(0, 5).join('\n')}${files.length > 5 ? `\n…+${files.length - 5} more` : ''}`,
+                tt: `Ambiguous: ${callee}\nPossible files:\n${files.join('\n')}`,
             }
         });
         callers.forEach(callerIdx => {
@@ -1216,6 +1406,7 @@ function showCpError(msg) {
 
 function renderCode(src, ext, fname) {
     const lines = src.split('\n');
+    codeState.rawLines = lines;
     const hlExt = {
         // C / ASM
         '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.h': 'cpp', '.hpp': 'cpp',
@@ -1268,8 +1459,8 @@ function renderCode(src, ext, fname) {
     wrap.style.display = '';
 }
 
-function jumpToFunc(funcName) {
-    const lineIdx = codeState.funcLineMap[funcName];
+function jumpToFunc(funcName, targetCallText = null) {
+    let lineIdx = codeState.funcLineMap[funcName];
     if (lineIdx === undefined) return;
 
     // Update func bar
@@ -1284,7 +1475,26 @@ function jumpToFunc(funcName) {
 
     // Highlight line
     document.querySelectorAll('.code-line.fn-highlight').forEach(el => el.classList.remove('fn-highlight'));
-    const lineEl = document.getElementById(`cl-${lineIdx}`);
+
+    let highlightIdx = lineIdx;
+    if (targetCallText && codeState.rawLines && codeState.rawLines.length) {
+        let nextStart = codeState.rawLines.length;
+        const sortedStarts = Object.values(codeState.funcLineMap).sort((a, b) => a - b);
+        const myStartIdx = sortedStarts.indexOf(lineIdx);
+        if (myStartIdx >= 0 && myStartIdx < sortedStarts.length - 1) {
+            nextStart = sortedStarts[myStartIdx + 1];
+        }
+
+        const targetPattern = new RegExp('\\b' + escapeRe(targetCallText) + '\\b');
+        for (let i = lineIdx; i < nextStart; i++) {
+            if (targetPattern.test(codeState.rawLines[i])) {
+                highlightIdx = i;
+                break;
+            }
+        }
+    }
+
+    const lineEl = document.getElementById(`cl-${highlightIdx}`);
     if (lineEl) {
         lineEl.classList.add('fn-highlight');
         lineEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1762,7 +1972,7 @@ function drillToFile(fileRel) {
 }
 
 // Dedicated code-panel sync — called only from showFuncView to avoid race conditions
-async function _syncCodePanel(fileRel, funcName) {
+async function _syncCodePanel(fileRel, funcName, targetCallText = null) {
     if (!fileRel) return;
     openCodePanel();
 
@@ -1785,7 +1995,7 @@ async function _syncCodePanel(fileRel, funcName) {
         // File already rendered — just jump to function
         if (funcName) {
             // Use a small delay to ensure DOM is stable after showFuncView re-render
-            requestAnimationFrame(() => jumpToFunc(funcName));
+            requestAnimationFrame(() => jumpToFunc(funcName, targetCallText));
         }
         return;
     }
@@ -1800,7 +2010,7 @@ async function _syncCodePanel(fileRel, funcName) {
         codeState.currentFile = fileRel;
         renderCode(data.content, ext, fname);
         showCpLoading(false);
-        if (funcName) requestAnimationFrame(() => jumpToFunc(funcName));
+        if (funcName) requestAnimationFrame(() => jumpToFunc(funcName, targetCallText));
     } catch (e) {
         showCpError('Fetch error: ' + e.message);
     }
@@ -1943,7 +2153,24 @@ function onNodeTap(node) {
             } else {
                 const callerIdx = pickCallerIdxForExternal(node);
                 if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
-                syncActiveL2FuncCode();
+                syncActiveL2FuncCode(d.fn);
+            }
+            return;
+        }
+        if (d._t === 'potential_func') {
+            const now = performance.now();
+            const sameNode = extClickLastId === node.id();
+            const isDouble = sameNode && (now - extClickLastTime) < EXT_DOUBLE_CLICK_MS;
+
+            extClickLastId = node.id();
+            extClickLastTime = now;
+            highlightNode(node);
+            if (isDouble) {
+                drillDownExtFunc(node);
+            } else {
+                const callerIdx = pickCallerIdxForExternal(node);
+                if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
+                syncActiveL2FuncCode(d.fn);
             }
             return;
         }
@@ -2196,6 +2423,8 @@ function showTooltip(e) {
     const d = e.target.data();
     if (!d || !d.tt) return;
 
+    window._currentHoverNode = e.target.isNode() ? e.target : null;
+
     let html = '';
 
     if (e.target.isNode()) {
@@ -2205,10 +2434,10 @@ function showTooltip(e) {
         if (d._t === 'ext_func') {
             const fileRel = d._f || '';
             const funcName = d.fn || '';
-            html += `<div style="font-weight:bold;">${escapeHtml(funcName)}</div>`;
+            html += `<div class="tip-title" title="${escapeHtml(funcName)}">${escapeHtml(funcName)}</div>`;
             html += fileRel
-                ? `<div style="margin-top:4px;color:#cbd5e1;font-size:11px;">${escapeHtml(fileRel)}</div>`
-                : `<div style="margin-top:4px;color:#cbd5e1;font-size:11px;">Unknown target</div>`;
+                ? `<div class="tip-body">${escapeHtml(fileRel)}</div>`
+                : `<div class="tip-body">Unknown target</div>`;
             html += `<div class="tip-actions">` +
                 `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">Open Location</button>` +
                 `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">View File</button>` +
@@ -2216,69 +2445,68 @@ function showTooltip(e) {
         } else {
 
             // 取得 tooltip 原文字的第一行 (標題/路徑) 和剩餘內容
-            const lines = d.tt.split('\n');
+            const lines = d.tt ? d.tt.split('\n') : [];
             const titleRaw = lines[0] || '';
             const bodyLines = lines.slice(1).join('<br>').trim();
 
             // 1. 處理檔名過長 (使用 css ellipsis 或截斷)
-            // 這裡加上 max-width 強制斷掉加上 '...'
-            html += `<div style="font-weight:bold; max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(titleRaw)}">${escapeHtml(titleRaw)}</div>`;
+            html += `<div class="tip-title" title="${escapeHtml(titleRaw)}">${escapeHtml(titleRaw)}</div>`;
 
             if (bodyLines) {
-                html += `<div style="margin-top:6px; font-size:11px; color:#cbd5e1;">${bodyLines}</div>`;
+                html += `<div class="tip-body">${bodyLines}</div>`;
+            }
+        }
+
+        // 2. 處理 dependencies 文字和顏色
+        if (outCount > 0 || inCount > 0) {
+            html += `<div style="margin-top:10px; border-top:1px solid #334155; padding-top:6px;">`;
+            html += `<div style="font-weight:bold; margin-bottom:4px">Dependencies:</div>`;
+
+            const OUT_MAP = {
+                'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
+                'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
+                'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
+                'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+                'ext': 'external calls', 'group': 'group',
+                '': state.level === 2 ? 'calls' : 'includes'
+            };
+            const IN_MAP = {
+                'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
+                'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
+                'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
+                'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+                'ext': 'external callers', 'group': 'group',
+                '': state.level === 2 ? 'called by' : 'included by'
+            };
+
+            const outGroups = {};
+            e.target.outgoers('edge').forEach(edge => {
+                const lbl = edge.data('el') || '';
+                const col = edge.data('ec') || '#f59e0b';
+                const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
+                const key = outTxt + '|' + col;
+                outGroups[key] = (outGroups[key] || 0) + 1;
+            });
+
+            const inGroups = {};
+            e.target.incomers('edge').forEach(edge => {
+                const lbl = edge.data('el') || '';
+                const col = edge.data('ec') || '#10b981';
+                const inTxt = IN_MAP[lbl] || lbl || 'incoming';
+                const key = inTxt + '|' + col;
+                inGroups[key] = (inGroups[key] || 0) + 1;
+            });
+
+            for (const [key, count] of Object.entries(outGroups)) {
+                const [lbl, col] = key.split('|');
+                html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
+            }
+            for (const [key, count] of Object.entries(inGroups)) {
+                const [lbl, col] = key.split('|');
+                html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
             }
 
-            // 2. 處理 dependencies 文字和顏色
-            if (outCount > 0 || inCount > 0) {
-                html += `<div style="margin-top:10px; border-top:1px solid #334155; padding-top:6px;">`;
-                html += `<div style="font-weight:bold; margin-bottom:4px">Dependencies:</div>`;
-
-                const OUT_MAP = {
-                    'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
-                    'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
-                    'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
-                    'HII-Pkg': 'hii pkg', 'Depex': 'depex',
-                    'ext': 'external calls', 'group': 'group',
-                    '': state.level === 2 ? 'calls' : 'includes'
-                };
-                const IN_MAP = {
-                    'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
-                    'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
-                    'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
-                    'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
-                    'ext': 'external callers', 'group': 'group',
-                    '': state.level === 2 ? 'called by' : 'included by'
-                };
-
-                const outGroups = {};
-                e.target.outgoers('edge').forEach(edge => {
-                    const lbl = edge.data('el') || '';
-                    const col = edge.data('ec') || '#f59e0b';
-                    const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
-                    const key = outTxt + '|' + col;
-                    outGroups[key] = (outGroups[key] || 0) + 1;
-                });
-
-                const inGroups = {};
-                e.target.incomers('edge').forEach(edge => {
-                    const lbl = edge.data('el') || '';
-                    const col = edge.data('ec') || '#10b981';
-                    const inTxt = IN_MAP[lbl] || lbl || 'incoming';
-                    const key = inTxt + '|' + col;
-                    inGroups[key] = (inGroups[key] || 0) + 1;
-                });
-
-                for (const [key, count] of Object.entries(outGroups)) {
-                    const [lbl, col] = key.split('|');
-                    html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
-                }
-                for (const [key, count] of Object.entries(inGroups)) {
-                    const [lbl, col] = key.split('|');
-                    html += `<div style="color:${col}">• ${lbl}: ${count}</div>`;
-                }
-
-                html += `</div>`;
-            }
+            html += `</div>`;
         }
     } else {
         // Edge tooltip
@@ -2286,6 +2514,9 @@ function showTooltip(e) {
     }
 
     const tip = document.getElementById('tooltip');
+    if (document.getElementById('node-modal-backdrop')?.classList.contains('show')) {
+        return; // Don't show tooltip if modal is open
+    }
     tip.innerHTML = html;
     tip.style.display = 'block';
     tip.style.left = (e.originalEvent.clientX + 14) + 'px';

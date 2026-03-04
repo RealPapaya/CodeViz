@@ -1,6 +1,6 @@
 # BIOS Code Visualizer — 工作紀錄 & AI Agent 交接文件
 
-> 最後更新：2026-03-02  
+> 最後更新：2026-03-04  
 > 目的：讓 IDE AI Agent 了解全貌，繼續開發完成度更高的視覺化工具
 
 ---
@@ -66,108 +66,64 @@ D:\Code\ADL\B1403CTA_SMR\
 
 ## 四、已完成的工作
 
-### 已交付檔案：`analyze_bios.py`
-
-一個 Python 腳本，功能：
-1. 遞迴掃描指定目錄下所有 `.c`, `.cpp`, `.cc`, `.h`, `.hpp` 檔案
-2. 用 regex 提取：
-   - `#include` 相依關係（檔案層級）
-   - 函數定義（`RE_FUNCDEF`）
-   - 函數呼叫（`RE_FUNCCALL`）
-3. 過濾 C 關鍵字和 EDK2/AMI 常用 macro（避免誤判）
-4. 輸出一個**自包含的單一 HTML 檔案**（所有資料 inline 在 `<script>` 裡）
+### 已交付核心檔案
+1. **`analyze_bios.py` (V2.5)**: 負責靜態分析，輸出層級 JSON 支援跨檔呼叫解析。
+2. **`server.py`**: 本地 HTTP 伺服器，提供 `/analyze` 背景任務與進度回報。
+3. **`launcher.html`**: 使用者入口網頁，提供動態分析進度條與近期專案歷史。
+4. **`launch.bat`**: 一鍵啟動腳本，會自動背景啟動伺服器並開啟瀏覽器。
+5. **前置端模組 (`static/viz.js`, `static/viz.css`)**: 解耦原本單一 HTML，並使用 Cytoscape.js 進行高效能拓樸圖繪製。
 
 ### 使用方式
+直接雙擊執行 `launch.bat`，或在命令列執行：
 ```cmd
-cd D:\Code\ADL\B1403CTA_SMR
-python analyze_bios.py . -o bios_viz.html
+cd "D:\Google AI\CodeViz"
+python server.py
 ```
-然後用 Chrome / Edge 開啟 `bios_viz.html`。
+然後在瀏覽器開啟 `http://localhost:7777` 操作。
 
-### 已實作的 HTML 視覺化功能
-- D3.js v7 Force-directed graph
-- **File Dependencies** 模式：檔案 `#include` 相依圖
-- **Call Graph** 模式：函數呼叫關係圖
-- 顏色按模組（頂層資料夾）區分
-- 點節點 → 側邊欄顯示 caller / callee 清單
-- 搜尋框：即時過濾節點
-- 左側 Module 列表：點選只看特定模組
-- Zoom / Pan / 拖曳節點
-- Tooltip on hover
-- 大檔案自動取樣（超過 800 節點時取連通性最高的節點）
-
-### 已知限制（需改進）
-見下方第五節。
+### 已實作的進階分析與 UI 功能
+- **動態雙擊載入 (Lazy Loading)**: 在 L2 Call Graph 中雙擊外部函數，即時爬梳並擴充節點，支援深度追蹤 (Deep Drill-down)。
+- **精準備案分析 (Unknown Resolution)**: 解析 Unknown 節點，實現跨檔 function calls 的正確連線，搭配以距離為基礎的上色演算法。
+- **高效能渲染與 Layout**: 從 D3.js 移植至 Cytoscape.js，採用 Dagre (有向圖) 確保呼叫鏈清晰不打結。
+- **介面與使用者體驗**:
+  - 彈性的左右面板 (Sidebar & Code Editor) 支援雙向拖曳調整寬度。
+  - 字型偏好設定系統 (預設 JetBrains Mono) 與下拉選單視覺化預覽。
+  - 方向性相依高亮：入邊標綠、出邊標桔，附帶連線數量指標以降低視覺混亂。
+- **特定節點特化 (FILE_TYPE_SHAPE)**: 針對 BIOS 特有的檔案（.dec, .inf, .dsc, .cif）給予特定形狀，並修正了 include 與 HII-Pkg 的邊線顏色（Include=灰色, HII-Pkg=橘紅色）。
+- **工具提示 (Tooltips)**: 改善 Hover 彈出視窗使其更準備顯示不同 Dependency 的專屬屬性與真實資料。
 
 ---
 
-## 五、需要 AI Agent 繼續完成的項目
+## 五、待辦與未來優化項目 (需 AI Agent 繼續協助)
 
 ### 🔴 高優先度（功能缺失）
 
 **1. ASM 檔案支援**
 - 副檔名：`.asm`, `.s`, `.S`, `.nasm`
-- 目前：完全忽略
-- 需要：至少能顯示 ASM 檔案節點，並分析 `%include` / `EXTERN` 指令
+- 需求：目前尚未解析 ASM，希望能顯示 ASM 檔案節點，並分析 `%include` / `EXTERN` 指令。
 
-**2. 函數跨檔案 Call 的準確性**
-- 目前做法：只看同一個 `.c` 檔裡的函數定義和呼叫，判斷「這個檔案裡的函數 A 呼叫了函數 B」
-- 問題：如果函數 B 定義在別的 `.c` 檔，仍然能正確連結（因為有 `all_funcdefs` 全域表）
-- 但：header-only 的 `static inline` 函數沒有被正確計入函數定義
-- 需要：改進 `RE_FUNCDEF` regex，支援 `static inline` 和 `EFIAPI` 呼叫慣例
-
-**3. 大型圖的效能問題**
-- 目前：超過 800 nodes 會取樣，可能漏掉重要節點
-- 需要：實作 hierarchical clustering 或 level-of-detail rendering
-- 建議：用 WebGL 渲染（如 `sigma.js` 或 `cytoscape.js` 配合 canvas renderer）
-
-**4. 節點之間的連線被遮住**
-- Force layout 對大圖效果差，邊線交叉嚴重
-- 建議：加入 Dagre（有向圖 hierarchical layout）作為第二種 layout 選項
-
-**5. 路徑過濾**
-- 目前：`SKIP_DIRS = {'Build', 'build', '.git', '__pycache__', 'Conf', 'DEBUG', 'RELEASE'}`
-- ASUS AMI 的 build 輸出在 `Build/` 資料夾，應該確認這個有被跳過
-- 需要：讓使用者在 HTML 介面裡可以動態調整要不要顯示某些目錄
-
----
+**2. 函數跨檔案 Call 的準確性 (持續優化中)**
+- 狀態：已能解析多檔同名引用與 Unknown 節點，並實作 Lazy loading 追蹤外部 call。
+- 剩餘需求：進一步改良 `RE_FUNCDEF` RegExp，完全涵蓋 `static inline` 和複雜 `EFIAPI` 等 MACRO 宣告，減少被遺漏的定義。
 
 ### 🟡 中優先度（體驗改進）
 
-**6. 右鍵選單**
-- 右鍵節點 → 選單：「Open in VS Code」、「Copy path」、「Show only this module」、「Pin this node」
+**3. 右鍵選單 (Context Menu)**
+- 需求：右鍵節點 → 選單：「Open in VS Code」、「Copy path」、「Pin this node」。
 
-**7. 多層展開**
-- 點節點時，可以設定展開幾層（1層、2層、3層、全部）
-- 目前只顯示直接鄰居
+**4. 統計 Dashboard**
+- 需求：顯示最多被 include 的 header TOP 10、最多 caller 的函數 TOP 10。
 
-**8. 路徑追蹤**
-- 輸入函數 A 和函數 B，找出 A → B 的呼叫路徑
-- Highlight 最短路徑
-
-**9. 統計 Dashboard**
-- 顯示：最多被 include 的 header TOP 10、最多 caller 的函數 TOP 10、最大的模組（by file count）
-- 建議：左側 sidebar 加一個 Stats tab
-
-**10. 儲存 / 載入 Layout**
-- 讓使用者可以把節點位置存起來，下次開啟時恢復
-- 建議：用 `localStorage` 存 JSON
-
-**11. 篩選條件**
-- 只看 `.c` 檔（不看 `.h`）
-- 只看某個副檔名
-- 只看有超過 N 個連結的節點（過濾孤立節點）
-
----
+**5. 儲存 / 載入 Layout**
+- 需求：讓使用者可以把節點位置存起來，下次開啟時恢復（可存入 `localStorage` 或 JSON 檔）。
 
 ### 🟢 低優先度（進階功能）
 
-**12. diff 模式**
-- 比較兩個版本的 code，highlight 新增 / 刪除 / 修改的相依關係
+**6. diff 模式**
+- 需求：比較兩個版本的 code，highlight 新增 / 刪除 / 修改的相依關係。
 
-**13. Export**
-- 匯出當前視圖為 SVG 或 PNG
-- 匯出節點清單為 CSV
+**7. 匯出視圖 (Export)**
+- 需求：將當前 Cytoscape 視圖匯出為 PNG / SVG，匯出節點清單為 CSV。
 
 **14. 模組層級圖**
 - 除了檔案層級，加一個「模組層級」視圖（把同一個頂層資料夾的所有檔案收合成一個節點）
@@ -236,28 +192,17 @@ analyze_bios.py
 
 給 AI Agent 的建議順序：
 
-1. **先跑 `analyze_bios.py` 確認能正常產生 HTML**（使用者尚未實際跑過）
-2. **改良 Python 分析腳本**：支援 ASM，改進 static inline 偵測
-3. **替換渲染引擎**：考慮從 D3.js force layout 改為 `cytoscape.js`（效能更好、支援多種 layout）
-4. **加入 Dagre layout**：讓有向圖更易讀
-5. **加入右鍵選單和多層展開**
-6. **加入統計 Dashboard**
+1. **ASM 支援與正則優化**：處理 `.asm` 相依性以及 header `static inline` 解析，提升靜態分析準確度。
+2. **加入右鍵選單**：實作快捷啟動 VS Code 等功能 (可透過 `vscode://file/` URI scheme)。
+3. **優化資料載入效能**：測試 5,000+ 檔案的真實大型 BIOS 專案，確保能以低於 50MB 的記憶體在前端順利載入 JSON。
+4. **加入匯出功能 (PNG/SVG)**：協助工程師將流程圖放入除錯或架構紀錄報告中。
 
-### 建議的技術棧
+### 目前技術棧 (已定型並上線)
 ```
-後端（分析）: Python 3.x，只用標準函式庫（re, os, json, pathlib）
-前端（視覺化）: 單一 HTML 檔案，自包含
-  - 渲染引擎: cytoscape.js（比 D3 force layout 更適合大圖）
-  - Layout: cytoscape-dagre（有向圖）+ cola（force directed）
-  - UI framework: 純 HTML/CSS/JS（不用 React，保持單檔輸出）
-  - CDN: cdnjs.cloudflare.com
-```
-
-### cytoscape.js CDN 範例
-```html
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+後端（分析）: Python 3.x，內建標準函式庫處理分析 + Server 提供 HTTP API。
+前端（視覺化）: Cytoscape.js (強悍的 WebGL 渲染支援) + Dagre (有向圖 Layout 解決節點交錯)。
+入口與架構: 本地分析與 Web UI 解耦 (`server.py`, `launcher.html`, `static/viz.js`, `static/viz.css`)。
+啟動方式: `launch.bat` 提供給使用者的一鍵免安裝啟動體驗。
 ```
 
 ---
