@@ -314,8 +314,26 @@ function showNodeModal(node) {
             const btn = e.target.closest('[data-action]');
             if (!btn) return;
             const action = btn.dataset.action;
-            const file = decodeURIComponent(btn.dataset.file || '');
+            let file = decodeURIComponent(btn.dataset.file || '');
             const func = decodeURIComponent(btn.dataset.func || '');
+
+            if (action === 'open-ambiguous' || action === 'view-ambiguous') {
+                const selected = document.querySelector('input[name="ambiguous-file-select"]:checked');
+                if (!selected) {
+                    alert('請先選擇一個檔案 (Please select a file first)');
+                    return;
+                }
+                file = selected.value;
+                if (action === 'open-ambiguous') {
+                    openL2File(file, { pushHistory: true, focusFunc: func || null });
+                    hideNodeModal();
+                } else {
+                    _syncCodePanel(file, func || null);
+                    hideNodeModal();
+                }
+                return;
+            }
+
             if (action === 'open') {
                 openL2File(file, { pushHistory: true, focusFunc: func || null });
                 hideNodeModal();
@@ -337,6 +355,8 @@ function showNodeModal(node) {
     if (d._t === 'ext_func') {
         title = d.fn || '';
         subtitle = escapeHtml(d._f || 'Unknown target');
+    } else if (d._t === 'potential_func') {
+        title = d.fn ? `Ambiguous: ${d.fn}` : lines[0] || '';
     } else {
         title = lines[0] || '';
         subtitle = lines.slice(1).map(escapeHtml).join(' <span style="margin:0 6px;opacity:0.4">•</span> ').trim();
@@ -345,15 +365,34 @@ function showNodeModal(node) {
     // Header
     html += `<div class="modal-header">`;
     html += `<div class="tip-title" style="font-size: 18px; line-height: 1.4; font-family: monospace; white-space: normal; word-break: break-all;" title="${escapeHtml(title)}">${escapeHtml(title)}</div>`;
-    if (subtitle) {
+
+    if (d._t === 'potential_func') {
+        html += `<div class="tip-body" style="font-size: 12px; margin-top: 12px; font-family: monospace;">`;
+        html += `<div style="margin-bottom: 8px; font-weight: bold; color: #a78bfa;">POSSIBLE FILES:</div>`;
+        html += `<div class="ambiguous-file-list" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 4px;">`;
+        if (d._files && d._files.length) {
+            d._files.forEach((f) => {
+                html += `<label style="display: block; padding: 6px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05); user-select: none;">
+                    <input type="radio" name="ambiguous-file-select" value="${escapeHtml(f)}" style="margin-right: 8px;">
+                    <span style="word-break: break-all;">${escapeHtml(f)}</span>
+                </label>`;
+            });
+        }
+        html += `</div></div>`;
+    } else if (subtitle) {
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase;">${subtitle}</div>`;
     }
 
     // Actions
-    html += `<div class="tip-actions" style="margin-top: 16px;">` +
-        `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
-        `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">View File</button>` +
-        `</div>`;
+    html += `<div class="tip-actions" style="margin-top: 16px;">`;
+    if (d._t === 'potential_func') {
+        html += `<button class="tip-btn" data-action="open-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
+            `<button class="tip-btn" data-action="view-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">View File</button>`;
+    } else {
+        html += `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
+            `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">View File</button>`;
+    }
+    html += `</div>`;
     html += `</div>`;
 
     // Dependencies
@@ -541,7 +580,7 @@ function updateL2Toolbar(fileRel, stats) {
         if (stats.extModules) parts.push(`${stats.extModules} modules`);
         if (stats.extFuncs) parts.push(`${stats.extFuncs} ext funcs`);
         if (stats.legacy) parts.push('legacy edges');
-        statsEl.textContent = parts.join('\n');
+        statsEl.textContent = parts.join(' | ');
     }
 }
 
