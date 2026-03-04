@@ -2221,9 +2221,21 @@ function onNodeTap(node) {
     }
 
     if (d._t === 'file') {
-        // Single click → code panel preview
-        if (d._f?.path) loadFileInPanel(d._f.path);
+        const now = performance.now();
+        const sameNode = extClickLastId === node.id();
+        const isDouble = sameNode && (now - extClickLastTime) < EXT_DOUBLE_CLICK_MS;
+
+        extClickLastId = node.id();
+        extClickLastTime = now;
+
         highlightNode(node);
+
+        if (isDouble) {
+            if (d._f?.path) drillToFile(d._f.path);
+        } else {
+            // Single click → code panel preview
+            if (d._f?.path) loadFileInPanel(d._f.path);
+        }
         return;
     }
 
