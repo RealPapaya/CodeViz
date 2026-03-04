@@ -147,9 +147,60 @@ class Handler(BaseHTTPRequestHandler):
                     })
                     return
 
-                # ── Default: text ─────────────────────────────────────────────
-                content = Path(abs_path).read_text(encoding='utf-8', errors='replace')
-                self.json_resp({'content_type': 'text', 'content': content, 'path': rel})
+                # ── PDF files → base64 embed ──────────────────────────────────
+                PDF_EXTS = {'.pdf'}
+                if ext in PDF_EXTS:
+                    raw = Path(abs_path).read_bytes()
+                    b64 = base64.b64encode(raw).decode('ascii')
+                    self.json_resp({
+                        'content_type': 'pdf',
+                        'data': b64,
+                        'size': len(raw),
+                        'path': rel,
+                    })
+                    return
+
+                # ── XML / plain-text variants → serve as text with type hint ──
+                TEXT_FORCE_EXTS = {
+                    '.xml', '.txt', '.bat', '.cmd', '.sh', '.py',
+                    '.md', '.yaml', '.yml', '.toml', '.json',
+                    '.cmake', '.mk', '.gitignore', '.editorconfig',
+                }
+                if ext in TEXT_FORCE_EXTS:
+                    content = Path(abs_path).read_text(encoding='utf-8', errors='replace')
+                    self.json_resp({
+                        'content_type': 'text',
+                        'content': content,
+                        'lang_hint': ext.lstrip('.'),
+                        'path': rel,
+                    })
+                    return
+
+                # ── Default: attempt UTF-8 text; fall back to hex dump ────────
+                raw = Path(abs_path).read_bytes()
+                # Heuristic: if >30% non-printable bytes → treat as binary
+                printable = sum(1 for b in raw[:512] if 32 <= b < 127 or b in (9, 10, 13))
+                is_text = len(raw) == 0 or (printable / min(len(raw), 512)) > 0.70
+                if is_text:
+                    content = raw.decode('utf-8', errors='replace')
+                    self.json_resp({'content_type': 'text', 'content': content, 'path': rel})
+                else:
+                    chunk = raw[:8192]
+                    lines = []
+                    for i in range(0, len(chunk), 16):
+                        row = chunk[i:i+16]
+                        hex_part  = ' '.join(f'{b:02X}' for b in row)
+                        ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)
+                        lines.append(f'{i:08X}  {hex_part:<47}  |{ascii_part}|')
+                    self.json_resp({
+                        'content_type': 'binary',
+                        'content': '\n'.join(lines),
+                        'size': len(raw),
+                        'truncated': len(raw) > 8192,
+                        'path': rel,
+                    })
+
+
 
             except FileNotFoundError:
                 self.json_resp({'error': f'File not found: {rel}'}, 404)

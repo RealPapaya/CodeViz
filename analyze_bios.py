@@ -38,7 +38,7 @@ FILE_TYPE_MAP = {
     '.dsc': 'platform_dsc',
     '.fdf': 'flash_desc',
     '.sdl': 'ami_sdl',
-    '.sd':  'ami_sdl',   # AMI SDL variant (same format as .sdl)
+    '.sd':  'ami_sd',    # AMI Setup Data — hybrid C-struct + VFR form fragment
     '.cif': 'ami_cif',
     '.mak': 'makefile',
     '.vfr': 'hii_vfr',      # UEFI 標準 HII 表單
@@ -318,7 +318,87 @@ def scan_sdl(src: str) -> dict:
     }
 
 
-# ─── scan_cif ─────────────────────────────────────────────────────────────────
+
+# ─── scan_sd ──────────────────────────────────────────────────────────────────
+def scan_sd(src: str) -> dict:
+    """
+    Parse AMI .sd file.
+
+    .sd files are a HYBRID of C struct declarations + VFR form fragments,
+    guarded by C-preprocessor #ifdef blocks:
+
+      #ifdef SETUP_DATA_DEFINITION       ← struct field: UINT8 MyOption;
+      #endif
+
+      #ifdef ADVANCED_FORM_SET           ← VFR-style form items
+        #ifdef FORM_SET_GOTO
+          goto MYFORM_ID, ...
+        #endif
+        #ifdef FORM_SET_FORM
+          form formid = MYFORM_ID, ...
+            oneof varid = SETUP_DATA.MyOption, ...
+          endform;
+        #endif
+      #endif  // ADVANCED_FORM_SET
+
+    Returns:
+      includes         → list of #include paths
+      setup_fields     → list of C field names declared in SETUP_DATA_DEFINITION
+      form_sections    → list of guard names present (e.g. 'ADVANCED_FORM_SET')
+      form_items       → list of (item_type, varid) tuples from VFR items
+      string_tokens    → list of STRING_TOKEN references
+      goto_ids         → list of form IDs referenced in GOTO
+    """
+    # #include references
+    includes = RE_INCLUDE.findall(src)
+
+    # Extract SETUP_DATA_DEFINITION block(s) → C struct fields
+    RE_SD_BLOCK = re.compile(
+        r'#ifdef\s+SETUP_DATA_DEFINITION\b(.*?)#endif',
+        re.DOTALL | re.IGNORECASE
+    )
+    setup_fields = []
+    for block in RE_SD_BLOCK.finditer(src):
+        # Match C variable declarations: UINT8 Foo; / UINT16 Bar[4];
+        for m in re.finditer(
+            r'\b(UINT8|UINT16|UINT32|UINT64|BOOLEAN|UINTN|INTN)\s+(\w+)',
+            block.group(1)
+        ):
+            setup_fields.append(m.group(2))
+
+    # Detect which FORM_SET guard sections are present
+    KNOWN_GUARDS = [
+        'ADVANCED_FORM_SET', 'MAIN_FORM_SET', 'CHIPSET_FORM_SET',
+        'SECURITY_FORM_SET', 'BOOT_FORM_SET', 'POWER_FORM_SET',
+        'FORM_SET_GOTO', 'FORM_SET_FORM',
+    ]
+    form_sections = [g for g in KNOWN_GUARDS if re.search(r'#ifdef\s+' + g + r'\b', src)]
+
+    # VFR-style form items: oneof, checkbox, numeric, string, date, time
+    RE_VFR_ITEM = re.compile(
+        r'\b(oneof|checkbox|numeric|string|date|time|password)\s+varid\s*=\s*([\w.]+)',
+        re.IGNORECASE
+    )
+    form_items = [(m.group(1).lower(), m.group(2)) for m in RE_VFR_ITEM.finditer(src)]
+
+    # STRING_TOKEN references
+    str_tokens = list(set(_RE_STR_TOKEN.findall(src)))
+
+    # goto <FORM_ID>
+    RE_GOTO = re.compile(r'\bgoto\s+(\w+)', re.IGNORECASE)
+    goto_ids = list(set(RE_GOTO.findall(src)))
+
+    return {
+        'includes':      includes,
+        'setup_fields':  setup_fields,
+        'form_sections': form_sections,
+        'form_items':    form_items,
+        'string_tokens': str_tokens,
+        'goto_ids':      goto_ids,
+    }
+
+
+
 def scan_cif(src: str) -> dict:
     """
     Parse AMI CIF component file. Returns:
@@ -578,10 +658,14 @@ def scan_file(filepath: str, root: str):
         data = scan_fdf(src)
         return data['infs'], [], [], data, []
 
-    if ext in ('.sdl', '.sd'):
+    if ext == '.sdl':
         data = scan_sdl(src)
         refs = data['inf_components']
         return refs, [], [], data, []
+
+    if ext == '.sd':
+        data = scan_sd(src)
+        return data['includes'], [], [], data, []
 
     if ext == '.cif':
         data = scan_cif(src)
@@ -1086,6 +1170,12 @@ HTML_SKELETON = """\
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/x86asm.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/markdown.min.js"></script>
 <style>{CSS}</style>
 </head>
 <body>

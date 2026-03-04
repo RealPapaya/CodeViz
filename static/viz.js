@@ -1346,7 +1346,7 @@ function extColor(ext) {
         // UEFI / EDK2
         '.inf': '#ffd700', '.dec': '#00d4ff', '.dsc': '#e2e8f0', '.fdf': '#c084fc',
         // AMI 特有
-        '.sdl': '#34d399', '.sd': '#2dd4a0', '.cif': '#60a5fa', '.mak': '#94a3b8',
+        '.sdl': '#34d399', '.sd': '#10b981', '.cif': '#60a5fa', '.mak': '#94a3b8',
         // HII (UEFI 標準 + AMI 擴充)
         '.vfr': '#f472b6',  // UEFI HII Form
         '.hfr': '#e940a0',  // AMI HII Form Resource (較深的籉红)
@@ -1367,6 +1367,7 @@ const FILE_TYPE_SHAPE = {
     'platform_dsc': { sh: 'star', w: 160, h: 60 },
     'flash_desc': { sh: 'vee', w: 160, h: 56 },
     'ami_sdl': { sh: 'octagon', w: 170, h: 56 },
+    'ami_sd': { sh: 'concave-hexagon', w: 170, h: 54 },  // Setup Data — hybrid C+VFR
     'ami_cif': { sh: 'barrel', w: 160, h: 56 },
     'makefile': { sh: 'tag', w: 150, h: 46 },
     // HII ecosystem
@@ -1474,9 +1475,11 @@ function renderFileContent(data, ext, fname) {
         renderImage(data);
     } else if (ct === 'binary') {
         renderHexDump(data);
+    } else if (ct === 'pdf') {
+        renderPDF(data);
     } else {
-        // Legacy: server may still return {content} without content_type
-        renderCode(data.content || data.content || '', ext, fname);
+        // text — use lang_hint from server if available, else derive from ext
+        renderCode(data.content || '', ext, fname, data.lang_hint);
     }
 }
 
@@ -1496,6 +1499,32 @@ function renderImage(data) {
 </div>`;
     wrap.style.display = '';
     // Reset func-related state — no functions in images
+    codeState.funcLineMap = {};
+    codeState.funcList = [];
+}
+
+// Render PDF via embedded <object>
+function renderPDF(data) {
+    const wrap = document.getElementById('cp-code-wrap');
+    const url = `data:application/pdf;base64,${data.data}`;
+    const kb = data.size ? (data.size / 1024).toFixed(1) + ' KB' : '';
+    wrap.innerHTML = `
+<div style="display:flex;flex-direction:column;height:100%;padding:8px;gap:8px;box-sizing:border-box">
+  <div style="font-size:11px;color:var(--muted);font-family:var(--code-font);flex-shrink:0">
+    ${escapeHtml(data.path || '')} &nbsp;·&nbsp; ${escapeHtml(kb)}
+    &nbsp;·&nbsp; <a href="${url}" download="${escapeHtml((data.path || '').split('/').pop())}"
+       style="color:var(--accent);text-decoration:none">⬇ Download</a>
+  </div>
+  <object data="${url}" type="application/pdf"
+          style="flex:1;width:100%;min-height:400px;border-radius:4px;border:1px solid var(--border);">
+    <div style="padding:20px;color:var(--muted);text-align:center">
+      <div style="font-size:32px;margin-bottom:12px">📄</div>
+      <div>Browser cannot display PDF inline.</div>
+      <div style="margin-top:8px"><a href="${url}" download style="color:var(--accent)">Download PDF</a></div>
+    </div>
+  </object>
+</div>`;
+    wrap.style.display = '';
     codeState.funcLineMap = {};
     codeState.funcList = [];
 }
@@ -1530,7 +1559,7 @@ function renderHexDump(data) {
     codeState.funcList = [];
 }
 
-function renderCode(src, ext, fname) {
+function renderCode(src, ext, fname, langHint) {
     const lines = src.split('\n');
     codeState.rawLines = lines;
     const hlExt = {
@@ -1540,13 +1569,21 @@ function renderCode(src, ext, fname) {
         // UEFI module metadata — ini-like sections
         '.inf': 'ini', '.dec': 'ini', '.dsc': 'ini', '.fdf': 'ini',
         // AMI specific — ini-like
-        '.sdl': 'ini', '.cif': 'ini', '.mak': 'makefile',
+        '.sdl': 'ini', '.sd': 'ini', '.cif': 'ini', '.mak': 'makefile',
         // HII / ACPI
-        '.vfr': 'c',       // VFR syntax is closest to C
-        '.uni': 'plaintext', // UNI is custom; plaintext is safest
-        '.asl': 'c',       // ASL/ACPI looks like C braces
+        '.vfr': 'c', '.hfr': 'c',
+        '.uni': 'plaintext',
+        '.asl': 'c',
+        // Extra types
+        '.xml': 'xml', '.bat': 'bat', '.cmd': 'bat',
+        '.sh': 'bash', '.py': 'python',
+        '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
+        '.json': 'json', '.toml': 'ini',
+        '.cmake': 'cmake', '.mk': 'makefile',
     };
-    const lang = hlExt[ext] || 'plaintext';
+    // langHint from server takes priority (e.g. 'xml', 'python')
+    const lang = (langHint && langHint !== 'plaintext') ? langHint
+        : hlExt[ext] || 'plaintext';
 
     // Build funcLineMap: scan for `funcName(` patterns
     codeState.funcLineMap = {};
@@ -1797,7 +1834,8 @@ const FT_GROUPS = [
     { key: 'package_dec', label: '.dec', exts: ['.dec'] },
     { key: 'platform_dsc', label: '.dsc', exts: ['.dsc'] },
     { key: 'flash_desc', label: '.fdf', exts: ['.fdf'] },
-    { key: 'ami_sdl', label: '.sdl/.sd', exts: ['.sdl', '.sd'] },
+    { key: 'ami_sdl', label: '.sdl', exts: ['.sdl'] },
+    { key: 'ami_sd', label: '.sd', exts: ['.sd'] },
     { key: 'ami_cif', label: '.cif', exts: ['.cif'] },
     { key: 'makefile', label: '.mak', exts: ['.mak'] },
     { key: 'hii_vfr', label: '.vfr', exts: ['.vfr'] },
@@ -1811,7 +1849,7 @@ const FT_GROUPS = [
 // 預設全部勾選顯示
 const ftActiveFilter = new Set([
     'c_source', 'header', 'assembly', 'module_inf', 'package_dec',
-    'platform_dsc', 'flash_desc', 'ami_sdl', 'ami_cif', 'makefile',
+    'platform_dsc', 'flash_desc', 'ami_sdl', 'ami_sd', 'ami_cif', 'makefile',
     'hii_vfr', 'hii_hfr', 'hii_string', 'acpi_asl'
 ]);
 
@@ -2828,6 +2866,7 @@ const LEGEND_NODES = [
     { shape: '◆', label: '.inf', color: '#ffd700' },
     { shape: '⬡', label: '.dec', color: '#00d4ff' },
     { shape: '⬟', label: '.sdl', color: '#34d399' },
+    { shape: '⬡', label: '.sd', color: '#10b981' },
     { shape: '▣', label: '.cif', color: '#60a5fa' },
     { shape: '●', label: '.c/.h', color: '#3b82f6' },
     { shape: '▲', label: '.asm', color: '#f59e0b' },
