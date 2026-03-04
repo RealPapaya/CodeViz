@@ -28,14 +28,23 @@ const l2State = {
 const depMapState = {
     showExternalFiles: false,
     expandedExtModules: new Set(),
-    currentExtModules: [],   // populated after each render
+    currentExtModules: [],
     currentModId: null,
-    pendingFocusFile: null,  // file path to pan+highlight after next layout
+    pendingFocusFile: null,
+    // Navigation history (Prev/Next)
+    navHistory: [],       // [{ modId, subDir }]
+    navHistoryIdx: -1,
+    _navigating: false,   // true while stepping through history (don't push)
+    // Expand animation
+    expandOriginPos: null,   // { x, y } graph coords of the group node before re-render
+    preserveViewport: null,  // { pan, zoom } to restore after layout
+    _prevNodeIds: null,
+    _animGen: 0,             // increment every render; stale setTimeout callbacks bail out
 };
 
 // File-ID → module/file lookup, built once after DATA is parsed
 let _fileIdToModule = {};
-let _fileIdToFile   = {};
+let _fileIdToFile = {};
 
 function buildFileIdLookup() {
     Object.entries(DATA.files_by_module).forEach(([modId, files]) => {
@@ -247,9 +256,14 @@ function initPreferences() {
 
 // ─── L1 Toolbar (Dependency Map) ─────────────────────────────────────────────
 function initL1Toolbar() {
-    const toggleBtn  = document.getElementById('l1-toggle-ext');
-    const expandBtn  = document.getElementById('l1-expand-all-ext');
+    const prevBtn = document.getElementById('l1-prev');
+    const nextBtn = document.getElementById('l1-next');
+    const toggleBtn = document.getElementById('l1-toggle-ext');
+    const expandBtn = document.getElementById('l1-expand-all-ext');
     const collapseBtn = document.getElementById('l1-collapse-all-ext');
+
+    if (prevBtn) prevBtn.addEventListener('click', goL1Prev);
+    if (nextBtn) nextBtn.addEventListener('click', goL1Next);
 
     if (toggleBtn) {
         toggleBtn.addEventListener('click', () => {
@@ -272,6 +286,7 @@ function initL1Toolbar() {
     }
 
     updateDepMapExtToggle();
+    updateL1NavButtons();
 }
 
 function setL1ToolbarVisible(v) {
@@ -294,9 +309,69 @@ function updateL1Toolbar(modId, fileCount) {
     if (statsEl) statsEl.textContent = `${fileCount} files`;
 }
 
+function pushL1History(modId, subDir) {
+    if (depMapState._navigating) return;
+    const entry = { modId, subDir: subDir || null };
+    // Truncate forward history when navigating fresh
+    depMapState.navHistory = depMapState.navHistory.slice(0, depMapState.navHistoryIdx + 1);
+    // Avoid duplicate consecutive entries
+    const last = depMapState.navHistory[depMapState.navHistoryIdx];
+    if (last && last.modId === entry.modId && last.subDir === entry.subDir) return;
+    depMapState.navHistory.push(entry);
+    depMapState.navHistoryIdx = depMapState.navHistory.length - 1;
+    updateL1NavButtons();
+}
+
+function updateL1NavButtons() {
+    const prevBtn = document.getElementById('l1-prev');
+    const nextBtn = document.getElementById('l1-next');
+    if (prevBtn) prevBtn.disabled = depMapState.navHistoryIdx <= 0;
+    if (nextBtn) nextBtn.disabled = depMapState.navHistoryIdx >= depMapState.navHistory.length - 1;
+}
+
+function goL1Prev() {
+    if (depMapState.navHistoryIdx <= 0) return;
+    depMapState.navHistoryIdx--;
+    _jumpL1History();
+}
+
+function goL1Next() {
+    if (depMapState.navHistoryIdx >= depMapState.navHistory.length - 1) return;
+    depMapState.navHistoryIdx++;
+    _jumpL1History();
+}
+
+function _jumpL1History() {
+    const entry = depMapState.navHistory[depMapState.navHistoryIdx];
+    if (!entry) return;
+    depMapState._navigating = true;
+    if (entry.subDir) {
+        // Navigate to module first (no push), then filter to subdir
+        if (state.activeModule !== entry.modId) {
+            drillToModule(entry.modId);
+        }
+        filterGraphToSubPath(entry.modId, entry.subDir);
+    } else {
+        drillToModule(entry.modId);
+    }
+    depMapState._navigating = false;
+    updateL1NavButtons();
+}
+
 function toggleDepMapExtGroup(extModId) {
+    // Save the clicked group node's graph position + current viewport for expand animation
+    const modSlug = _safeId(extModId) + '-' + _hashId(extModId);
+    const groupNode = cy.$id(`depext-${modSlug}`);
+    if (groupNode && groupNode.length) {
+        depMapState.expandOriginPos = { ...groupNode.position() };
+    } else {
+        depMapState.expandOriginPos = null;
+    }
+    depMapState.preserveViewport = { pan: { ...cy.pan() }, zoom: cy.zoom() };
+
     if (depMapState.expandedExtModules.has(extModId)) {
         depMapState.expandedExtModules.delete(extModId);
+        depMapState.expandOriginPos = null; // collapsing — no spawn animation
     } else {
         depMapState.expandedExtModules.add(extModId);
     }
@@ -376,7 +451,7 @@ function initTooltipActions() {
         if (action === 'open') {
             const nodeType = btn.dataset.nodeType || '';
             if (nodeType === 'dep_ext_file' || nodeType === 'dep_ext_group') {
-                const extMod  = decodeURIComponent(btn.dataset.mod  || '');
+                const extMod = decodeURIComponent(btn.dataset.mod || '');
                 const extFile = decodeURIComponent(btn.dataset.file || '');
                 hideTooltip();
                 if (extMod) drillToModule(extMod, { focusFile: extFile || null, closeExt: true });
@@ -440,7 +515,7 @@ function showNodeModal(node) {
                 const nodeType = btn.dataset.nodeType || '';
                 // dep_ext_file / dep_ext_group → navigate to that module's Dependency Map (L1)
                 if (nodeType === 'dep_ext_file' || nodeType === 'dep_ext_group') {
-                    const extMod  = decodeURIComponent(btn.dataset.mod  || '');
+                    const extMod = decodeURIComponent(btn.dataset.mod || '');
                     const extFile = decodeURIComponent(btn.dataset.file || '');
                     hideNodeModal();
                     if (extMod) drillToModule(extMod, { focusFile: extFile || null, closeExt: true });
@@ -496,8 +571,8 @@ function showNodeModal(node) {
         const dist = _pathDist(state.activeModule || '', extMod);
         const distColor = dist === 0 ? '#38bdf8'
             : dist === 1 ? '#10b981'
-            : dist === 2 ? '#f59e0b'
-            : '#f87171';
+                : dist === 2 ? '#f59e0b'
+                    : '#f87171';
         const distLabel = dist === 0 ? 'same module' : `distance: ${dist}`;
         html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
         if (subtitle) html += subtitle + '<br>';
@@ -598,8 +673,8 @@ function showNodeModal(node) {
                         const dist = _pathDist(state.activeModule || '', extMod);
                         const distColor = dist === 0 ? '#38bdf8'
                             : dist === 1 ? '#10b981'
-                            : dist === 2 ? '#f59e0b'
-                            : '#f87171';
+                                : dist === 2 ? '#f59e0b'
+                                    : '#f87171';
                         const distLabel = dist === 0 ? 'same' : `d=${dist}`;
                         distBadge = `<span style="
                             margin-left: auto;
@@ -2230,6 +2305,7 @@ function filterGraphToSubPath(modId, subPath) {
     const allFiles = DATA.files_by_module[modId] || [];
     // Include files directly in this dir AND in any nested dirs
     const filtered = allFiles.filter(f => f.path.startsWith(prefix) || f.path === modId + '/' + subPath);
+    pushL1History(modId, subPath);
     renderFilesFlat(modId, filtered, subPath);
     updateBreadcrumb();
 }
@@ -2241,6 +2317,10 @@ function loadLevel0() {
     state.level = 0; state.activeModule = null; state.activeFile = null; state.activeSubDir = null;
     updateBreadcrumb(); setSidebarActive(null);
     setL1ToolbarVisible(false);
+    // Reset L1 nav history when returning to module overview
+    depMapState.navHistory = [];
+    depMapState.navHistoryIdx = -1;
+    updateL1NavButtons();
 
     const els = [];
     DATA.modules.forEach(m => {
@@ -2305,6 +2385,7 @@ function drillToModule(modId, opts) {
     }
     setL1ToolbarVisible(true);
     updateDepMapExtToggle();
+    pushL1History(modId, null);
 
     const allFiles = DATA.files_by_module[modId] || [];
     updateL1Toolbar(modId, allFiles.length);
@@ -2421,11 +2502,11 @@ function renderFilesFlat(modId, files, subPath) {
 
         let extEdgeSeq = 0;
         for (const [extModId, fileMap] of extModMap.entries()) {
-            const modSlug  = _safeId(extModId) + '-' + _hashId(extModId);
-            const groupId  = `depext-${modSlug}`;
+            const modSlug = _safeId(extModId) + '-' + _hashId(extModId);
+            const groupId = `depext-${modSlug}`;
             const fileCount = fileMap.size;
             const isExpanded = depMapState.expandedExtModules.has(extModId);
-            const modColor  = moduleColorMap[extModId] || '#64748b';
+            const modColor = moduleColorMap[extModId] || '#64748b';
 
             if (!isExpanded) {
                 // ── Collapsed: one group node per external module ─────────────
@@ -2464,7 +2545,7 @@ function renderFilesFlat(modId, files, subPath) {
                     const f = info.file;
                     if (!f) return;
                     const fnId = `depextf-${modSlug}-${fileId}`;
-                    const ft    = f.file_type || 'other';
+                    const ft = f.file_type || 'other';
                     const shape = FILE_TYPE_SHAPE[ft] || FILE_TYPE_SHAPE['other'];
                     const fileColor = extColor(f.ext || '');   // 依副檔名決定顏色，與內部節點一致
 
@@ -2502,9 +2583,9 @@ function renderFilesFlat(modId, files, subPath) {
 
         // Show/hide Expand All / Collapse All buttons based on whether ext nodes exist
         const hasExt = extModMap.size > 0;
-        const expandBtn   = document.getElementById('l1-expand-all-ext');
+        const expandBtn = document.getElementById('l1-expand-all-ext');
         const collapseBtn = document.getElementById('l1-collapse-all-ext');
-        if (expandBtn)   expandBtn.style.display   = hasExt ? '' : 'none';
+        if (expandBtn) expandBtn.style.display = hasExt ? '' : 'none';
         if (collapseBtn) collapseBtn.style.display = hasExt ? '' : 'none';
 
         // Update stats to reflect external count
@@ -2516,9 +2597,9 @@ function renderFilesFlat(modId, files, subPath) {
         }
     } else {
         // External off — hide expand/collapse buttons
-        const expandBtn   = document.getElementById('l1-expand-all-ext');
+        const expandBtn = document.getElementById('l1-expand-all-ext');
         const collapseBtn = document.getElementById('l1-collapse-all-ext');
-        if (expandBtn)   expandBtn.style.display   = 'none';
+        if (expandBtn) expandBtn.style.display = 'none';
         if (collapseBtn) collapseBtn.style.display = 'none';
         depMapState.currentExtModules = [];
 
@@ -2526,6 +2607,16 @@ function renderFilesFlat(modId, files, subPath) {
         const statsEl = document.getElementById('l1-stats');
         if (statsEl) statsEl.textContent = `${capped.length} files`;
     }
+
+    // Invalidate any in-flight expand animations from previous render
+    depMapState._animGen++;
+
+    // Stop any running animations to avoid corrupting cytoscape state
+    cy.elements().stop(true, false);   // jumpToEnd=false so we don't flash final positions
+
+    // Snapshot existing node IDs so expand animation knows which are truly new
+    const prevNodeIds = new Set(cy.nodes().map(n => n.id()));
+    depMapState._prevNodeIds = prevNodeIds;
 
     cy.elements().remove();
     cy.add(els);
@@ -2541,7 +2632,11 @@ function renderFilesFlat(modId, files, subPath) {
     if (extraEls.length === 0) {
         // Simple path: no extras, just run dagre normally
         const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
-        lay.one('layoutstop', () => { updateBreadcrumb(); showLoading(false); _applyPendingFocus(); });
+        lay.one('layoutstop', () => {
+            updateBreadcrumb();
+            showLoading(false);
+            _postLayoutL1();
+        });
         lay.run();
         return;
     }
@@ -2581,57 +2676,108 @@ function renderFilesFlat(modId, files, subPath) {
             });
         });
 
-        cy.fit(cy.elements(), 40);
         updateBreadcrumb();
         showLoading(false);
-        _applyPendingFocus();
+        _postLayoutL1();
     });
 
     layMain.run();
 }
 
-// ── After layout: pan+zoom to pendingFocusFile node with flash highlight ───────
-function _applyPendingFocus() {
-    const targetPath = depMapState.pendingFocusFile;
-    if (!targetPath) return;
+// ── Post-layout handler: handles expand animation OR focus fly-in ──────────────
+function _postLayoutL1() {
+    const savedVP = depMapState.preserveViewport;
+    const originPos = depMapState.expandOriginPos;
+    const focusPath = depMapState.pendingFocusFile;
+    const prevIds = depMapState._prevNodeIds || new Set();
+
+    // Clear all state immediately to prevent re-entrancy issues
+    depMapState.preserveViewport = null;
+    depMapState.expandOriginPos = null;
     depMapState.pendingFocusFile = null;
+    depMapState._prevNodeIds = null;
 
-    // Find the node whose _f.path matches
-    const target = cy.nodes().filter(n => {
-        const f = n.data('_f');
-        return f && (f.path === targetPath);
-    }).first();
+    // ── Case 1: Expand animation (group node was just expanded) ──────────────
+    if (savedVP && originPos) {
+        // Restore viewport so camera stays put
+        cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
 
-    if (!target || !target.length) return;
+        // Only animate nodes that are genuinely new (weren't in graph before)
+        const newNodes = cy.nodes('[_t="dep_ext_file"]').filter(n => !prevIds.has(n.id()));
 
-    // First fit to full graph, then animate to target
+        if (newNodes.length > 0) {
+            // Record final dagre positions, then teleport to origin
+            const finalPos = new Map();
+            newNodes.forEach(n => finalPos.set(n.id(), { ...n.position() }));
+            newNodes.forEach(n => n.position({ x: originPos.x, y: originPos.y }));
+
+            const myGen = depMapState._animGen;   // capture generation at animation start
+
+            // Stagger the fly-out
+            let idx = 0;
+            newNodes.forEach(n => {
+                const fp = finalPos.get(n.id());
+                const nid = n.id();
+                const delay = idx * 18;
+                setTimeout(() => {
+                    // Bail if a newer render has happened
+                    if (depMapState._animGen !== myGen) return;
+                    if (!cy.hasElementWithId(nid)) return;
+                    cy.$id(nid).animate({ position: fp }, { duration: 360, easing: 'ease-out-cubic' });
+                }, delay);
+                idx++;
+            });
+        } else {
+            cy.fit(cy.elements(), 40);
+        }
+        return;
+    }
+
+    // ── Case 2: Focus fly-in (Open Location was used) ─────────────────────────
+    if (focusPath) {
+        const target = cy.nodes().filter(n => {
+            const f = n.data('_f');
+            return f && (f.path === focusPath);
+        }).first();
+
+        if (!target || !target.length) { cy.fit(cy.elements(), 40); return; }
+
+        const myGen = depMapState._animGen;
+        cy.fit(cy.elements(), 40);
+        setTimeout(() => {
+            if (depMapState._animGen !== myGen) return;
+            if (!cy.hasElementWithId(target.id())) return;
+            highlightNode(target);
+            cy.animate({
+                center: { eles: target },
+                zoom: Math.max(cy.zoom(), 1.8),
+            }, {
+                duration: 700,
+                easing: 'ease-in-out-cubic',
+                complete: () => {
+                    if (depMapState._animGen !== myGen) return;
+                    if (!cy.hasElementWithId(target.id())) return;
+                    let count = 0;
+                    const originalBc = target.data('bc');
+                    const flashInterval = setInterval(() => {
+                        count++;
+                        if (!cy.hasElementWithId(target.id())) { clearInterval(flashInterval); return; }
+                        target.style('border-color', count % 2 === 1 ? '#ffffff' : originalBc);
+                        target.style('border-width', count % 2 === 1 ? 4 : 2);
+                        if (count >= 6) {
+                            clearInterval(flashInterval);
+                            target.style('border-color', originalBc);
+                            target.style('border-width', 2);
+                        }
+                    }, 200);
+                }
+            });
+        }, 80);
+        return;
+    }
+
+    // ── Case 3: Normal navigation — fit to all elements ──────────────────────
     cy.fit(cy.elements(), 40);
-
-    setTimeout(() => {
-        highlightNode(target);
-        cy.animate({
-            center: { eles: target },
-            zoom: Math.max(cy.zoom(), 1.8),
-        }, {
-            duration: 700,
-            easing: 'ease-in-out-cubic',
-            complete: () => {
-                // Flash the node border 3 times to draw attention
-                let count = 0;
-                const originalBc = target.data('bc');
-                const flashInterval = setInterval(() => {
-                    count++;
-                    target.style('border-color', count % 2 === 1 ? '#ffffff' : originalBc);
-                    target.style('border-width', count % 2 === 1 ? 4 : 2);
-                    if (count >= 6) {
-                        clearInterval(flashInterval);
-                        target.style('border-color', originalBc);
-                        target.style('border-width', 2);
-                    }
-                }, 200);
-            }
-        });
-    }, 80);
 }
 
 // ─── L2: Function View ────────────────────────────────────────────────────────

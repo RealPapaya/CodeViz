@@ -1222,6 +1222,8 @@ HTML_SKELETON = """\
         <div class="l2-sub" id="l1-mod-label">No module</div>
       </div>
       <div class="l2-actions">
+        <button id="l1-prev" class="l2-btn" disabled>Prev</button>
+        <button id="l1-next" class="l2-btn" disabled>Next</button>
         <button id="l1-toggle-ext" class="l2-btn">Ext Files: Off</button>
         <button id="l1-expand-all-ext" class="l2-btn" style="display:none">Expand All</button>
         <button id="l1-collapse-all-ext" class="l2-btn" style="display:none">Collapse All</button>
