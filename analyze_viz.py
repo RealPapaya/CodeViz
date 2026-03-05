@@ -722,11 +722,20 @@ HTML_SKELETON = """\
     <div class="stat">Functions <strong id="st-funcs">0</strong></div>
   </div>
   <div style="flex:1"></div>
-  <div id="search-wrap">
-    <div id="sr-modes">
-      <button class="sr-mode active" data-mode="files" id="srm-files" title="Search file names and paths">📁 Files</button>
-      <button class="sr-mode" data-mode="code" id="srm-code" title="Search inside code content">ƒ Code</button>
-    </div>
+    <div id="search-wrap">
+      <div id="sr-modes">
+      <button class="sr-mode active" data-mode="files" id="srm-files" title="Search file names and paths" aria-label="Files">
+        <svg class="sr-mode-icon" viewBox="0 0 24 24" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+        </svg>
+      </button>
+      <button class="sr-mode" data-mode="code" id="srm-code" title="Search inside code content" aria-label="Code">
+        <svg class="sr-mode-icon" viewBox="0 0 24 24" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 7l-4 5 4 5"/>
+          <path d="M16 7l4 5-4 5"/>
+        </svg>
+      </button>
+      </div>
     <div id="sr-input-row">
       <span id="sr-icon">⌕</span>
       <input id="search" type="text" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">

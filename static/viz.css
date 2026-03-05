@@ -2004,31 +2004,52 @@ body {
 #search-wrap {
     position: relative;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     width: 340px;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-width: 0;
 }
 
 /* ── Mode pills ── */
 #sr-modes {
     display: flex;
     gap: 3px;
-    margin-bottom: 4px;
+    margin-bottom: 0;
+    flex-shrink: 0;
+    align-items: center;
 }
 
 .sr-mode {
-    padding: 2px 10px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     border-radius: 4px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--muted);
     cursor: pointer;
-    font-size: 11px;
+    font-size: 0;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     transition: all 0.15s;
     white-space: nowrap;
-    line-height: 1.6;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sr-mode-icon {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    display: block;
 }
 
 .sr-mode:hover {
@@ -2052,6 +2073,8 @@ body {
     padding: 0 8px;
     gap: 5px;
     transition: border-color 0.2s, box-shadow 0.2s;
+    flex: 1;
+    min-width: 0;
 }
 
 #sr-input-row:focus-within {
