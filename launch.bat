@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title BIOSVIZ Server
+title VIZCODE V4 - Universal Code Visualizer
 
 cd /d "%~dp0"
 
@@ -21,7 +21,8 @@ for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":7777 "') do (
 start /B cmd /C "timeout /t 2 /nobreak >nul && start chrome http://localhost:7777 2>nul"
 
 echo.
-echo  BIOSVIZ V2  -  http://localhost:7777
+echo  VIZCODE V4  -  http://localhost:7777
+echo  Supports: BIOS / Python / JavaScript / TypeScript / Go
 echo  Close this window to stop the server.
 echo.
 

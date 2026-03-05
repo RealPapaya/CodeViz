@@ -560,6 +560,9 @@
         <link rel="stylesheet"
             href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
         <div id="progress-wrap">
+            <div id="launcher-project-badge"
+                style="display:none; margin-bottom: 16px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; border: 1px solid var(--accent); padding: 10px 14px; border-radius: 8px; text-align: center; color: var(--text);">
+            </div>
             <div class="prog-header">
                 <div class="prog-label" id="prog-label">Analyzing...</div>
                 <div class="prog-right">
@@ -654,6 +657,10 @@
         let etaTimer = null;
         let lastPct = 0;
         let pctHistory = []; // [{t, pct}] for ETA estimation
+        let fakeFilesCurrent = 0;
+        let fakeFilesTarget = 0;
+        let fakeFilesTotal = 0;
+        let fakeFilesTimer = null;
 
         // Step thresholds: [pct_start, label]
         const STEPS = [
@@ -788,7 +795,46 @@
                 const res = await fetch(`/progress?job=${currentJob}`);
                 const job = await res.json();
 
-                setProgress(job.pct, job.msg);
+                let match = job.msg ? job.msg.match(/^(\d+)\/(\d+) files analyzed$/) : null;
+                if (match) {
+                    let newTarget = parseInt(match[1], 10);
+                    fakeFilesTotal = parseInt(match[2], 10);
+                    if (newTarget > fakeFilesTarget) {
+                        fakeFilesTarget = newTarget;
+                        if (!fakeFilesTimer) {
+                            fakeFilesTimer = setInterval(() => {
+                                if (fakeFilesCurrent < fakeFilesTarget) {
+                                    let step = Math.max(1, Math.ceil((fakeFilesTarget - fakeFilesCurrent) / 10));
+                                    fakeFilesCurrent += step;
+                                    if (fakeFilesCurrent > fakeFilesTarget) fakeFilesCurrent = fakeFilesTarget;
+                                    setProgress(job.pct, `${fakeFilesCurrent}/${fakeFilesTotal} files analyzed`);
+                                } else {
+                                    clearInterval(fakeFilesTimer);
+                                    fakeFilesTimer = null;
+                                }
+                            }, 30);
+                        }
+                    } else if (!fakeFilesTimer) {
+                        setProgress(job.pct, job.msg);
+                    }
+                } else {
+                    if (fakeFilesTimer) {
+                        clearInterval(fakeFilesTimer);
+                        fakeFilesTimer = null;
+                    }
+                    setProgress(job.pct, job.msg || '');
+                }
+
+                if (job.project_type) {
+                    const badge = document.getElementById('launcher-project-badge');
+                    if (badge) {
+                        badge.style.display = 'block';
+                        badge.style.color = job.project_type.accent;
+                        badge.style.borderColor = job.project_type.accent;
+                        badge.style.background = job.project_type.accent + '1a';
+                        badge.innerHTML = `<span style="margin-right:8px">${job.project_type.emoji}</span> PROJECT DETECTED: <span style="color:#fff">${job.project_type.name}</span>`;
+                    }
+                }
 
                 if (job.error) {
                     showMsg('error', job.error);
@@ -835,6 +881,13 @@
                 document.getElementById('prog-bar').classList.remove('done');
                 const cliArea = document.getElementById('cli-msg-area');
                 if (cliArea) cliArea.innerHTML = '';
+                const badge = document.getElementById('launcher-project-badge');
+                if (badge) badge.style.display = 'none';
+
+                fakeFilesCurrent = 0;
+                fakeFilesTarget = 0;
+                if (fakeFilesTimer) clearInterval(fakeFilesTimer);
+                fakeFilesTimer = null;
             }
             window.bgAnalyzing = v;
         }

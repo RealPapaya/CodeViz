@@ -714,6 +714,7 @@ function showNodeModal(node) {
             'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
             'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
             'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+            'Import': 'imports',
             'ext': 'external calls', 'group': 'group',
             '': state.level === 2 ? 'calls' : 'includes'
         };
@@ -722,6 +723,7 @@ function showNodeModal(node) {
             'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
             'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
             'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+            'Import': 'imported by',
             'ext': 'external callers', 'group': 'group',
             '': state.level === 2 ? 'called by' : 'included by'
         };
@@ -1770,53 +1772,82 @@ function extColor(ext) {
         // AMI 特有
         '.sdl': '#34d399', '.sd': '#10b981', '.cif': '#60a5fa', '.mak': '#94a3b8',
         // HII (UEFI 標準 + AMI 擴充)
-        '.vfr': '#f472b6',  // UEFI HII Form
-        '.hfr': '#e940a0',  // AMI HII Form Resource (較深的籉红)
-        '.uni': '#fb923c',  // Unicode 字串包
+        '.vfr': '#f472b6',
+        '.hfr': '#e940a0',
+        '.uni': '#fb923c',
         // ACPI
         '.asl': '#a78bfa',
+        // ── Python ──────────────────────────────────────────────────────────
+        '.py':  '#4584c3',
+        // ── JavaScript / TypeScript ──────────────────────────────────────────
+        '.js':  '#f0c040',
+        '.mjs': '#f0c040',
+        '.cjs': '#e8b830',
+        '.jsx': '#61dafb',
+        '.ts':  '#3b8fd4',
+        '.tsx': '#61dafb',
+        // ── Go ───────────────────────────────────────────────────────────────
+        '.go':  '#00c6db',
     };
     return map[ext] || '#64748b';
 }
 
-// ─── BIOS file type → cytoscape node shape ────────────────────────────────────
+// ─── File type → cytoscape node shape ────────────────────────────────────────
 const FILE_TYPE_SHAPE = {
-    'c_source': { sh: 'ellipse', w: 160, h: 48 },
-    'header': { sh: 'round-rectangle', w: 155, h: 44 },
-    'assembly': { sh: 'triangle', w: 120, h: 56 },
-    'module_inf': { sh: 'diamond', w: 190, h: 60 },
-    'package_dec': { sh: 'hexagon', w: 190, h: 58 },
-    'platform_dsc': { sh: 'star', w: 160, h: 60 },
-    'flash_desc': { sh: 'vee', w: 160, h: 56 },
-    'ami_sdl': { sh: 'octagon', w: 170, h: 56 },
-    'ami_sd': { sh: 'concave-hexagon', w: 170, h: 54 },  // Setup Data — hybrid C+VFR
-    'ami_cif': { sh: 'barrel', w: 160, h: 56 },
-    'makefile': { sh: 'tag', w: 150, h: 46 },
-    // HII ecosystem
-    'hii_vfr': { sh: 'round-tag', w: 165, h: 50 },  // UEFI 標準 VFR 表單
-    'hii_hfr': { sh: 'round-tag', w: 165, h: 50 },  // AMI HFR 擴充 (相同形狀但較深籉红色)
-    'hii_form': { sh: 'round-tag', w: 165, h: 50 },  // backward compat
-    'hii_string': { sh: 'round-rectangle', w: 155, h: 44 },  // UNI 字串包
-    'acpi_asl': { sh: 'pentagon', w: 160, h: 56 },
-    'other': { sh: 'round-rectangle', w: 155, h: 46 },
-    'binary': { sh: 'round-rectangle', w: 150, h: 42 },
+    // BIOS / C
+    'c_source':      { sh: 'ellipse',              w: 160, h: 48 },
+    'header':        { sh: 'round-rectangle',       w: 155, h: 44 },
+    'assembly':      { sh: 'triangle',              w: 120, h: 56 },
+    'module_inf':    { sh: 'diamond',               w: 190, h: 60 },
+    'package_dec':   { sh: 'hexagon',               w: 190, h: 58 },
+    'platform_dsc':  { sh: 'star',                  w: 160, h: 60 },
+    'flash_desc':    { sh: 'vee',                   w: 160, h: 56 },
+    'ami_sdl':       { sh: 'octagon',               w: 170, h: 56 },
+    'ami_sd':        { sh: 'concave-hexagon',        w: 170, h: 54 },
+    'ami_cif':       { sh: 'barrel',                w: 160, h: 56 },
+    'makefile':      { sh: 'tag',                   w: 150, h: 46 },
+    'hii_vfr':       { sh: 'round-tag',             w: 165, h: 50 },
+    'hii_hfr':       { sh: 'round-tag',             w: 165, h: 50 },
+    'hii_form':      { sh: 'round-tag',             w: 165, h: 50 },
+    'hii_string':    { sh: 'round-rectangle',       w: 155, h: 44 },
+    'acpi_asl':      { sh: 'pentagon',              w: 160, h: 56 },
+    // ── Python ───────────────────────────────────────────────────────────────
+    // Rhomboid (parallelogram) — distinctly Python-y, like an ouroboros coil
+    'py_source':     { sh: 'rhomboid',              w: 170, h: 52 },
+    // ── JavaScript ───────────────────────────────────────────────────────────
+    // Cut-rectangle — like a bracket { } in the corner
+    'js_source':     { sh: 'cut-rectangle',         w: 165, h: 48 },
+    // JSX — same family as JS, slightly wider for component name
+    'jsx_source':    { sh: 'cut-rectangle',         w: 175, h: 50 },
+    // ── TypeScript ────────────────────────────────────────────────────────────
+    // Bottom-round-rectangle — "typed" = smoother than JS
+    'ts_source':     { sh: 'bottom-round-rectangle', w: 165, h: 50 },
+    'tsx_source':    { sh: 'bottom-round-rectangle', w: 175, h: 52 },
+    // ── Go ────────────────────────────────────────────────────────────────────
+    // Hexagon — clean, structured, like Go's package layout
+    'go_source':     { sh: 'hexagon',               w: 175, h: 58 },
+    // Fallbacks
+    'other':         { sh: 'round-rectangle',       w: 155, h: 46 },
+    'binary':        { sh: 'round-rectangle',       w: 150, h: 42 },
 };
 
 // ─── Edge type → color + style ───────────────────────────────────────────────
 const EDGE_TYPE_STYLE = {
-    'include': { color: '#c084fc', style: 'solid', label: 'Inc' },
-    'sources': { color: '#ffd700', style: 'solid', label: 'Src' },
-    'package': { color: '#00d4ff', style: 'dashed', label: 'Pkg' },
-    'library': { color: '#a78bfa', style: 'dashed', label: 'Lib' },
-    'elink': { color: '#ff6b35', style: 'dotted', label: 'ELINK' },
-    'cif_own': { color: '#34d399', style: 'solid', label: 'owns' },
-    'component': { color: '#60a5fa', style: 'solid', label: 'Comp' },
-    'depex': { color: '#f472b6', style: 'dotted', label: 'Depex' },
-    'guid_ref': { color: '#fb923c', style: 'dashed', label: 'GUID' },
-    'str_ref': { color: '#e879f9', style: 'dashed', label: 'Strings' },
-    'asl_include': { color: '#818cf8', style: 'solid', label: 'ASL' },
+    'include':      { color: '#c084fc', style: 'solid',  label: 'Inc' },
+    'sources':      { color: '#ffd700', style: 'solid',  label: 'Src' },
+    'package':      { color: '#00d4ff', style: 'dashed', label: 'Pkg' },
+    'library':      { color: '#a78bfa', style: 'dashed', label: 'Lib' },
+    'elink':        { color: '#ff6b35', style: 'dotted', label: 'ELINK' },
+    'cif_own':      { color: '#34d399', style: 'solid',  label: 'owns' },
+    'component':    { color: '#60a5fa', style: 'solid',  label: 'Comp' },
+    'depex':        { color: '#f472b6', style: 'dotted', label: 'Depex' },
+    'guid_ref':     { color: '#fb923c', style: 'dashed', label: 'GUID' },
+    'str_ref':      { color: '#e879f9', style: 'dashed', label: 'Strings' },
+    'asl_include':  { color: '#818cf8', style: 'solid',  label: 'ASL' },
     'callback_ref': { color: '#f87171', style: 'dotted', label: 'Callback' },
-    'hii_pkg': { color: '#94a3b8', style: 'solid', label: 'HII-Pkg' },
+    'hii_pkg':      { color: '#94a3b8', style: 'solid',  label: 'HII-Pkg' },
+    // ── Universal import (Python / JS / TS / Go) ──────────────────────────
+    'import':       { color: '#10b981', style: 'dashed', label: 'Import' },
 };
 
 function fileNodeData(f, modColor) {
@@ -2249,30 +2280,43 @@ const CY_STYLE = [
 
 // ─── File Type Filter ────────────────────────────────────────────────────────
 const FT_GROUPS = [
-    { key: 'c_source', label: '.c/.cpp', exts: ['.c', '.cpp', '.cc'] },
-    { key: 'header', label: '.h/.hpp', exts: ['.h', '.hpp'] },
-    { key: 'assembly', label: '.asm/.s', exts: ['.asm', '.s', '.S', '.nasm'] },
-    { key: 'module_inf', label: '.inf', exts: ['.inf'] },
-    { key: 'package_dec', label: '.dec', exts: ['.dec'] },
-    { key: 'platform_dsc', label: '.dsc', exts: ['.dsc'] },
-    { key: 'flash_desc', label: '.fdf', exts: ['.fdf'] },
-    { key: 'ami_sdl', label: '.sdl', exts: ['.sdl'] },
-    { key: 'ami_sd', label: '.sd', exts: ['.sd'] },
-    { key: 'ami_cif', label: '.cif', exts: ['.cif'] },
-    { key: 'makefile', label: '.mak', exts: ['.mak'] },
-    { key: 'hii_vfr', label: '.vfr', exts: ['.vfr'] },
-    { key: 'hii_hfr', label: '.hfr', exts: ['.hfr'] },
-    { key: 'hii_string', label: '.uni', exts: ['.uni'] },
-    { key: 'acpi_asl', label: '.asl', exts: ['.asl'] },
-    // ── files not deeply analysed ──────────────────────────────────
-    { key: 'other', label: 'Other (undef)', exts: [], isExtra: true },
-    { key: 'binary', label: 'Binary/Obj', exts: [], isExtra: true },
+    // ── BIOS / C ──────────────────────────────────────────────────────────────
+    { key: 'c_source',     label: '.c/.cpp',   exts: ['.c', '.cpp', '.cc'],            group: 'bios' },
+    { key: 'header',       label: '.h/.hpp',   exts: ['.h', '.hpp'],                   group: 'bios' },
+    { key: 'assembly',     label: '.asm/.s',   exts: ['.asm', '.s', '.S', '.nasm'],    group: 'bios' },
+    { key: 'module_inf',   label: '.inf',      exts: ['.inf'],                          group: 'bios' },
+    { key: 'package_dec',  label: '.dec',      exts: ['.dec'],                          group: 'bios' },
+    { key: 'platform_dsc', label: '.dsc',      exts: ['.dsc'],                          group: 'bios' },
+    { key: 'flash_desc',   label: '.fdf',      exts: ['.fdf'],                          group: 'bios' },
+    { key: 'ami_sdl',      label: '.sdl',      exts: ['.sdl'],                          group: 'bios' },
+    { key: 'ami_sd',       label: '.sd',       exts: ['.sd'],                           group: 'bios' },
+    { key: 'ami_cif',      label: '.cif',      exts: ['.cif'],                          group: 'bios' },
+    { key: 'makefile',     label: '.mak',      exts: ['.mak'],                          group: 'bios' },
+    { key: 'hii_vfr',      label: '.vfr',      exts: ['.vfr'],                          group: 'bios' },
+    { key: 'hii_hfr',      label: '.hfr',      exts: ['.hfr'],                          group: 'bios' },
+    { key: 'hii_string',   label: '.uni',      exts: ['.uni'],                          group: 'bios' },
+    { key: 'acpi_asl',     label: '.asl',      exts: ['.asl'],                          group: 'bios' },
+    // ── Python ────────────────────────────────────────────────────────────────
+    { key: 'py_source',    label: '.py',       exts: ['.py'],                           group: 'python' },
+    // ── JavaScript / TypeScript ───────────────────────────────────────────────
+    { key: 'js_source',    label: '.js/.mjs',  exts: ['.js', '.mjs', '.cjs'],          group: 'js' },
+    { key: 'jsx_source',   label: '.jsx',      exts: ['.jsx'],                          group: 'js' },
+    { key: 'ts_source',    label: '.ts',       exts: ['.ts'],                           group: 'ts' },
+    { key: 'tsx_source',   label: '.tsx',      exts: ['.tsx'],                          group: 'ts' },
+    // ── Go ────────────────────────────────────────────────────────────────────
+    { key: 'go_source',    label: '.go',       exts: ['.go'],                           group: 'go' },
+    // ── Unanalysed ────────────────────────────────────────────────────────────
+    { key: 'other',        label: 'Other',     exts: [], isExtra: true },
+    { key: 'binary',       label: 'Binary',    exts: [], isExtra: true },
 ];
-// 預設全部勾選顯示
+// Default: all analysed types on
 const ftActiveFilter = new Set([
     'c_source', 'header', 'assembly', 'module_inf', 'package_dec',
     'platform_dsc', 'flash_desc', 'ami_sdl', 'ami_sd', 'ami_cif', 'makefile',
-    'hii_vfr', 'hii_hfr', 'hii_string', 'acpi_asl'
+    'hii_vfr', 'hii_hfr', 'hii_string', 'acpi_asl',
+    'py_source',
+    'js_source', 'jsx_source', 'ts_source', 'tsx_source',
+    'go_source',
 ]);
 
 function buildFtFilter() {
@@ -3516,6 +3560,7 @@ function showTooltip(e) {
                 'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
                 'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
                 'HII-Pkg': 'hii pkg', 'Depex': 'depex',
+                'Import': 'imports',
                 'ext': 'external calls', 'group': 'group',
                 '': state.level === 2 ? 'calls' : 'includes'
             };
@@ -3524,6 +3569,7 @@ function showTooltip(e) {
                 'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
                 'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
                 'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
+                'Import': 'imported by',
                 'ext': 'external callers', 'group': 'group',
                 '': state.level === 2 ? 'called by' : 'included by'
             };
@@ -3637,35 +3683,42 @@ function _distLabel(d) {
 }
 
 // ─── Graph Legend ─────────────────────────────────────────────────────────────
-// Edge types shown in legend
 const LEGEND_EDGES = [
-    { type: 'include', label: 'Include', color: '#c084fc', style: 'solid' },
-    { type: 'sources', label: 'Src', color: '#ffd700', style: 'solid' },
-    { type: 'package', label: 'Pkg', color: '#00d4ff', style: 'dashed' },
-    { type: 'library', label: 'Lib', color: '#a78bfa', style: 'dashed' },
-    { type: 'cif_own', label: 'owns', color: '#34d399', style: 'solid' },
-    { type: 'component', label: 'Comp', color: '#60a5fa', style: 'solid' },
-    { type: 'guid_ref', label: 'GUID', color: '#fb923c', style: 'dashed' },
-    { type: 'elink', label: 'ELINK', color: '#ff6b35', style: 'dotted' },
-    { type: 'str_ref', label: 'Strings', color: '#e879f9', style: 'dashed' },
-    { type: 'hii_pkg', label: 'HII-Pkg', color: '#94a3b8', style: 'solid' },
+    { type: 'include',      label: 'Include',  color: '#c084fc', style: 'solid' },
+    { type: 'import',       label: 'Import',   color: '#10b981', style: 'dashed' },
+    { type: 'sources',      label: 'Src',      color: '#ffd700', style: 'solid' },
+    { type: 'package',      label: 'Pkg',      color: '#00d4ff', style: 'dashed' },
+    { type: 'library',      label: 'Lib',      color: '#a78bfa', style: 'dashed' },
+    { type: 'cif_own',      label: 'owns',     color: '#34d399', style: 'solid' },
+    { type: 'component',    label: 'Comp',     color: '#60a5fa', style: 'solid' },
+    { type: 'guid_ref',     label: 'GUID',     color: '#fb923c', style: 'dashed' },
+    { type: 'elink',        label: 'ELINK',    color: '#ff6b35', style: 'dotted' },
+    { type: 'str_ref',      label: 'Strings',  color: '#e879f9', style: 'dashed' },
+    { type: 'hii_pkg',      label: 'HII-Pkg',  color: '#94a3b8', style: 'solid' },
     { type: 'callback_ref', label: 'Callback', color: '#f87171', style: 'dotted' },
-    { type: 'asl_include', label: 'ASL', color: '#818cf8', style: 'solid' },
-    { type: 'depex', label: 'Depex', color: '#f472b6', style: 'dotted' },
+    { type: 'asl_include',  label: 'ASL',      color: '#818cf8', style: 'solid' },
+    { type: 'depex',        label: 'Depex',    color: '#f472b6', style: 'dotted' },
 ];
 const LEGEND_NODES = [
-    { shape: '◆', label: '.inf', color: '#ffd700' },
-    { shape: '⬡', label: '.dec', color: '#00d4ff' },
-    { shape: '⬟', label: '.sdl', color: '#34d399' },
-    { shape: '⬡', label: '.sd', color: '#10b981' },
-    { shape: '▣', label: '.cif', color: '#60a5fa' },
-    { shape: '●', label: '.c/.h', color: '#3b82f6' },
-    { shape: '▲', label: '.asm', color: '#f59e0b' },
-    { shape: '⬠', label: '.dsc', color: '#e2e8f0' },
-    { shape: '‣', label: '.vfr', color: '#f472b6' },  // UEFI HII Form
-    { shape: '‣', label: '.hfr', color: '#e940a0' },  // AMI HII Form Resource
-    { shape: '□', label: '.uni', color: '#fb923c' },  // Unicode 字串包
-    { shape: '▷', label: '.asl', color: '#a78bfa' },  // ACPI
+    // BIOS
+    { shape: '◆', label: '.inf',         color: '#ffd700' },
+    { shape: '⬡', label: '.dec',         color: '#00d4ff' },
+    { shape: '⬟', label: '.sdl',         color: '#34d399' },
+    { shape: '▣', label: '.cif',         color: '#60a5fa' },
+    { shape: '●', label: '.c/.h',        color: '#3b82f6' },
+    { shape: '▲', label: '.asm',         color: '#f59e0b' },
+    { shape: '⬠', label: '.dsc',         color: '#e2e8f0' },
+    { shape: '‣', label: '.vfr/.hfr',    color: '#f472b6' },
+    { shape: '□', label: '.uni',         color: '#fb923c' },
+    { shape: '▷', label: '.asl',         color: '#a78bfa' },
+    // Python
+    { shape: '⬦', label: '.py',          color: '#4584c3' },
+    // JavaScript / TypeScript
+    { shape: '◱', label: '.js/.mjs',     color: '#f0c040' },
+    { shape: '◱', label: '.jsx',         color: '#61dafb' },
+    { shape: '⬔', label: '.ts/.tsx',     color: '#3b8fd4' },
+    // Go
+    { shape: '⬡', label: '.go',          color: '#00c6db' },
 ];
 
 function buildLegend() {

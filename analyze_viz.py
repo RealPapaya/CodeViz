@@ -1,35 +1,80 @@
 #!/usr/bin/env python3
 """
-analyze_bios.py V3 — BIOS Code Visualizer
-Multi file-type support: .c/.h/.asm + .inf/.dec/.dsc/.fdf/.sdl/.cif/.mak/.vfr/.hfr/.uni/.asl
-Hierarchical JSON output + cytoscape.js canvas renderer
+analyze_viz.py V4 — VIZCODE Universal Code Visualizer
+Supports: UEFI/BIOS (C/H/ASM/INF/DEC/DSC/FDF/SDL/CIF/MAK/VFR/HFR/UNI/ASL)
+          Python (.py)
+          JavaScript / TypeScript (.js/.mjs/.cjs/.jsx/.ts/.tsx)
+          Go (.go)
+
+Pluggable Parser architecture: each language has its own parser in parsers/
+Project type is auto-detected and displayed during analysis.
+
+Backward compatible: still importable as analyze_bios (server.py alias).
 """
 
 import os, re, json, sys, argparse
 from pathlib import Path
 from collections import defaultdict
 
+# ─── Pluggable parsers ────────────────────────────────────────────────────────
+_PARSER_DIR = Path(__file__).parent / 'parsers'
+if str(_PARSER_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_PARSER_DIR.parent))
+
+try:
+    from parsers.bios_parser   import scan_bios, BIOS_EXTENSIONS as _BIOS_EXTENSIONS
+    from parsers.python_parser import scan_python
+    from parsers.js_parser     import scan_js, scan_ts
+    from parsers.go_parser     import scan_go
+    from detector              import detect_project_type, fmt_detection_banner
+    _PARSERS_LOADED = True
+except ImportError as _pe:
+    _PARSERS_LOADED = False
+    _BIOS_EXTENSIONS = set()
+    print(f'[WARN] Could not load language parsers: {_pe}', file=sys.stderr)
+
 # ─── Constants ───────────────────────────────────────────────────────────────
-SKIP_DIRS  = {'Build','build','.git','__pycache__','Conf','DEBUG','RELEASE','.claude'}
+SKIP_DIRS  = {
+    # BIOS / build
+    'Build', 'build', '.git', '__pycache__', 'Conf', 'DEBUG', 'RELEASE', '.claude',
+    # JavaScript / Node
+    'node_modules', '.next', '.nuxt', 'dist', 'out', '.output', '.cache',
+    'coverage', '.nyc_output', 'storybook-static',
+    # Go
+    'vendor',
+    # Python
+    '.venv', 'venv', 'env', '.env', '.tox', '.pytest_cache', '.mypy_cache',
+    'site-packages', '__pypackages__',
+    # General
+    '.idea', '.vscode', '.DS_Store',
+}
 BUILD_DIRS = {'Build','build','DEBUG','RELEASE'}
 SCAN_EXT   = {
-    # C/C++ / ASM
+    # ── C/C++ / ASM (BIOS) ─────────────────────────────────────────────────
     '.c','.cpp','.cc','.h','.hpp','.asm','.s','.S','.nasm',
-    # UEFI / EDK2 build system
+    # ── UEFI / EDK2 build system ───────────────────────────────────────────
     '.inf', '.dec', '.dsc', '.fdf',
-    # AMI BIOS 特有
+    # ── AMI BIOS proprietary ───────────────────────────────────────────────
     '.sdl', '.sd', '.cif', '.mak',
-    # HII (Human Interface Infrastructure)
-    '.vfr',   # UEFI 標準 HII 表單語言
-    '.hfr',   # AMI 擴充 HII Form Resource（類似 VFR）
-    '.uni',   # Unicode 字串包
-    # ACPI
-    '.asl',   # ACPI Source Language
+    # ── HII (Human Interface Infrastructure) ───────────────────────────────
+    '.vfr',   # UEFI standard HII form language
+    '.hfr',   # AMI extended HII Form Resource
+    '.uni',   # Unicode string packages
+    # ── ACPI ───────────────────────────────────────────────────────────────
+    '.asl',
+    # ── Python ─────────────────────────────────────────────────────────────
+    '.py',
+    # ── JavaScript / TypeScript ─────────────────────────────────────────────
+    '.js', '.mjs', '.cjs', '.jsx',
+    '.ts', '.tsx',
+    # ── Go ─────────────────────────────────────────────────────────────────
+    '.go',
 }
 SKIP_EXT   = {'.veb','.lib','.obj','.efi','.rom','.bin','.log','.map'}
 
 # ─── File type semantic categories ───────────────────────────────────────────
 FILE_TYPE_MAP = {
+    # BIOS / C
     '.c': 'c_source', '.cpp': 'c_source', '.cc': 'c_source',
     '.h': 'header',   '.hpp': 'header',
     '.asm': 'assembly', '.s': 'assembly', '.S': 'assembly', '.nasm': 'assembly',
@@ -38,13 +83,22 @@ FILE_TYPE_MAP = {
     '.dsc': 'platform_dsc',
     '.fdf': 'flash_desc',
     '.sdl': 'ami_sdl',
-    '.sd':  'ami_sd',    # AMI Setup Data — hybrid C-struct + VFR form fragment
+    '.sd':  'ami_sd',
     '.cif': 'ami_cif',
     '.mak': 'makefile',
-    '.vfr': 'hii_vfr',      # UEFI 標準 HII 表單
-    '.hfr': 'hii_hfr',      # AMI 擴充 HII Form Resource
-    '.uni': 'hii_string',   # Unicode 字串包
+    '.vfr': 'hii_vfr',
+    '.hfr': 'hii_hfr',
+    '.uni': 'hii_string',
     '.asl': 'acpi_asl',
+    # Python
+    '.py':  'py_source',
+    # JavaScript / TypeScript
+    '.js':  'js_source', '.mjs': 'js_source', '.cjs': 'js_source',
+    '.jsx': 'jsx_source',
+    '.ts':  'ts_source',
+    '.tsx': 'tsx_source',
+    # Go
+    '.go':  'go_source',
 }
 
 # ─── Edge type definitions ───────────────────────────────────────────────────
@@ -61,18 +115,13 @@ EDGE_TYPES = {
     'guid_ref':      {'label': 'GUID',        'color': '#fb923c', 'style': 'dashed'},
     'str_ref':       {'label': 'Strings',     'color': '#e879f9', 'style': 'dashed'},
     'asl_include':   {'label': 'ASL',         'color': '#818cf8', 'style': 'solid'},
-    'callback_ref':  {'label': 'Callback',    'color': '#f87171', 'style': 'dotted'},  # VFR/HFR 表單 → .c callback 函式
-    'hii_pkg':       {'label': 'HII-Pkg',     'color': '#94a3b8', 'style': 'solid'},   # .inf → .vfr/.hfr/.uni
+    'callback_ref':  {'label': 'Callback',    'color': '#f87171', 'style': 'dotted'},
+    'hii_pkg':       {'label': 'HII-Pkg',     'color': '#94a3b8', 'style': 'solid'},
+    # ── Universal import edge (Python / JS / TS / Go) ──────────────────────
+    'import':        {'label': 'Import',      'color': '#10b981', 'style': 'dashed'},
 }
 
-C_KEYWORDS = {
-    'if','else','while','for','do','switch','case','return','sizeof','typeof',
-    'EFIAPI','EFI_STATUS','IN','OUT','OPTIONAL','VOID','UINTN','INTN',
-    'UINT8','UINT16','UINT32','UINT64','BOOLEAN','TRUE','FALSE','NULL',
-    'PEI_SERVICES','EFI_BOOT_SERVICES','EFI_RUNTIME_SERVICES','ASSERT_EFI_ERROR',
-    'static','inline','extern','const','struct','union','enum','typedef',
-    'printf','sprintf','memset','memcpy','strlen','strcmp','malloc','free',
-}
+# C_KEYWORDS now lives in parsers/bios_parser.py
 
 MODULE_COLORS = [
     '#00d4ff','#00ff9f','#ff6b35','#ffd700','#a78bfa',
@@ -80,549 +129,7 @@ MODULE_COLORS = [
     '#4ade80','#facc15','#f87171','#38bdf8','#c084fc',
 ]
 
-# ─── Regex ────────────────────────────────────────────────────────────────────
-RE_INCLUDE  = re.compile(r'#\s*include\s+["<]([^">]+)[">]')
-RE_FUNCDEF  = re.compile(
-    r'^(?:(?:static|inline|extern|EFIAPI|EFI_STATUS|VOID|UINTN|INTN|UINT8|UINT16|UINT32|UINT64|BOOLEAN)\s+)*'
-    r'(EFIAPI\s+)?'
-    r'[\w\s\*]+\b(\w+)\s*\([^)]*\)\s*(?://[^\n]*)?\s*\{',
-    re.MULTILINE
-)
-RE_FUNCCALL = re.compile(r'\b([A-Za-z_]\w+)\s*\(')
-RE_STATIC   = re.compile(r'\bstatic\b')
-RE_ASM_INC  = re.compile(r'%include\s+["\'"]([^"\']+)["\']|EXTERN\s+(\w+)', re.IGNORECASE)
-
-# INF / DEC / DSC / FDF section header
-RE_SECTION  = re.compile(r'^\s*\[([^\]]+)\]', re.MULTILINE)
-# INF Sources line: bare filename or path
-RE_INF_FILE = re.compile(r'^\s*([\w./\\-]+\.\w+)', re.MULTILINE)
-# .sdl INFComponent
-RE_SDL_INF  = re.compile(
-    r'INFComponent\s*\n(?:\s+\w+\s*=\s*[^\n]*\n)*\s+File\s*=\s*"([^"]+)"',
-    re.IGNORECASE
-)
-# .sdl LibraryMapping
-RE_SDL_LIB  = re.compile(
-    r'LibraryMapping\s*\n(?:\s+\w+\s*=\s*[^\n]*\n)*\s+Instance\s*=\s*"([^"]+)"',
-    re.IGNORECASE
-)
-# .sdl TOKEN name
-RE_SDL_TOKEN = re.compile(r'^TOKEN\s*\n\s+Name\s*=\s*"([^"]+)"', re.MULTILINE | re.IGNORECASE)
-# .sdl ELINK Parent
-RE_SDL_ELINK = re.compile(
-    r'ELINK\s*\n(?:\s+\w+\s*=\s*[^\n]*\n)*?\s+Parent\s*=\s*"([^"]+)"',
-    re.IGNORECASE
-)
-# .cif section markers
-RE_CIF_INF   = re.compile(r'^\[INF\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
-RE_CIF_FILES = re.compile(r'^\[files\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
-RE_CIF_PARTS = re.compile(r'^\[parts\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
-RE_QUOTED    = re.compile(r'"([^"]+)"')
-
-
-# ─── strip_comments ───────────────────────────────────────────────────────────
-def strip_comments(src: str) -> str:
-    result, i, n = [], 0, len(src)
-    while i < n:
-        if src[i:i+2] == '//':
-            while i < n and src[i] != '\n':
-                i += 1
-        elif src[i:i+2] == '/*':
-            i += 2
-            while i < n and src[i-1:i+1] != '*/':
-                i += 1
-            i += 1
-        elif src[i] in '"\'':
-            q = src[i]; result.append(src[i]); i += 1
-            while i < n and src[i] != q:
-                if src[i] == '\\': result.append(src[i]); i += 1
-                result.append(src[i]); i += 1
-            if i < n: result.append(src[i]); i += 1
-        else:
-            result.append(src[i]); i += 1
-    return ''.join(result)
-
-
-# Remove string and char literals to avoid brace confusion
-def mask_string_literals(src: str) -> str:
-    out = []
-    i, n = 0, len(src)
-    while i < n:
-        ch = src[i]
-        if ch in ('"', "'"):
-            q = ch
-            out.append(' ')
-            i += 1
-            while i < n:
-                c = src[i]
-                if c == '\\':
-                    out.append(' ')
-                    i += 1
-                    if i < n:
-                        out.append(' ')
-                        i += 1
-                    continue
-                out.append(' ')
-                i += 1
-                if c == q:
-                    break
-        else:
-            out.append(ch)
-            i += 1
-    return ''.join(out)
-
-
-def find_matching_brace(src: str, open_idx: int) -> int:
-    depth = 0
-    for i in range(open_idx, len(src)):
-        if src[i] == '{':
-            depth += 1
-        elif src[i] == '}':
-            depth -= 1
-            if depth == 0:
-                return i
-    return -1
-
-
-# ─── INF section parser ───────────────────────────────────────────────────────
-def _parse_ini_sections(src: str) -> dict:
-    """Parse INF/DEC/DSC/FDF style [Section] key=val files into a dict of lists."""
-    sections = defaultdict(list)
-    current  = None
-    for line in src.splitlines():
-        line = line.strip()
-        # strip inline comments
-        line = re.sub(r'\s*#.*$', '', line)
-        if not line:
-            continue
-        m = re.match(r'^\[([^\]]+)\]', line)
-        if m:
-            current = m.group(1).strip().lower()
-            continue
-        if current is not None:
-            sections[current].append(line)
-    return dict(sections)
-
-
-def _section_files(lines: list) -> list:
-    """Extract bare filenames/paths from section lines."""
-    result = []
-    for ln in lines:
-        # Strip GUID macros like $(FOO_BAR)
-        ln = re.sub(r'\$\([^)]+\)', '', ln).strip()
-        if ln and not ln.startswith('#'):
-            # take only the first token (filename) before any whitespace or |
-            token = re.split(r'[\s|]', ln)[0]
-            if token:
-                result.append(token)
-    return result
-
-
-# ─── scan_inf ─────────────────────────────────────────────────────────────────
-def scan_inf(src: str) -> dict:
-    """
-    Returns:
-      sources    → list of .c/.asm filenames from [Sources]
-      packages   → list of .dec paths from [Packages]
-      libraries  → list of library class names from [LibraryClasses]
-      guids      → list of GUID variable names from [Guids]
-      protocols  → list of Protocol variable names from [Protocols]
-      ppis       → list of PPI variable names from [Ppis]
-      depex      → raw depex expression string from [Depex]
-      meta       → dict with BASE_NAME, MODULE_TYPE, FILE_GUID, ENTRY_POINT
-    """
-    secs = _parse_ini_sections(src)
-    meta = {}
-    for ln in secs.get('defines', []):
-        if '=' in ln:
-            k, _, v = ln.partition('=')
-            meta[k.strip()] = v.strip()
-
-    sources   = _section_files(secs.get('sources', []))
-    packages  = _section_files(secs.get('packages', []))
-    libraries = _section_files(secs.get('libraryclasses', []))
-    guids     = _section_files(secs.get('guids', []))
-    protocols = _section_files(secs.get('protocols', []))
-    ppis      = _section_files(secs.get('ppis', []))
-    depex_lines = secs.get('depex', [])
-    depex = ' '.join(depex_lines).strip()
-
-    return {
-        'sources': sources, 'packages': packages,
-        'libraries': libraries, 'guids': guids,
-        'protocols': protocols, 'ppis': ppis,
-        'depex': depex, 'meta': meta,
-    }
-
-
-# ─── scan_dec ─────────────────────────────────────────────────────────────────
-def scan_dec(src: str) -> dict:
-    """Returns guids/ppis/protocols declared in a .dec package."""
-    secs = _parse_ini_sections(src)
-    meta = {}
-    for ln in secs.get('defines', []):
-        if '=' in ln:
-            k, _, v = ln.partition('=')
-            meta[k.strip()] = v.strip()
-    guids     = _section_files(secs.get('guids', []))
-    protocols = _section_files(secs.get('protocols', []))
-    ppis      = _section_files(secs.get('ppis', []))
-    return {'guids': guids, 'protocols': protocols, 'ppis': ppis, 'meta': meta}
-
-
-# ─── scan_dsc ─────────────────────────────────────────────────────────────────
-def scan_dsc(src: str) -> dict:
-    """Returns list of component .inf paths from [Components] sections."""
-    secs = _parse_ini_sections(src)
-    components = []
-    for key, lines in secs.items():
-        if key.startswith('components'):
-            for ln in lines:
-                ln = re.sub(r'\$\([^)]+\)', '', ln).strip()
-                if ln and not ln.startswith('#') and ln.lower().endswith('.inf'):
-                    components.append(ln.split('{')[0].strip())
-    return {'components': components}
-
-
-# ─── scan_fdf ─────────────────────────────────────────────────────────────────
-def scan_fdf(src: str) -> dict:
-    """Returns list of .inf paths referenced inside FV sections."""
-    infs = []
-    for ln in src.splitlines():
-        ln = ln.strip()
-        if ln.upper().startswith('INF') and '.inf' in ln.lower():
-            parts = ln.split(None, 1)
-            if len(parts) >= 2:
-                infs.append(parts[1].strip())
-    return {'infs': infs}
-
-
-# ─── scan_sdl ─────────────────────────────────────────────────────────────────
-def scan_sdl(src: str) -> dict:
-    """
-    Parse AMI SDL file. Returns:
-      inf_components → list of .inf File paths
-      lib_mappings   → list of Instance strings (Pkg.LibClass)
-      tokens         → list of token names
-      elink_parents  → list of Parent strings from ELINK blocks
-    """
-    inf_components = [m.group(1) for m in RE_SDL_INF.finditer(src)]
-    lib_mappings   = [m.group(1) for m in RE_SDL_LIB.finditer(src)]
-    tokens         = [m.group(1) for m in RE_SDL_TOKEN.finditer(src)]
-    elink_parents  = [m.group(1) for m in RE_SDL_ELINK.finditer(src)]
-    return {
-        'inf_components': inf_components,
-        'lib_mappings':   lib_mappings,
-        'tokens':         tokens,
-        'elink_parents':  elink_parents,
-    }
-
-
-
-# ─── scan_sd ──────────────────────────────────────────────────────────────────
-def scan_sd(src: str) -> dict:
-    """
-    Parse AMI .sd file.
-
-    .sd files are a HYBRID of C struct declarations + VFR form fragments,
-    guarded by C-preprocessor #ifdef blocks:
-
-      #ifdef SETUP_DATA_DEFINITION       ← struct field: UINT8 MyOption;
-      #endif
-
-      #ifdef ADVANCED_FORM_SET           ← VFR-style form items
-        #ifdef FORM_SET_GOTO
-          goto MYFORM_ID, ...
-        #endif
-        #ifdef FORM_SET_FORM
-          form formid = MYFORM_ID, ...
-            oneof varid = SETUP_DATA.MyOption, ...
-          endform;
-        #endif
-      #endif  // ADVANCED_FORM_SET
-
-    Returns:
-      includes         → list of #include paths
-      setup_fields     → list of C field names declared in SETUP_DATA_DEFINITION
-      form_sections    → list of guard names present (e.g. 'ADVANCED_FORM_SET')
-      form_items       → list of (item_type, varid) tuples from VFR items
-      string_tokens    → list of STRING_TOKEN references
-      goto_ids         → list of form IDs referenced in GOTO
-    """
-    # #include references
-    includes = RE_INCLUDE.findall(src)
-
-    # Extract SETUP_DATA_DEFINITION block(s) → C struct fields
-    RE_SD_BLOCK = re.compile(
-        r'#ifdef\s+SETUP_DATA_DEFINITION\b(.*?)#endif',
-        re.DOTALL | re.IGNORECASE
-    )
-    setup_fields = []
-    for block in RE_SD_BLOCK.finditer(src):
-        # Match C variable declarations: UINT8 Foo; / UINT16 Bar[4];
-        for m in re.finditer(
-            r'\b(UINT8|UINT16|UINT32|UINT64|BOOLEAN|UINTN|INTN)\s+(\w+)',
-            block.group(1)
-        ):
-            setup_fields.append(m.group(2))
-
-    # Detect which FORM_SET guard sections are present
-    KNOWN_GUARDS = [
-        'ADVANCED_FORM_SET', 'MAIN_FORM_SET', 'CHIPSET_FORM_SET',
-        'SECURITY_FORM_SET', 'BOOT_FORM_SET', 'POWER_FORM_SET',
-        'FORM_SET_GOTO', 'FORM_SET_FORM',
-    ]
-    form_sections = [g for g in KNOWN_GUARDS if re.search(r'#ifdef\s+' + g + r'\b', src)]
-
-    # VFR-style form items: oneof, checkbox, numeric, string, date, time
-    RE_VFR_ITEM = re.compile(
-        r'\b(oneof|checkbox|numeric|string|date|time|password)\s+varid\s*=\s*([\w.]+)',
-        re.IGNORECASE
-    )
-    form_items = [(m.group(1).lower(), m.group(2)) for m in RE_VFR_ITEM.finditer(src)]
-
-    # STRING_TOKEN references
-    str_tokens = list(set(_RE_STR_TOKEN.findall(src)))
-
-    # goto <FORM_ID>
-    RE_GOTO = re.compile(r'\bgoto\s+(\w+)', re.IGNORECASE)
-    goto_ids = list(set(RE_GOTO.findall(src)))
-
-    return {
-        'includes':      includes,
-        'setup_fields':  setup_fields,
-        'form_sections': form_sections,
-        'form_items':    form_items,
-        'string_tokens': str_tokens,
-        'goto_ids':      goto_ids,
-    }
-
-
-
-def scan_cif(src: str) -> dict:
-    """
-    Parse AMI CIF component file. Returns:
-      infs   → list of .inf filenames from [INF] section
-      files  → list of other filenames from [files] section
-      parts  → list of sub-component names from [parts] section
-      meta   → dict (name, category, localRoot, refName)
-    """
-    meta = {}
-    # Extract XML-style header attributes
-    for m in re.finditer(r'(\w+)\s*=\s*"([^"]*)"', src.split('[')[0]):
-        meta[m.group(1).lower()] = m.group(2)
-
-    def _extract_quoted(pattern, text):
-        m = pattern.search(text)
-        if not m: return []
-        return RE_QUOTED.findall(m.group(1))
-
-    infs   = _extract_quoted(RE_CIF_INF,   src)
-    files  = _extract_quoted(RE_CIF_FILES,  src)
-    parts  = _extract_quoted(RE_CIF_PARTS,  src)
-    return {'infs': infs, 'files': files, 'parts': parts, 'meta': meta}
-
-
-# ─── scan_mak ─────────────────────────────────────────────────────────────────
-def scan_mak(src: str) -> dict:
-    """Very light Makefile analysis — just extract generated .h targets."""
-    generated = []
-    for ln in src.splitlines():
-        ln = ln.strip()
-        if ln.endswith('.h') or ('BUILD_DIR' in ln and '.h' in ln):
-            # Grab the target name
-            m = re.search(r'\(BUILD_DIR\)/(\w+\.h)', ln)
-            if m: generated.append(m.group(1))
-    return {'generated': generated}
-
-
-# ─── scan_vfr ─────────────────────────────────────────────────────────────────
-# Pre-compiled regexes for VFR/HFR (reused by both)
-_RE_STR_TOKEN  = re.compile(r'\bSTRING_TOKEN\s*\(\s*(\w+)\s*\)', re.IGNORECASE)
-_RE_VFR_FORMSET= re.compile(
-    r'\bformset\s+guid\s*=\s*\{([^}]+)\}\s*,\s*title\s*=\s*STRING_TOKEN\s*\(\s*(\w+)\s*\)',
-    re.IGNORECASE | re.DOTALL
-)
-# `form formid = N, title = STRING_TOKEN(...)`
-_RE_VFR_FORM   = re.compile(
-    r'\bform\s+formid\s*=\s*(\d+)\s*,\s*title\s*=\s*STRING_TOKEN\s*\(\s*(\w+)\s*\)',
-    re.IGNORECASE
-)
-# Callback: `questionid = N, ... flags = ... INTERACTIVE, ... key = N`
-# Maps to EFI_HII_CONFIG_ACCESS_PROTOCOL.Callback() — in .c files
-# Also: `AMI_CALLBACK_KEY`，`INTERACTIVE` flags trigger callbacks
-_RE_VFR_CB     = re.compile(
-    r'(?:AMI_CALLBACK_KEY\s*\(\s*(\w+)\s*\)|\bkey\s*=\s*(0x[0-9A-Fa-f]+|\d+)\b)',
-    re.IGNORECASE
-)
-# suppressif/grayif EFI_VAR token usage
-_RE_VFR_LABEL  = re.compile(r'\blabel\s+(0x[0-9A-Fa-f]+|\w+)', re.IGNORECASE)
-
-
-def _parse_vfr_hfr(src: str) -> dict:
-    """
-    Shared internal parser for VFR and HFR files.
-
-    VFR/HFR structure:
-      #include "SetupString.uni"          → pulls in string package
-      #include "CommonSetup.hfr"          → pulls in shared form fragments
-
-      formset guid  = { ... },
-              title = STRING_TOKEN(STR_SETUP_TITLE),
-              help  = STRING_TOKEN(STR_SETUP_HELP),
-        form formid = 1,
-             title  = STRING_TOKEN(STR_FORM_TITLE);
-          ...
-          oneof varid = Setup.BootMode,
-                prompt = STRING_TOKEN(STR_BOOT_MODE),
-                help   = STRING_TOKEN(STR_BOOT_MODE_HELP),
-                flags  = INTERACTIVE,
-                key    = KEY_BOOT_MODE;          ← triggers C callback
-            ...
-          endoneof;
-        endform;
-      endformset;
-    """
-    # #include "xxx.uni" or "xxx.hfr" or <xxx.h>
-    includes = RE_INCLUDE.findall(src)
-
-    # Separate .uni includes (those are the string packages)
-    uni_includes = [f for f in includes if f.lower().endswith('.uni')]
-    hfr_includes = [f for f in includes if f.lower().endswith('.hfr')]
-
-    # All STRING_TOKEN references → these are keys into .uni files
-    str_refs = list(set(_RE_STR_TOKEN.findall(src)))
-
-    # formset blocks: (guid_raw, title_token)
-    formsets = [
-        {'guid': m.group(1).strip(), 'title_token': m.group(2)}
-        for m in _RE_VFR_FORMSET.finditer(src)
-    ]
-
-    # form pages: (formid, title_token)
-    forms = [
-        {'formid': m.group(1), 'title_token': m.group(2)}
-        for m in _RE_VFR_FORM.finditer(src)
-    ]
-
-    # Callback keys / AMI_CALLBACK_KEY macros
-    cb_keys = [m.group(1) or m.group(2) for m in _RE_VFR_CB.finditer(src) if m.group(1) or m.group(2)]
-
-    # Labels (used for goto and dynamic form updates)
-    labels = _RE_VFR_LABEL.findall(src)
-
-    return {
-        'includes':      includes,
-        'uni_includes':  uni_includes,
-        'hfr_includes':  hfr_includes,
-        'str_refs':      str_refs,
-        'formsets':      formsets,
-        'forms':         forms,
-        'cb_keys':       cb_keys,
-        'labels':        labels,
-    }
-
-
-def scan_vfr(src: str) -> dict:
-    """
-    Parse UEFI standard VFR (Visual Forms Representation) file.
-    VFR defines HII Setup UI forms and is compiled into IFR binary.
-    """
-    return _parse_vfr_hfr(src)
-
-
-# ─── scan_hfr ─────────────────────────────────────────────────────────────────
-def scan_hfr(src: str) -> dict:
-    """
-    Parse AMI HFR (HII Form Resource) file.
-    HFR is AMI's extension of VFR with additional macros:
-    - DEFINE HII_FORMSET_GUID = { ... }
-    - AMI_CALLBACK_KEY(KEY_xxx)
-    - SUPPRESS_GRAYOUT_ENDIF
-    - Often prefixed with large #define blocks for Setup variables
-
-    HFR files are typically #include'd from a main .vfr or other .hfr files.
-    They partition the BIOS Setup forms into manageable units.
-    """
-    data = _parse_vfr_hfr(src)
-    # Additional HFR-specific: DEFINE HII_FORMSET_GUID
-    RE_HFR_GUID = re.compile(r'#define\s+\w*FORMSET_GUID\s+\{([^}]+)\}', re.IGNORECASE)
-    formset_guids = [m.group(1).strip() for m in RE_HFR_GUID.finditer(src)]
-    data['formset_guids'] = formset_guids
-    return data
-
-
-# ─── scan_uni ─────────────────────────────────────────────────────────────────
-def scan_uni(src: str) -> dict:
-    """
-    Parse UEFI UNI (Unicode String Package) file.
-
-    UNI format:
-      //-*- coding: utf-8 -*-        ← BOM/coding comment (optional)
-      #langdef en-US "English"       ← language definition
-      #string STR_MODULE_NAME        ← token name declaration
-        #language en-US "Module Name"
-        #language zh-Hant "模組名稱"
-
-    This file is the 'string table' that VFR/HFR reference via STRING_TOKEN().
-    Build tools compile it into HII String Packages embedded in the driver image.
-
-    Returns:
-      string_names  → list of all #string token names declared
-      languages     → list of RFC4646 language codes (e.g. en-US, zh-Hant)
-      lang_defs     → list of #langdef declarations
-      token_count   → total number of unique tokens
-    """
-    # Strip UTF-8 BOM if present
-    src = src.lstrip('\ufeff')
-
-    RE_STR_DECL = re.compile(r'^#string\s+(\w+)', re.MULTILINE | re.IGNORECASE)
-    RE_LANG     = re.compile(r'^#language\s+(\S+)', re.MULTILINE | re.IGNORECASE)
-    RE_LANGDEF  = re.compile(r'^#langdef\s+(\S+)\s+"([^"]*)"', re.MULTILINE | re.IGNORECASE)
-
-    string_names = list(set(RE_STR_DECL.findall(src)))
-    languages    = list(set(RE_LANG.findall(src)))
-    lang_defs    = [(m.group(1), m.group(2)) for m in RE_LANGDEF.finditer(src)]
-
-    return {
-        'string_names': string_names,
-        'languages':    languages,
-        'lang_defs':    lang_defs,
-        'token_count':  len(string_names),
-    }
-
-
-
-# ─── scan_asl ─────────────────────────────────────────────────────────────────
-def scan_asl(src: str) -> dict:
-    """
-    Parse ACPI ASL (ACPI Source Language) file.
-    ASL uses:
-      Include("file.asl")  — file include
-      External(ObjectName, ...) — cross-table symbol reference
-      DefinitionBlock("name", "SSDT", ...)
-
-    Returns:
-      includes  → list of included ASL filenames
-      externals → list of external object names
-      tablename → DSDT/SSDT identifier string
-    """
-    # Include("xxx.asl") — case insensitive
-    RE_ASL_INC  = re.compile(r'\bInclude\s*\(\s*"([^"]+)"\s*\)', re.IGNORECASE)
-    # External(ObjName, ...) — first arg is the cross-table symbol
-    RE_EXTERNAL = re.compile(r'\bExternal\s*\(\s*\\?(\w[\w.]+)', re.IGNORECASE)
-    # DefinitionBlock table name
-    RE_DEFBLOCK = re.compile(r'\bDefinitionBlock\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"', re.IGNORECASE)
-
-    includes  = RE_ASL_INC.findall(src)
-    externals = RE_EXTERNAL.findall(src)
-    tablename = next((m.group(1) for m in RE_DEFBLOCK.finditer(src)), None)
-
-    # Also grab standard C-style #include for ASL preprocessed files
-    includes += RE_INCLUDE.findall(src)
-
-    return {'includes': includes, 'externals': externals, 'tablename': tablename}
-
+# ─── All BIOS/UEFI/AMI/C parsers → parsers/bios_parser.py ──────────────────────
 
 # ─── scan_file ────────────────────────────────────────────────────────────────
 def scan_file(filepath: str, root: str):
@@ -637,62 +144,28 @@ def scan_file(filepath: str, root: str):
 
     ext = Path(filepath).suffix.lower()
 
-    if ext in ('.asm', '.s', '.S', '.nasm'):
-        includes = [m.group(1) or m.group(2) for m in RE_ASM_INC.finditer(src)]
-        return includes, [], [], None, []
+    # ── BIOS / UEFI / AMI / C / ASM ──────────────────────────────────────────
+    if ext in _BIOS_EXTENSIONS and _PARSERS_LOADED:
+        return scan_bios(src, ext)
 
-    if ext == '.inf':
-        data = scan_inf(src)
-        refs = data['sources'] + data['packages']
-        return refs, [], [], data, []
+    # ── Python ───────────────────────────────────────────────────────────────
+    if ext == '.py' and _PARSERS_LOADED:
+        imports, funcdefs, calls, extra, fcbf = scan_python(src)
+        return imports, funcdefs, calls, extra, fcbf
 
-    if ext == '.dec':
-        data = scan_dec(src)
-        return [], [], [], data, []
+    # ── JavaScript / TypeScript ───────────────────────────────────────────────
+    if ext in ('.js', '.mjs', '.cjs', '.jsx') and _PARSERS_LOADED:
+        imports, funcdefs, calls, extra, fcbf = scan_js(src)
+        return imports, funcdefs, calls, extra, fcbf
 
-    if ext == '.dsc':
-        data = scan_dsc(src)
-        return data['components'], [], [], data, []
+    if ext in ('.ts', '.tsx') and _PARSERS_LOADED:
+        imports, funcdefs, calls, extra, fcbf = scan_ts(src)
+        return imports, funcdefs, calls, extra, fcbf
 
-    if ext == '.fdf':
-        data = scan_fdf(src)
-        return data['infs'], [], [], data, []
-
-    if ext == '.sdl':
-        data = scan_sdl(src)
-        refs = data['inf_components']
-        return refs, [], [], data, []
-
-    if ext == '.sd':
-        data = scan_sd(src)
-        return data['includes'], [], [], data, []
-
-    if ext == '.cif':
-        data = scan_cif(src)
-        refs = data['infs'] + data['files']
-        return refs, [], [], data, []
-
-    if ext == '.mak':
-        data = scan_mak(src)
-        return [], [], [], data, []
-
-    # Phase C/D: VFR / HFR / UNI / ASL — specialized parsers
-    if ext == '.vfr':
-        data = scan_vfr(src)
-        # Return all includes (uni_includes + hfr_includes + other)
-        return data['includes'], [], [], data, []
-
-    if ext == '.hfr':
-        data = scan_hfr(src)
-        return data['includes'], [], [], data, []
-
-    if ext == '.uni':
-        data = scan_uni(src)
-        return [], [], [], data, []
-
-    if ext == '.asl':
-        data = scan_asl(src)
-        return data['includes'], [], [], data, []
+    # ── Go ────────────────────────────────────────────────────────────────────
+    if ext == '.go' and _PARSERS_LOADED:
+        imports, funcdefs, calls, extra, fcbf = scan_go(src)
+        return imports, funcdefs, calls, extra, fcbf
 
     # Remaining: .c, .cpp, .h, .hpp → C-like analysis
     clean = strip_comments(src)
@@ -736,9 +209,9 @@ def get_module(rel_path: str) -> str:
 
 # ─── build_graph ─────────────────────────────────────────────────────────────
 def build_graph(root_dir: str, progress_cb=None, include_build=False, include_dirs=None) -> dict:
-    def _cb(pct, msg):
+    def _cb(pct, msg, **kwargs):
         print(f'[{pct:3d}%] {msg}', end='\r')
-        if progress_cb: progress_cb(pct, msg)
+        if progress_cb: progress_cb(pct, msg, **kwargs)
 
     root = os.path.abspath(root_dir)
     all_files = []
@@ -759,6 +232,19 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     total = len(all_files)
     _cb(0, f'Found {total} files, analyzing...')
 
+    # ── Project type detection ────────────────────────────────────────────────
+    ext_counts: dict = defaultdict(int)
+    for fp in all_files:
+        ext_counts[Path(fp).suffix.lower()] += 1
+
+    project_type = {'key': 'c_cpp', 'name': 'C / C++', 'emoji': '⚙️', 'badge_color': '#3b82f6', 'accent': '#60a5fa'}
+    if _PARSERS_LOADED:
+        project_type = detect_project_type(dict(ext_counts))
+        banner = fmt_detection_banner(project_type)
+        for line in banner:
+            print(line)
+        _cb(1, f'{project_type["emoji"]}  Detected: {project_type["name"]} project', project_type=project_type)
+
     file_meta   = {}  # rel_path → {label, ext, size, module, file_type, bios_meta}
     file_incs   = {}  # rel_path → [ref strings]
     file_defs   = {}  # rel_path → [{label, is_efiapi, is_static}]
@@ -768,9 +254,11 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     file_func_calls = {}
 
     for i, fp in enumerate(all_files):
-        if i % 50 == 0:
-            pct = int(i / total * 60) if total else 0
-            _cb(pct, f'{i}/{total} files analyzed')
+        if (i + 1) % 50 == 0 or (i + 1) == total:
+            pct = int((i + 1) / total * 60) if total else 0
+            if progress_cb:
+                progress_cb(pct, f'{i + 1}/{total} files analyzed')
+            print(f'[{pct:3d}%] {i + 1}/{total} files analyzed', end='\r')
         rel = os.path.relpath(fp, root).replace('\\', '/')
         inc, defs, calls, extra, func_calls_by_func = scan_file(fp, root)
         ext = Path(fp).suffix.lower()
@@ -959,6 +447,13 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
             for inc in file_incs.get(src_rel, []):
                 for tgt in resolve_ref(inc, src_dir):
                     add_edge(src_rel, tgt, 'include')
+
+        # ── Universal import edges (Python / JS / TS / Go) ─────────────────
+        elif ext in ('.py', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.go'):
+            for imp in file_incs.get(src_rel, []):
+                for tgt in resolve_ref(imp, src_dir):
+                    if tgt != src_rel:
+                        add_edge(src_rel, tgt, 'import')
 
         elif ext == '.inf' and extra:
             # [Sources] → .c files
@@ -1160,6 +655,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         'func_name_ambiguous':  sorted(func_name_ambiguous),
         'file_to_module':       file_to_module,
         'edge_types':           EDGE_TYPES,
+        'project_type':         project_type,
         'stats': {
             # ── Analysed (shown in graph) ──
             'files':              total,          # SCAN_EXT files actually analysed
@@ -1171,13 +667,14 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
             'binary_files':       total_binary,   # subset of other_files that are binary
             # ── Full codebase counts (matches Windows Properties) ──
             'total_visible_files':total_visible_files,  # analysed + other (no skip dirs)
-            'total_all_files':    total_all_files,      # includes skipped-dir content
+            'total_all_files':    total_all_files,      # includes skipped dirs
             'total_dirs':         total_dirs_scanned,   # non-skipped subdirectory count
             'total_dirs_skipped': total_dirs_skipped,   # dirs completely ignored
             'skipped_files':      total_files_skipped,  # files inside skipped dirs
             'skipped_dir_names':  sorted(skip_dirs),    # which dirs were skipped
             'type_counts':        dict(type_counts),
             'root':               root.replace('\\', '/'),
+            'project_type':       project_type,
         }
     }
 
@@ -1201,6 +698,9 @@ HTML_SKELETON = """\
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/x86asm.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
@@ -1209,10 +709,11 @@ HTML_SKELETON = """\
 </head>
 <body>
 
-<script>window.JOB_ID = {JOB_ID_JSON};</script>
+<script>window.JOB_ID = {JOB_ID_JSON}; window.PROJECT_TYPE = {PT_JSON};</script>
 
 <div id="topbar">
   <div class="logo">VIZCODE</div>
+  <div id="project-type-badge" style="display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;"></div>
   <div class="stats-bar">
     <div class="stat">Files <strong id="st-files">0</strong></div>
     <div class="stat">Modules <strong id="st-mods">0</strong></div>
@@ -1354,9 +855,21 @@ HTML_SKELETON = """\
   var m=document.getElementById('loading-msg');
   if(l){{l.className='show';}}
   if(m){{m.textContent='⏳ Parsing graph data...';}}
-  // Show resizer when code panel opens (handled by JS)
   document.getElementById('cp-loading').classList.add('hidden');
   document.getElementById('cp-empty').style.display='';
+  // Project type badge
+  var pt = window.PROJECT_TYPE || {{}};
+  if(pt && pt.name && pt.emoji) {{
+    var badge = document.getElementById('project-type-badge');
+    if(badge) {{
+      badge.style.display = 'flex';
+      badge.style.background = (pt.badge_color||'#444') + '22';
+      badge.style.border = '1px solid ' + (pt.badge_color||'#888') + '55';
+      badge.style.color = pt.badge_color || '#ccc';
+      badge.innerHTML = '<span style="font-size:15px">' + pt.emoji + '</span><span>' + pt.name.toUpperCase() + '</span>';
+      badge.title = pt.description || '';
+    }}
+  }}
 }})();</script>
 <script>{JS}</script>
 </body>
@@ -1380,15 +893,21 @@ def build_html(data: dict, job_id: str = None) -> str:
     css = css_p.read_text(encoding='utf-8')
     js  = js_p.read_text(encoding='utf-8')
 
-    json_str     = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-    root_name    = Path(data['stats']['root']).name or 'BIOS'
+    def _json_default(o):
+        if isinstance(o, (set, frozenset)): return sorted(o)
+        raise TypeError(f'Not serialisable: {type(o)}')
+    json_str     = json.dumps(data, ensure_ascii=False, separators=(',', ':'), default=_json_default)
+    root_name    = Path(data['stats']['root']).name or 'VIZCODE'
     job_id_json  = json.dumps(job_id)   # "null" or '"abc1234"'
+    pt           = data.get('project_type', {})
+    pt_json      = json.dumps(pt, default=_json_default)
 
     return HTML_SKELETON.format(
         CSS=css, JS=js,
         DATA=json_str,
         root_name=root_name,
         JOB_ID_JSON=job_id_json,
+        PT_JSON=pt_json,
     )
 
 
@@ -1400,10 +919,10 @@ def inject_data(html: str, data: dict) -> str:
 
 # ─── main ─────────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description='BIOS Code Visualizer V3')
-    parser.add_argument('root', help='Root directory of BIOS codebase')
-    parser.add_argument('-o', '--output', default='bios_viz.html',
-                        help='Output HTML file (default: bios_viz.html)')
+    parser = argparse.ArgumentParser(description='VIZCODE V4 — Universal Code Visualizer')
+    parser.add_argument('root', help='Root directory of codebase (BIOS, Python, JS, Go, ...)')
+    parser.add_argument('-o', '--output', default='viz_output.html',
+                        help='Output HTML file (default: viz_output.html)')
     parser.add_argument('--include-build', action='store_true',
                         help='Include build output directories (Build/build/DEBUG/RELEASE)')
     parser.add_argument('--include-dir', action='append', default=[],
@@ -1414,11 +933,12 @@ def main():
         print(f'Error: "{args.root}" is not a directory', file=sys.stderr)
         sys.exit(1)
 
-    print(f'BIOSVIZ V3 — analyzing: {args.root}')
+    print(f'VIZCODE V4 — analyzing: {args.root}')
     data = build_graph(args.root, include_build=args.include_build, include_dirs=args.include_dir)
 
+    pt = data.get('project_type', {})
     s = data['stats']
-    print(f'\nAnalysis complete:')
+    print(f'\nAnalysis complete ({pt.get("emoji","")}{pt.get("name",""):}):')
     print(f'  Modules:   {s["modules"]}')
     print(f'  Files:     {s["files"]}')
     print(f'  Functions: {s["functions"]}')
@@ -1432,14 +952,19 @@ def main():
         html = build_html(data)
     except FileNotFoundError as e:
         print(f'\nWarning: {e}')
-        print('Falling back to embedded template...')
-        json_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+        def _json_default(o):
+            if isinstance(o, (set, frozenset)): return sorted(o)
+            raise TypeError(f'Not serialisable: {type(o)}')
+        json_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'), default=_json_default)
+        pt_json  = json.dumps(pt, default=_json_default)
+        root_name = Path(data['stats']['root']).name or 'VIZCODE'
         html = HTML_SKELETON\
             .replace('{DATA}', json_str)\
             .replace('{CSS}', '')\
             .replace('{JS}', '')\
-            .replace('{root_name}', 'BIOS')\
-            .replace('{JOB_ID_JSON}', 'null')
+            .replace('{root_name}', root_name)\
+            .replace('{JOB_ID_JSON}', 'null')\
+            .replace('{PT_JSON}', pt_json)
 
     out = args.output
     Path(out).write_text(html, encoding='utf-8')

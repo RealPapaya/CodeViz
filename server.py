@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-server.py — BIOSVIZ Local Server
-Serves launcher.html and runs analyze_bios.py on demand.
+server.py — VIZCODE Local Server V4
+Serves launcher.html and runs analyze_viz.py on demand.
+Backward compatible: still works if analyze_bios.py is present.
 stdlib only: http.server, threading, json, uuid
 Usage: python server.py [port]   (default port 7777)
 """
@@ -11,9 +12,12 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-# Import sibling module
+# Import sibling module — prefer analyze_viz (new), fall back to analyze_bios
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import analyze_bios
+try:
+    import analyze_viz as analyze_bios
+except ImportError:
+    import analyze_bios
 
 PORT = 7777
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +59,9 @@ class Handler(BaseHTTPRequestHandler):
             if not job:
                 self.json_resp({'error': 'Unknown job'}, 404)
             else:
-                self.json_resp(job)
+                # Strip 'data' (graph payload) — not needed by frontend, and may contain non-serialisable types
+                safe = {k: v for k, v in job.items() if k != 'data'}
+                self.json_resp(safe)
 
         elif p == '/result':
             jid = qs.get('job', [''])[0]
@@ -245,9 +251,11 @@ class Handler(BaseHTTPRequestHandler):
 
             def run():
                 try:
-                    def cb(pct, msg):
+                    def cb(pct, msg, **kwargs):
                         with JOBS_LOCK:
                             JOBS[jid].update({'pct': pct, 'msg': msg})
+                            if kwargs:
+                                JOBS[jid].update(kwargs)
 
                     graph_data = analyze_bios.build_graph(root, progress_cb=cb)
 
@@ -257,7 +265,8 @@ class Handler(BaseHTTPRequestHandler):
                             'pct': 100, 'done': True,
                             'msg': f"Done! {s['files']} files, {s['functions']} functions",
                             'data': graph_data,
-                            'stats': {k: s[k] for k in (
+                            'stats': {k: (sorted(s[k]) if isinstance(s[k], (set, frozenset)) else s[k])
+                                      for k in (
                         'files', 'modules', 'functions', 'calls',
                         'other_files', 'binary_files',
                         'total_visible_files', 'total_all_files',
@@ -312,7 +321,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def json_resp(self, data, code=200):
-        body = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        def _default(o):
+            if isinstance(o, (set, frozenset)): return sorted(o)
+            raise TypeError(f'Not serialisable: {type(o)}')
+        body = json.dumps(data, ensure_ascii=False, default=_default).encode('utf-8')
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', len(body))
@@ -327,7 +339,8 @@ def main():
     server = HTTPServer(('127.0.0.1', port), Handler)
     url = f'http://localhost:{port}'
     print(f'┌─────────────────────────────────────────┐')
-    print(f'│  BIOSVIZ Server  →  {url:<20} │')
+    print(f'│  VIZCODE V4   →  {url:<22} │')
+    print(f'│  BIOS · Python · JS/TS · Go             │')
     print(f'└─────────────────────────────────────────┘')
     print(f'Open Chrome and go to: {url}')
     print(f'Press Ctrl+C to stop\n')
