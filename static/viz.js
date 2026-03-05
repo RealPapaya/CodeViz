@@ -2347,24 +2347,44 @@ const ftActiveFilter = new Set([
     'go_source',
 ]);
 
-function buildFtFilter() {
+let ftFilterCollapsed = false;
+
+function buildFtFilter(modId = null, subDir = null) {
     const wrap = document.getElementById('ft-filter');
     if (!wrap) return;
 
     // Detect which types actually exist in data
     const presentTypes = new Set();
-    Object.values(DATA.files_by_module).forEach(files =>
-        files.forEach(f => presentTypes.add(f.file_type || 'other'))
-    );
-    // Also check other_files_by_module
-    const otherByMod = DATA.other_files_by_module || {};
-    Object.values(otherByMod).forEach(files =>
-        files.forEach(f => presentTypes.add(f.file_type || 'other'))
-    );
+    let otherTotal = 0;
+    let binaryTotal = 0;
 
-    // Count other/binary totals for display
-    const otherTotal = (DATA.stats?.other_files || 0) - (DATA.stats?.binary_files || 0);
-    const binaryTotal = DATA.stats?.binary_files || 0;
+    function addFiles(files) {
+        files.forEach(f => presentTypes.add(f.file_type || 'other'));
+    }
+
+    if (modId) {
+        let files = DATA.files_by_module[modId] || [];
+        let others = (DATA.other_files_by_module || {})[modId] || [];
+        if (subDir) {
+            const prefix = modId + '/' + subDir + '/';
+            const exc = modId + '/' + subDir;
+            files = files.filter(f => f.path.startsWith(prefix) || f.path === exc);
+            others = others.filter(f => f.path.startsWith(prefix) || f.path === exc);
+        }
+        addFiles(files);
+        addFiles(others);
+
+        others.forEach(f => {
+            if (f.file_type === 'other') otherTotal++;
+            if (f.file_type === 'binary') binaryTotal++;
+        });
+    } else {
+        Object.values(DATA.files_by_module).forEach(addFiles);
+        const otherByMod = DATA.other_files_by_module || {};
+        Object.values(otherByMod).forEach(addFiles);
+        otherTotal = (DATA.stats?.other_files || 0) - (DATA.stats?.binary_files || 0);
+        binaryTotal = DATA.stats?.binary_files || 0;
+    }
 
     const groups = FT_GROUPS.filter(g => {
         if (g.isExtra) {
@@ -2373,13 +2393,17 @@ function buildFtFilter() {
         }
         return presentTypes.has(g.key);
     });
-    if (!groups.length) return;
+    if (!groups.length) {
+        wrap.style.display = 'none';
+        return;
+    }
+    wrap.style.display = 'block';
 
     const analysed = groups.filter(g => !g.isExtra);
     const extra = groups.filter(g => g.isExtra);
 
     function chipHtml(g) {
-        const col = g.isExtra ? '#4b5563' : extColor(g.exts[0]);
+        const col = g.isExtra ? '#4b5563' : extColor(g.exts[0] || '');
         const checked = ftActiveFilter.has(g.key) ? 'checked' : '';
         const count = g.key === 'other' ? otherTotal :
             g.key === 'binary' ? binaryTotal : '';
@@ -2391,13 +2415,34 @@ function buildFtFilter() {
 </label>`;
     }
 
+    const togglerStyle = ftFilterCollapsed ? 'transform: rotate(-90deg);' : '';
+    const bodyDisplay = ftFilterCollapsed ? 'none' : 'flex';
+
     wrap.innerHTML =
-        '<div class="ft-filter-title">File Types</div>' +
+        `<div class="ft-filter-title" id="ft-filter-title" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+             <span>File Types</span><span class="legend-toggle" style="font-size:13px; transition:transform 0.2s; ${togglerStyle}">▾</span>
+         </div>` +
+        `<div id="ft-filter-body" style="display:${bodyDisplay}; flex-direction:column;">` +
         analysed.map(chipHtml).join('') +
         (extra.length
             ? '<div class="ft-separator" title="These files are visible in the graph but not deeply analysed for dependencies">— unanalysed —</div>' +
             extra.map(chipHtml).join('')
-            : '');
+            : '') +
+        `</div>`;
+
+    const titleEl = wrap.querySelector('#ft-filter-title');
+    titleEl.addEventListener('click', () => {
+        ftFilterCollapsed = !ftFilterCollapsed;
+        const body = document.getElementById('ft-filter-body');
+        const toggle = titleEl.querySelector('.legend-toggle');
+        if (!ftFilterCollapsed) {
+            body.style.display = 'flex';
+            toggle.style.transform = '';
+        } else {
+            body.style.display = 'none';
+            toggle.style.transform = 'rotate(-90deg)';
+        }
+    });
 
     wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
         cb.addEventListener('change', () => {
@@ -2409,7 +2454,7 @@ function buildFtFilter() {
                 const filtered = state.activeSubDir
                     ? allFiles.filter(f => f.path.startsWith(state.activeModule + '/' + state.activeSubDir + '/'))
                     : allFiles;
-                renderFilesFlat(state.activeModule, filtered);
+                renderFilesFlat(state.activeModule, filtered, state.activeSubDir);
             }
         });
     });
@@ -2419,10 +2464,47 @@ function buildFtFilter() {
 // Builds a tree in the sidebar: Module → sub-folders (expandable)
 // Graph always shows file nodes only.
 
+let fsCollapsed = false;
+
 function buildSidebar() {
     const list = document.getElementById('module-list');
     list.innerHTML = '';
-    buildFtFilter();
+
+    // Handle collapsible sidebar title
+    const sidebarTitle = document.getElementById('sidebar-title');
+    if (sidebarTitle) {
+        const togglerStyle = fsCollapsed ? 'transform: rotate(-90deg);' : '';
+        sidebarTitle.innerHTML = `<span>File System</span><span class="legend-toggle" style="font-size:13px; transition:transform 0.2s; ${togglerStyle}">▾</span>`;
+        sidebarTitle.style.cursor = 'pointer';
+        sidebarTitle.style.display = 'flex';
+        sidebarTitle.style.justifyContent = 'space-between';
+        sidebarTitle.style.alignItems = 'center';
+
+        // Remove old listener if exists, normally not needed if innerHTML clears, but here it's on the title itself
+        const newTitle = sidebarTitle.cloneNode(true);
+        sidebarTitle.parentNode.replaceChild(newTitle, sidebarTitle);
+
+        newTitle.addEventListener('click', () => {
+            fsCollapsed = !fsCollapsed;
+            const toggle = newTitle.querySelector('.legend-toggle');
+            if (!fsCollapsed) {
+                list.style.display = '';
+                toggle.style.transform = '';
+            } else {
+                list.style.display = 'none';
+                toggle.style.transform = 'rotate(-90deg)';
+            }
+        });
+
+        // Apply initial state
+        if (fsCollapsed) {
+            list.style.display = 'none';
+        } else {
+            list.style.display = '';
+        }
+    }
+
+    buildFtFilter(null, null);
     DATA.modules.forEach(m => {
         const allFiles = DATA.files_by_module[m.id] || [];
         const tree = buildFileTree(allFiles, m.id);
@@ -2568,12 +2650,14 @@ function filterGraphToSubPath(modId, subPath) {
     updateL1Toolbar(`${modId} / ${subPath}`, filtered.length);
     renderFilesFlat(modId, filtered, subPath);
     updateBreadcrumb();
+    buildFtFilter(modId, subPath);
 }
 
 // ─── L0: Module View ──────────────────────────────────────────────────────────
 function loadLevel0() {
     showLoading(true, 'Rendering modules...');
     hideFuncView();
+    buildFtFilter(null, null);
     state.level = 0; state.activeModule = null; state.activeFile = null; state.activeSubDir = null;
     updateBreadcrumb(); setSidebarActive(null);
     setL1ToolbarVisible(false);
@@ -2677,6 +2761,7 @@ function drillToModule(modId, opts) {
 
             renderFilesFlat(modId, filtered, subPath);
             updateBreadcrumb();
+            buildFtFilter(modId, subPath);
             return;
         }
     }
@@ -2684,6 +2769,7 @@ function drillToModule(modId, opts) {
     pushL1History(modId, null);
     updateL1Toolbar(modId, allFiles.length);
     renderFilesFlat(modId, allFiles);
+    buildFtFilter(modId, null);
 }
 
 // Render flat file nodes in graph — the only graph view for L1
@@ -3462,32 +3548,32 @@ function setSidebarActive(modId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const _srState = {
-    mode:      'files',   // 'files' | 'code'
-    query:     '',
+    mode: 'files',   // 'files' | 'code'
+    query: '',
     // Toggle flags
     matchCase: false,
     wholeWord: false,
-    isRegex:   false,
+    isRegex: false,
     // Filter strings (VS Code-style globs, applied server-side for code, client-side for files)
-    include:   '',
-    exclude:   '',
+    include: '',
+    exclude: '',
     // Flat results (files mode only)
-    results:   [],
+    results: [],
     activeIdx: -1,
     // Content search state (code mode)
-    _contentGroups:     [],   // [{path,label,module,ext,count,matches,color}]
-    _contentTotal:      0,
-    _contentFiles:      0,
-    _contentLoading:    false,
-    _contentDone:       false,
-    _contentError:      '',
-    _contentIndexed:    false,  // true = server used in-memory index (⚡ fast)
+    _contentGroups: [],   // [{path,label,module,ext,count,matches,color}]
+    _contentTotal: 0,
+    _contentFiles: 0,
+    _contentLoading: false,
+    _contentDone: false,
+    _contentError: '',
+    _contentIndexed: false,  // true = server used in-memory index (⚡ fast)
     // View mode (code search)
-    viewMode:    'list',       // 'list' | 'tree'
+    viewMode: 'list',       // 'list' | 'tree'
     // View mode (file search)
     fileViewMode: 'list',      // 'list' | 'tree'
     // Tree expand state
-    _openGroups:  new Set(),   // open file groups (code mode)
+    _openGroups: new Set(),   // open file groups (code mode)
     _openFolders: new Set(),   // open folder nodes (tree mode)
     _openFileFolders: new Set(), // open folder nodes (file tree mode)
     // Advanced filter
@@ -3496,7 +3582,7 @@ const _srState = {
     _vsEnd: 0,                 // items rendered so far (both modes)
     // Local index
     _indexBuilt: false,
-    _fileIndex:  [],   // [{label,path,module,ext,file_type,func_count,size}]
+    _fileIndex: [],   // [{label,path,module,ext,file_type,func_count,size}]
 };
 
 // ── SSE stream handle ─────────────────────────────────────────────────────────
@@ -3537,7 +3623,7 @@ function _srApplyToggles(text) {
     if (!_srState.matchCase) { t = t.toLowerCase(); ql = ql.toLowerCase(); }
     if (_srState.wholeWord) {
         const re = new RegExp('\\b' + ql.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b',
-                              _srState.matchCase ? '' : 'i');
+            _srState.matchCase ? '' : 'i');
         return re.test(text);
     }
     return t.includes(ql);
@@ -3615,7 +3701,7 @@ function _srSearchFiles(q) {
 
     function score(f) {
         const label = f.label.toLowerCase();
-        const path  = f.path.toLowerCase();
+        const path = f.path.toLowerCase();
         if (label === ql) return 10000;
         if (label.startsWith(ql)) return 5000 + (100 - Math.min(label.length, 100));
         const li = label.indexOf(ql);
@@ -3623,7 +3709,7 @@ function _srSearchFiles(q) {
         const pi = path.indexOf(ql);
         if (pi >= 0) return 1000 + (100 - Math.min(pi, 100));
         if (fuzzyMatch(f.label)) return 500;
-        if (fuzzyMatch(f.path))  return 100;
+        if (fuzzyMatch(f.path)) return 100;
         return -1;
     }
 
@@ -3640,13 +3726,13 @@ function _srSearchFiles(q) {
     for (const f of _srState._fileIndex) {
         // Apply include/exclude globs
         if (incGlobs.length > 0 && !incGlobs.some(g => globMatch(f.path, g))) continue;
-        if (excGlobs.length > 0 &&  excGlobs.some(g => globMatch(f.path, g))) continue;
+        if (excGlobs.length > 0 && excGlobs.some(g => globMatch(f.path, g))) continue;
 
         let s = -1;
         if (pattern) {
             if (pattern.test(f.label) || pattern.test(f.path)) s = 1000;
         } else if (ww) {
-            const re = new RegExp('\\b' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\b', mc ? '' : 'i');
+            const re = new RegExp('\\b' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', mc ? '' : 'i');
             if (re.test(f.label) || re.test(f.path)) s = score(f);
         } else {
             s = score(f);
@@ -3675,30 +3761,30 @@ function _srStartStream(q) {
 
     if (!codeState.jobId || !q) {
         _srState._contentGroups = [];
-        _srState._contentTotal  = 0;
-        _srState._contentFiles  = 0;
+        _srState._contentTotal = 0;
+        _srState._contentFiles = 0;
         _srState._contentLoading = false;
-        _srState._contentDone    = true;
+        _srState._contentDone = true;
         _srRenderResults(); _srRenderActionBar();
         return;
     }
 
-    _srState._contentGroups  = [];
-    _srState._contentTotal   = 0;
-    _srState._contentFiles   = 0;
-    _srState._contentError   = '';
+    _srState._contentGroups = [];
+    _srState._contentTotal = 0;
+    _srState._contentFiles = 0;
+    _srState._contentError = '';
     _srState._contentLoading = true;
-    _srState._contentDone    = false;
+    _srState._contentDone = false;
     _srRenderResults(); _srRenderActionBar();
 
     const params = new URLSearchParams({
-        job:        codeState.jobId,
+        job: codeState.jobId,
         q,
         match_case: _srState.matchCase ? '1' : '0',
         whole_word: _srState.wholeWord ? '1' : '0',
-        is_regex:   _srState.isRegex   ? '1' : '0',
-        include:    _srState.include,
-        exclude:    _srState.exclude,
+        is_regex: _srState.isRegex ? '1' : '0',
+        include: _srState.include,
+        exclude: _srState.exclude,
     });
 
     const capturedQ = q;
@@ -3729,9 +3815,9 @@ function _srStartStream(q) {
         try { msg = JSON.parse(e.data); } catch (_) { return; }
 
         if (msg.error) {
-            _srState._contentError   = msg.error;
+            _srState._contentError = msg.error;
             _srState._contentLoading = false;
-            _srState._contentDone    = true;
+            _srState._contentDone = true;
             es.close(); _srStream = null;
             _srRenderResults(); _srRenderActionBar(); return;
         }
@@ -3750,7 +3836,7 @@ function _srStartStream(q) {
             clearTimeout(_srStreamBatchTimer);
             _flush();
             _srState._contentLoading = false;
-            _srState._contentDone    = true;
+            _srState._contentDone = true;
             _srState._contentIndexed = msg.indexed || false;
             es.close(); _srStream = null;
             _srRenderResults(); _srRenderActionBar();
@@ -3760,7 +3846,7 @@ function _srStartStream(q) {
     es.onerror = () => {
         if (_srState.query !== capturedQ) return;
         _srState._contentLoading = false;
-        _srState._contentDone    = true;
+        _srState._contentDone = true;
         clearTimeout(_srStreamBatchTimer);
         _flush();
         es.close(); _srStream = null;
@@ -3780,15 +3866,15 @@ function _srDebounce(q) {
 function _srLineIsFunc(line, ext) {
     const t = line.trim();
     if (!t || t.startsWith('//') || t.startsWith('*') || t.startsWith('#')) return false;
-    if (['.c','.cpp','.cc','.h','.hpp'].includes(ext))
+    if (['.c', '.cpp', '.cc', '.h', '.hpp'].includes(ext))
         return /\w[\w\s*]+\s+\w+\s*\(/.test(t) && !/^\s*(if|for|while|switch|return|#)\b/.test(t);
-    if (ext === '.py')   return /^\s*(async\s+)?def\s+\w/.test(t);
-    if (['.js','.mjs','.cjs','.jsx','.ts','.tsx'].includes(ext))
+    if (ext === '.py') return /^\s*(async\s+)?def\s+\w/.test(t);
+    if (['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'].includes(ext))
         return /^\s*(export\s+)?(default\s+)?(async\s+)?function\b/.test(t)
             || /^\s*(const|let|var)\s+\w+\s*=\s*(async\s*)?\(/.test(t)
             || /^\s*(const|let|var)\s+\w+\s*=\s*function\b/.test(t);
-    if (ext === '.go')  return /^\s*func\s+/.test(t);
-    if (['.inf','.dec','.dsc'].includes(ext)) return /^\[/.test(t);
+    if (ext === '.go') return /^\s*func\s+/.test(t);
+    if (['.inf', '.dec', '.dsc'].includes(ext)) return /^\[/.test(t);
     return false;
 }
 
@@ -3822,11 +3908,13 @@ function _srModuleColor(modId) {
 }
 
 function _extIcon(ext) {
-    const m = { '.c':'🔵','.cpp':'🔵','.h':'🟣','.hpp':'🟣','.asm':'🟡',
-                '.py':'🐍','.js':'⚡','.ts':'🔷','.jsx':'⚛','.tsx':'⚛',
-                '.go':'🟢','.inf':'📋','.dec':'📦','.sdl':'🔧','.cif':'🗂',
-                '.vfr':'🖥','.asl':'⚙','.uni':'🔤','.md':'📝',
-                '.json':'{}','.yaml':'📄','.xml':'📄' };
+    const m = {
+        '.c': '🔵', '.cpp': '🔵', '.h': '🟣', '.hpp': '🟣', '.asm': '🟡',
+        '.py': '🐍', '.js': '⚡', '.ts': '🔷', '.jsx': '⚛', '.tsx': '⚛',
+        '.go': '🟢', '.inf': '📋', '.dec': '📦', '.sdl': '🔧', '.cif': '🗂',
+        '.vfr': '🖥', '.asl': '⚙', '.uni': '🔤', '.md': '📝',
+        '.json': '{}', '.yaml': '📄', '.xml': '📄'
+    };
     return m[ext] || '📄';
 }
 
@@ -3885,7 +3973,7 @@ function _srMatchLinesHtml(g) {
     const q = _srState.query;
     let html = '';
     g.matches.forEach(m => {
-        const snip   = m.text || '';
+        const snip = m.text || '';
         const snipHl = escapeHtml(snip.slice(0, m.ms))
             + '<mark>' + escapeHtml(snip.slice(m.ms, m.me)) + '</mark>'
             + escapeHtml(snip.slice(m.me));
@@ -3904,7 +3992,7 @@ function _srWireLineRows(container) {
     container.querySelectorAll('.sr-line-row').forEach(row => {
         const path = row.dataset.gpath;
         const line = parseInt(row.dataset.line, 10);
-        row.addEventListener('click',      () => _srSelectContentLine(path, line));
+        row.addEventListener('click', () => _srSelectContentLine(path, line));
         row.addEventListener('mouseenter', () => _srHoverResult({ path }));
     });
 }
@@ -3918,7 +4006,7 @@ function _srBuildTree(groups) {
     function getNode(folderPath) {
         if (nodeMap[folderPath]) return nodeMap[folderPath];
         const parts = folderPath.split('/');
-        const name  = parts[parts.length - 1];
+        const name = parts[parts.length - 1];
         const parent = parts.slice(0, -1).join('/');
         const parentNode = getNode(parent);
         const node = { name, path: folderPath, children: [], files: [] };
@@ -3929,7 +4017,7 @@ function _srBuildTree(groups) {
 
     for (const g of groups) {
         const lastSlash = g.path.lastIndexOf('/');
-        const folder    = lastSlash >= 0 ? g.path.slice(0, lastSlash) : '';
+        const folder = lastSlash >= 0 ? g.path.slice(0, lastSlash) : '';
         getNode(folder).files.push(g);
     }
 
@@ -3951,7 +4039,7 @@ function _srRenderTreeNode(node, q, depth) {
     // Render child folders first
     for (const child of node.children) {
         const isOpen = _srState._openFolders.has(child.path);
-        const chev   = isOpen ? '▾' : '▸';
+        const chev = isOpen ? '▾' : '▸';
         const matchCount = _countTreeMatches(child);
         html += `<div class="sr-tree-folder">
   <div class="sr-tree-folder-hdr" data-fpath="${escapeHtml(child.path)}" style="padding-left:${indent + 6}px">
@@ -3971,10 +4059,10 @@ function _srRenderTreeNode(node, q, depth) {
     // Render files in this folder
     for (const g of node.files) {
         const isOpen = _srState._openGroups.has(g.path);
-        const chev   = isOpen ? '▾' : '▸';
-        const ic     = _extIcon(g.ext);
-        const mc     = g.color || _srModuleColor(g.module);
-        const fnHl   = _srHighlight(g.label, q);
+        const chev = isOpen ? '▾' : '▸';
+        const ic = _extIcon(g.ext);
+        const mc = g.color || _srModuleColor(g.module);
+        const fnHl = _srHighlight(g.label, q);
 
         html += `<div class="sr-file-group">
   <div class="sr-file-header sr-tree-file-hdr" data-gpath="${escapeHtml(g.path)}" style="padding-left:${indent + 22}px">
@@ -4023,19 +4111,19 @@ function _srRenderActionBar() {
 
     if (!hasResults) { bar.style.display = 'none'; return; }
 
-    bar.style.display       = 'flex';
+    bar.style.display = 'flex';
     bar.style.flexDirection = 'column';
-    bar.style.gap           = '0';
-    bar.style.padding       = '0';
+    bar.style.gap = '0';
+    bar.style.padding = '0';
 
-    const isTree  = _srState.viewMode === 'tree';
+    const isTree = _srState.viewMode === 'tree';
     const loading = _srState._contentLoading;
     const indexed = _srState._contentIndexed;
 
     if (_srState.mode === 'code') {
         const totalShown = _srFilteredGroups().length;
-        const totalAll   = _srState._contentFiles;
-        const filtered   = totalShown < totalAll;
+        const totalAll = _srState._contentFiles;
+        const filtered = totalShown < totalAll;
 
         bar.innerHTML = `
 <div class="sr-ab-top">
@@ -4052,7 +4140,7 @@ function _srRenderActionBar() {
   <button class="sr-ab-btn" id="sr-expand-all"   title="Expand All">⊞</button>
   <div class="sr-ab-sep"></div>
   <button class="sr-ab-btn${!isTree ? ' active' : ''}" id="sr-view-list" title="View as List">≡</button>
-  <button class="sr-ab-btn${isTree  ? ' active' : ''}" id="sr-view-tree" title="View as Tree">⬡</button>
+  <button class="sr-ab-btn${isTree ? ' active' : ''}" id="sr-view-tree" title="View as Tree">⬡</button>
 </div>
 <div class="sr-ab-filters">
   <div class="sr-ab-filter-input-wrap" title="Files to include (e.g. *.c, *.h, Module/*)">
@@ -4108,7 +4196,7 @@ function _srRenderActionBar() {
             if (!inp) return;
             inp.addEventListener('keydown', e => {
                 if (e.key === 'Escape') { inp.value = ''; inp.dispatchEvent(new Event('input')); e.stopPropagation(); }
-                if (e.key === 'Enter')  e.stopPropagation();
+                if (e.key === 'Enter') e.stopPropagation();
             });
         });
 
@@ -4155,7 +4243,7 @@ function _srRenderActionBar() {
 
         // Collapse / Expand All (tree mode only)
         const fiCollapseAll = document.getElementById('sr-fi-collapse-all');
-        const fiExpandAll   = document.getElementById('sr-fi-expand-all');
+        const fiExpandAll = document.getElementById('sr-fi-expand-all');
         if (fiCollapseAll) fiCollapseAll.addEventListener('click', () => {
             _srState._openFileFolders.clear();
             document.querySelectorAll('#sr-results .sr-fi-tree-body').forEach(el => el.style.display = 'none');
@@ -4199,7 +4287,7 @@ function _srRenderActionBar() {
             if (!inp) return;
             inp.addEventListener('keydown', e => {
                 if (e.key === 'Escape') { inp.value = ''; inp.dispatchEvent(new Event('input')); e.stopPropagation(); }
-                if (e.key === 'Enter')  e.stopPropagation();
+                if (e.key === 'Enter') e.stopPropagation();
             });
         });
     }
@@ -4297,16 +4385,16 @@ function _srBuildFileRowsHtml(results, start, end, q) {
     for (let i = start; i < end; i++) {
         const r = results[i];
         if (!r) continue;
-        const mc  = _srModuleColor(r.module);
-        const ic  = _extIcon(r.ext);
-        const nm  = r._fuzzyLabelPos
+        const mc = _srModuleColor(r.module);
+        const ic = _extIcon(r.ext);
+        const nm = r._fuzzyLabelPos
             ? _srFuzzyHighlight(r.label, r._fuzzyLabelPos)
             : _srHighlight(r.label, q);
         const dir = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
-        const dirHl  = dir ? `<span class="sr-fi-dir">${r._fuzzyPathPos
+        const dirHl = dir ? `<span class="sr-fi-dir">${r._fuzzyPathPos
             ? _srFuzzyHighlight(dir, r._fuzzyPathPos.filter(i => i < dir.length))
             : _srHighlight(dir, q)}</span>` : '';
-        const ac     = i === _srState.activeIdx ? ' sr-active' : '';
+        const ac = i === _srState.activeIdx ? ' sr-active' : '';
         const fcBadge = r.func_count > 0
             ? `<span class="sr-fi-fc" title="${r.func_count} functions">ƒ ${r.func_count}</span>` : '';
         const szBadge = r.size > 0
@@ -4324,17 +4412,17 @@ function _srBuildFileRowsHtml(results, start, end, q) {
 
 function _fmtBytes(b) {
     if (b < 1024) return b + 'B';
-    if (b < 1048576) return (b/1024).toFixed(0) + 'KB';
-    return (b/1048576).toFixed(1) + 'MB';
+    if (b < 1048576) return (b / 1024).toFixed(0) + 'KB';
+    return (b / 1048576).toFixed(1) + 'MB';
 }
 
 function _srWireFileRows(container, results) {
     container.querySelectorAll('.sr-fi-row:not([data-wired])').forEach(row => {
         row.dataset.wired = '1';
         const idx = parseInt(row.dataset.idx, 10);
-        const r   = results[idx];
+        const r = results[idx];
         if (!r) return;
-        row.addEventListener('click',      () => _srSelectResult(r));
+        row.addEventListener('click', () => _srSelectResult(r));
         row.addEventListener('mouseenter', () => { _srState.activeIdx = idx; _srHoverResult(r); _srUpdateActive(); });
     });
 }
@@ -4347,7 +4435,7 @@ function _srBuildFileTree(results) {
     function getNode(folderPath) {
         if (nodeMap[folderPath]) return nodeMap[folderPath];
         const parts = folderPath.split('/');
-        const name  = parts[parts.length - 1];
+        const name = parts[parts.length - 1];
         const parent = parts.slice(0, -1).join('/');
         const parentNode = getNode(parent);
         const node = { name, path: folderPath, children: [], files: [] };
@@ -4420,8 +4508,8 @@ function _srRenderFileTree(resultsEl, results, q) {
     resultsEl.querySelectorAll('.sr-fi-tree-folder-hdr').forEach(hdr => {
         hdr.addEventListener('click', () => {
             const fpath = hdr.dataset.fpath;
-            const body  = hdr.nextElementSibling;
-            const chev  = hdr.querySelector('.sr-fi-tree-chevron');
+            const body = hdr.nextElementSibling;
+            const chev = hdr.querySelector('.sr-fi-tree-chevron');
             if (_srState._openFileFolders.has(fpath)) {
                 _srState._openFileFolders.delete(fpath);
                 if (body) body.style.display = 'none';
@@ -4439,7 +4527,7 @@ function _srRenderFileTree(resultsEl, results, q) {
         const path = row.dataset.path;
         const r = results.find(x => x.path === path);
         if (!r) return;
-        row.addEventListener('click',      () => _srSelectResult(r));
+        row.addEventListener('click', () => _srSelectResult(r));
         row.addEventListener('mouseenter', () => _srHoverResult(r));
     });
 }
@@ -4456,8 +4544,8 @@ function _srRenderCodeList(resultsEl, groups, q) {
 
     if (groups.length > end) {
         _srVsObserve(resultsEl.querySelector('.sr-vs-sentinel'), function _cvsNext() {
-            const s   = _srState._vsEnd;
-            const e2  = Math.min(s + _SR_VS_CHUNK, groups.length);
+            const s = _srState._vsEnd;
+            const e2 = Math.min(s + _SR_VS_CHUNK, groups.length);
             const sentinel = resultsEl.querySelector('.sr-vs-sentinel');
             if (!sentinel) return;
             sentinel.insertAdjacentHTML('beforebegin', _srBuildCodeGroupsHtml(groups, s, e2, q));
@@ -4474,9 +4562,9 @@ function _srBuildCodeGroupsHtml(groups, start, end, q) {
         const g = groups[i];
         if (!g) continue;
         const isOpen = _srState._openGroups.has(g.path);
-        const ic   = _extIcon(g.ext);
-        const mc   = g.color || _srModuleColor(g.module);
-        const dir  = g.path.includes('/') ? g.path.slice(0, g.path.lastIndexOf('/')) : '';
+        const ic = _extIcon(g.ext);
+        const mc = g.color || _srModuleColor(g.module);
+        const dir = g.path.includes('/') ? g.path.slice(0, g.path.lastIndexOf('/')) : '';
         const fnHl = _srHighlight(g.label, q);
         html += `<div class="sr-file-group">
   <div class="sr-file-header" data-gpath="${escapeHtml(g.path)}">
@@ -4506,7 +4594,7 @@ function _srWireCodeGroups(container, groups) {
     container.querySelectorAll('.sr-file-header:not([data-wired])').forEach(hdr => {
         hdr.dataset.wired = '1';
         hdr.addEventListener('click', () => {
-            const p   = hdr.dataset.gpath;
+            const p = hdr.dataset.gpath;
             const grp = hdr.closest('.sr-file-group');
             if (!grp) return;
             const wasOpen = _srState._openGroups.has(p);
@@ -4566,7 +4654,7 @@ function _srRenderTree(resultsEl, groups, q) {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 function _srRenderPanel() {
-    const panel   = document.getElementById('sr-panel');
+    const panel = document.getElementById('sr-panel');
     const countEl = document.getElementById('sr-count');
     if (!panel) return;
 
@@ -4617,7 +4705,7 @@ function _srHoverResult(r) {
 function _srSelectResult(r) {
     // Keep panel open so user can keep browsing results
     const filePath = r.filePath || r.path;
-    const module   = r.module || (filePath ? filePath.split('/')[0] : null);
+    const module = r.module || (filePath ? filePath.split('/')[0] : null);
     const funcName = r._type === 'func' ? r.name : null;
     if (filePath && module) {
         if (state.level !== 1 || state.activeModule !== module) {
@@ -4688,7 +4776,7 @@ function _srClose() {
 // ── onSearch (called from input event) ───────────────────────────────────────
 function onSearch(e) {
     const q = (e.target.value || '').trim();
-    _srState.query     = q;
+    _srState.query = q;
     _srState.activeIdx = -1;
     _srState._openGroups = new Set();
 
@@ -4696,10 +4784,10 @@ function onSearch(e) {
         // Clear query but DON'T close panel — user may still want to see it
         if (_srStream) { _srStream.close(); _srStream = null; }
         _srState._contentGroups = [];
-        _srState._contentTotal  = 0;
-        _srState._contentFiles  = 0;
+        _srState._contentTotal = 0;
+        _srState._contentFiles = 0;
         _srState._contentLoading = false;
-        _srState._contentDone   = true;
+        _srState._contentDone = true;
         _srState.results = [];
         _srRenderPanel();
         if (cy) cy.elements().removeClass('faded hl');
@@ -4736,7 +4824,7 @@ function _srSetMode(mode) {
     document.querySelectorAll('.sr-mode').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === mode);
     });
-    const input   = document.getElementById('search');
+    const input = document.getElementById('search');
     const filters = document.getElementById('sr-filters');
     if (input) input.placeholder = mode === 'files' ? 'Search files… ( / )' : 'Search code… ( / )';
     if (filters) filters.classList.toggle('visible', mode === 'code');
@@ -4767,8 +4855,8 @@ function initSearch() {
 
     // Toggle buttons (Aa / ab / .*)
     const toggleMap = {
-        'srt-case':  'matchCase',
-        'srt-word':  'wholeWord',
+        'srt-case': 'matchCase',
+        'srt-word': 'wholeWord',
         'srt-regex': 'isRegex',
     };
     Object.entries(toggleMap).forEach(([id, key]) => {
@@ -4854,10 +4942,10 @@ function initSearch() {
 
     // Click outside search area → temporarily hide panel (re-focus to restore)
     document.addEventListener('click', e => {
-        const panel    = document.getElementById('sr-panel');
+        const panel = document.getElementById('sr-panel');
         if (!panel || !panel.classList.contains('visible')) return;
         // All elements that are part of the search UI
-        const searchUiIds = ['sr-panel','search-wrap','sr-modes','sr-toggles','sr-filters','search'];
+        const searchUiIds = ['sr-panel', 'search-wrap', 'sr-modes', 'sr-toggles', 'sr-filters', 'search'];
         const inside = searchUiIds.some(id => {
             const el = document.getElementById(id);
             return el && el.contains(e.target);

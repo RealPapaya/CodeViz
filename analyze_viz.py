@@ -763,9 +763,9 @@ HTML_SKELETON = """\
 
 <div id="layout">
   <div id="sidebar">
-    <div id="sidebar-title">Modules</div>
     <div id="ft-filter"></div>
-    <div id="module-list"></div>
+    <div id="sidebar-title" data-collapsible="true" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;"><span>File System</span><span class="legend-toggle" style="font-size: 13px; transition: transform 0.2s;">▾</span></div>
+    <div id="module-list" style="display: block;"></div>
   </div>
   <div id="sidebar-resizer"></div>
   <div id="graph-wrap">
