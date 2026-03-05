@@ -3484,9 +3484,12 @@ const _srState = {
     _contentIndexed:    false,  // true = server used in-memory index (⚡ fast)
     // View mode (code search)
     viewMode:    'list',       // 'list' | 'tree'
+    // View mode (file search)
+    fileViewMode: 'list',      // 'list' | 'tree'
     // Tree expand state
     _openGroups:  new Set(),   // open file groups (code mode)
     _openFolders: new Set(),   // open folder nodes (tree mode)
+    _openFileFolders: new Set(), // open folder nodes (file tree mode)
     // Advanced filter
     _filterFuncOnly: false,    // show only lines that look like func definitions
     // Virtual scroll
@@ -3556,6 +3559,35 @@ function _srHighlight(text, q) {
     return escapeHtml(text).replace(pattern, m => `<mark>${m}</mark>`);
 }
 
+// Highlight individual fuzzy-matched character positions in text
+function _srFuzzyHighlight(text, positions) {
+    if (!positions || positions.length === 0) return escapeHtml(text);
+    const posSet = new Set(positions);
+    let html = '';
+    for (let i = 0; i < text.length; i++) {
+        const ch = escapeHtml(text[i]);
+        if (posSet.has(i)) {
+            html += `<mark class="sr-fuzzy-mark">${ch}</mark>`;
+        } else {
+            html += ch;
+        }
+    }
+    return html;
+}
+
+// Compute fuzzy match character positions in text for query q
+// Returns array of matched indices, or null if no fuzzy match
+function _srFuzzyPositions(text, q) {
+    const t = _srState.matchCase ? text : text.toLowerCase();
+    const ql = _srState.matchCase ? q : q.toLowerCase();
+    const positions = [];
+    let qi = 0;
+    for (let i = 0; i < t.length && qi < ql.length; i++) {
+        if (t[i] === ql[qi]) { positions.push(i); qi++; }
+    }
+    return qi === ql.length ? positions : null;
+}
+
 function _srSearchFiles(q) {
     if (!q) return [];
     const ql = q.toLowerCase();
@@ -3619,7 +3651,16 @@ function _srSearchFiles(q) {
         } else {
             s = score(f);
         }
-        if (s >= 0) scored.push({ ...f, _score: s, _type: 'file' });
+        if (s >= 0) {
+            // Track fuzzy-matched positions for per-character highlighting
+            let _fuzzyLabelPos = null, _fuzzyPathPos = null;
+            if (s < 1000 && !pattern && !ww) {
+                // Fuzzy match — compute positions for highlight
+                _fuzzyLabelPos = _srFuzzyPositions(f.label, q);
+                if (!_fuzzyLabelPos) _fuzzyPathPos = _srFuzzyPositions(f.path, q);
+            }
+            scored.push({ ...f, _score: s, _type: 'file', _fuzzyLabelPos, _fuzzyPathPos });
+        }
     }
     scored.sort((a, b) => b._score - a._score || a.label.localeCompare(b.label));
     return scored;
@@ -4072,12 +4113,19 @@ function _srRenderActionBar() {
         });
 
     } else {
-        // FILES mode bar: just count + inline include/exclude
+        // FILES mode bar: count + view toggles + inline include/exclude
         const n = _srState.results.length;
+        const isFileTree = _srState.fileViewMode === 'tree';
         bar.innerHTML = `
 <div class="sr-ab-top">
   <span class="sr-ab-info"><span class="sr-ab-count">${n.toLocaleString()}</span>&thinsp;files</span>
   <span class="sr-ab-spacer"></span>
+  ${isFileTree ? `<button class="sr-ab-btn" id="sr-fi-collapse-all" title="Collapse All">⊟</button>
+  <button class="sr-ab-btn" id="sr-fi-expand-all" title="Expand All">⊞</button>
+  <div class="sr-ab-sep"></div>` : ''}
+  <button class="sr-ab-btn${!isFileTree ? ' active' : ''}" id="sr-fi-view-list" title="View as List">≡</button>
+  <button class="sr-ab-btn${isFileTree ? ' active' : ''}" id="sr-fi-view-tree" title="View as Tree">⬡</button>
+  <div class="sr-ab-sep"></div>
   <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" title="Files to include">
     <span class="sr-ab-filter-icon">⊕</span>
     <input class="sr-ab-filter-input" id="sr-ab-fi-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="*.c, *.h" spellcheck="false" autocomplete="off">
@@ -4092,6 +4140,40 @@ function _srRenderActionBar() {
 
         const iInc = document.getElementById('sr-ab-fi-inc');
         const iExc = document.getElementById('sr-ab-fi-exc');
+
+        // View toggle buttons
+        const fiViewList = document.getElementById('sr-fi-view-list');
+        const fiViewTree = document.getElementById('sr-fi-view-tree');
+        if (fiViewList) fiViewList.addEventListener('click', () => {
+            if (_srState.fileViewMode === 'list') return;
+            _srState.fileViewMode = 'list'; _srRenderResults(); _srRenderActionBar();
+        });
+        if (fiViewTree) fiViewTree.addEventListener('click', () => {
+            if (_srState.fileViewMode === 'tree') return;
+            _srState.fileViewMode = 'tree'; _srRenderResults(); _srRenderActionBar();
+        });
+
+        // Collapse / Expand All (tree mode only)
+        const fiCollapseAll = document.getElementById('sr-fi-collapse-all');
+        const fiExpandAll   = document.getElementById('sr-fi-expand-all');
+        if (fiCollapseAll) fiCollapseAll.addEventListener('click', () => {
+            _srState._openFileFolders.clear();
+            document.querySelectorAll('#sr-results .sr-fi-tree-body').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('#sr-results .sr-fi-tree-chevron').forEach(el => {
+                el.classList.remove('open'); el.textContent = '▸';
+            });
+        });
+        if (fiExpandAll) fiExpandAll.addEventListener('click', () => {
+            document.querySelectorAll('#sr-results .sr-fi-tree-folder-hdr').forEach(hdr => {
+                const fpath = hdr.dataset.fpath;
+                if (fpath) _srState._openFileFolders.add(fpath);
+                const body = hdr.nextElementSibling;
+                if (body) body.style.display = '';
+                const chev = hdr.querySelector('.sr-fi-tree-chevron');
+                if (chev) { chev.classList.add('open'); chev.textContent = '▾'; }
+            });
+        });
+
         let _fTimer = null;
         function _fiChanged() {
             clearTimeout(_fTimer);
@@ -4157,6 +4239,14 @@ function _srRenderResults() {
                 : '';
             return;
         }
+
+        // Tree view
+        if (_srState.fileViewMode === 'tree') {
+            _srRenderFileTree(resultsEl, results, q);
+            return;
+        }
+
+        // List view (virtual scroll)
         const end = Math.min(_SR_VS_CHUNK, results.length);
         resultsEl.innerHTML = _srBuildFileRowsHtml(results, 0, end, q)
             + (results.length > end ? '<div class="sr-vs-sentinel"></div>' : '');
@@ -4209,9 +4299,13 @@ function _srBuildFileRowsHtml(results, start, end, q) {
         if (!r) continue;
         const mc  = _srModuleColor(r.module);
         const ic  = _extIcon(r.ext);
-        const nm  = _srHighlight(r.label, q);
+        const nm  = r._fuzzyLabelPos
+            ? _srFuzzyHighlight(r.label, r._fuzzyLabelPos)
+            : _srHighlight(r.label, q);
         const dir = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
-        const dirHl  = dir ? `<span class="sr-fi-dir">${_srHighlight(dir, q)}</span>` : '';
+        const dirHl  = dir ? `<span class="sr-fi-dir">${r._fuzzyPathPos
+            ? _srFuzzyHighlight(dir, r._fuzzyPathPos.filter(i => i < dir.length))
+            : _srHighlight(dir, q)}</span>` : '';
         const ac     = i === _srState.activeIdx ? ' sr-active' : '';
         const fcBadge = r.func_count > 0
             ? `<span class="sr-fi-fc" title="${r.func_count} functions">ƒ ${r.func_count}</span>` : '';
@@ -4242,6 +4336,111 @@ function _srWireFileRows(container, results) {
         if (!r) return;
         row.addEventListener('click',      () => _srSelectResult(r));
         row.addEventListener('mouseenter', () => { _srState.activeIdx = idx; _srHoverResult(r); _srUpdateActive(); });
+    });
+}
+
+// ── File tree mode: group results by folder ───────────────────────────────────
+function _srBuildFileTree(results) {
+    // Build a nested folder structure from flat result list
+    const root = { name: '', path: '', children: [], files: [] };
+    const nodeMap = { '': root };
+    function getNode(folderPath) {
+        if (nodeMap[folderPath]) return nodeMap[folderPath];
+        const parts = folderPath.split('/');
+        const name  = parts[parts.length - 1];
+        const parent = parts.slice(0, -1).join('/');
+        const parentNode = getNode(parent);
+        const node = { name, path: folderPath, children: [], files: [] };
+        parentNode.children.push(node);
+        nodeMap[folderPath] = node;
+        return node;
+    }
+    for (const r of results) {
+        const lastSlash = r.path.lastIndexOf('/');
+        const folder = lastSlash >= 0 ? r.path.slice(0, lastSlash) : '';
+        getNode(folder).files.push(r);
+    }
+    function sortNode(n) {
+        n.children.sort((a, b) => a.name.localeCompare(b.name));
+        n.children.forEach(sortNode);
+    }
+    sortNode(root);
+    return root;
+}
+
+function _srRenderFileTreeNode(node, q, depth) {
+    let html = '';
+    const indent = depth * 14;
+    for (const child of node.children) {
+        const isOpen = _srState._openFileFolders.has(child.path);
+        html += `<div class="sr-fi-tree-folder">
+  <div class="sr-fi-tree-folder-hdr" data-fpath="${escapeHtml(child.path)}" style="padding-left:${indent + 6}px">
+    <span class="sr-fi-tree-chevron sr-chevron${isOpen ? ' open' : ''}">${isOpen ? '▾' : '▸'}</span>
+    <span class="sr-tree-folder-icon">📁</span>
+    <span class="sr-tree-folder-name">${escapeHtml(child.name)}</span>
+    <span class="sr-match-badge" style="margin-left:auto">${_srCountFileTreeMatches(child)}</span>
+  </div>
+  <div class="sr-fi-tree-body" style="${isOpen ? '' : 'display:none'}">
+    ${_srRenderFileTreeNode(child, q, depth + 1)}
+  </div>
+</div>`;
+    }
+    for (const r of node.files) {
+        const mc = _srModuleColor(r.module);
+        const ic = _extIcon(r.ext);
+        const nm = r._fuzzyLabelPos ? _srFuzzyHighlight(r.label, r._fuzzyLabelPos) : _srHighlight(r.label, q);
+        const fcBadge = r.func_count > 0 ? `<span class="sr-fi-fc" title="${r.func_count} functions">ƒ ${r.func_count}</span>` : '';
+        html += `<div class="sr-fi-row sr-fi-tree-file" data-path="${escapeHtml(r.path)}" style="padding-left:${indent + 24}px">
+  <div class="sr-fi-left" style="border-left-color:${mc}"><span class="sr-fi-icon">${ic}</span></div>
+  <div class="sr-fi-body">
+    <div class="sr-fi-name">${nm}</div>
+    <div class="sr-fi-path"><span class="sr-meta-mod" style="background:${mc}22;color:${mc};border:1px solid ${mc}44">${escapeHtml(r.module)}</span>${fcBadge}</div>
+  </div>
+</div>`;
+    }
+    return html;
+}
+
+function _srCountFileTreeMatches(node) {
+    let n = node.files.length;
+    for (const c of node.children) n += _srCountFileTreeMatches(c);
+    return n;
+}
+
+function _srRenderFileTree(resultsEl, results, q) {
+    const tree = _srBuildFileTree(results);
+    // Default: open top-level folders
+    if (_srState._openFileFolders.size === 0) {
+        tree.children.forEach(c => _srState._openFileFolders.add(c.path));
+    }
+    const html = _srRenderFileTreeNode(tree, q, 0);
+    resultsEl.innerHTML = html || `<div class="sr-empty">No results</div>`;
+
+    // Wire clicks on folder headers
+    resultsEl.querySelectorAll('.sr-fi-tree-folder-hdr').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+            const fpath = hdr.dataset.fpath;
+            const body  = hdr.nextElementSibling;
+            const chev  = hdr.querySelector('.sr-fi-tree-chevron');
+            if (_srState._openFileFolders.has(fpath)) {
+                _srState._openFileFolders.delete(fpath);
+                if (body) body.style.display = 'none';
+                if (chev) { chev.classList.remove('open'); chev.textContent = '▸'; }
+            } else {
+                _srState._openFileFolders.add(fpath);
+                if (body) body.style.display = '';
+                if (chev) { chev.classList.add('open'); chev.textContent = '▾'; }
+            }
+        });
+    });
+
+    // Wire clicks on file rows
+    resultsEl.querySelectorAll('.sr-fi-tree-file').forEach(row => {
+        const path = row.dataset.path;
+        const r = results.find(x => x.path === path);
+        if (!r) return;
+        row.addEventListener('click',      () => _srSelectResult(r));
+        row.addEventListener('mouseenter', () => _srHoverResult(r));
     });
 }
 
@@ -4514,6 +4713,7 @@ function onSearch(e) {
         _srRenderPanel();
     } else {
         _srState.results = [];
+        _srRenderPanel();   // show panel with loading state immediately
         _srDebounce(q);
     }
 
@@ -4651,6 +4851,22 @@ function initSearch() {
         if (_srState.query) return; // only close if no active query
         _srClose();
     });
+
+    // Click outside search area → temporarily hide panel (re-focus to restore)
+    document.addEventListener('click', e => {
+        const panel    = document.getElementById('sr-panel');
+        if (!panel || !panel.classList.contains('visible')) return;
+        // All elements that are part of the search UI
+        const searchUiIds = ['sr-panel','search-wrap','sr-modes','sr-toggles','sr-filters','search'];
+        const inside = searchUiIds.some(id => {
+            const el = document.getElementById(id);
+            return el && el.contains(e.target);
+        });
+        if (!inside) {
+            panel.classList.remove('visible');
+            // Don't clear query — re-focusing input will restore panel
+        }
+    }, true); // capture phase
 
     // Reopen on focus
     input.addEventListener('focus', () => {

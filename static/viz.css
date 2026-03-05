@@ -2765,3 +2765,48 @@ body {
 
 /* ── Virtual scroll sentinel ─────────────────────────────────────────────────── */
 .sr-vs-sentinel { height: 4px; pointer-events: none; }
+
+/* ── Fuzzy match highlight (individual chars) ─────────────────────────────── */
+.sr-fuzzy-mark {
+    background: transparent;
+    color: #f97316;
+    font-weight: 700;
+    border-bottom: 1px solid rgba(249, 115, 22, 0.5);
+    border-radius: 0;
+    padding: 0;
+}
+.sr-fi-name .sr-fuzzy-mark,
+.sr-file-name .sr-fuzzy-mark {
+    color: #f97316;
+    background: rgba(249, 115, 22, 0.12);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* ── File search tree view ───────────────────────────────────────────────── */
+.sr-fi-tree-folder { }
+.sr-fi-tree-folder-hdr {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text);
+    user-select: none;
+    border-radius: 4px;
+}
+.sr-fi-tree-folder-hdr:hover { background: rgba(255,255,255,0.05); }
+.sr-fi-tree-chevron {
+    font-size: 9px;
+    color: var(--muted);
+    width: 10px;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+}
+.sr-fi-tree-body { }
+.sr-fi-tree-file {
+    cursor: pointer;
+    padding: 3px 8px 3px 28px;
+}
+.sr-fi-tree-file:hover { background: rgba(255,255,255,0.05); }
