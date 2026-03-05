@@ -693,6 +693,7 @@ HTML_SKELETON = """\
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/x86asm.min.js"></script>
@@ -713,6 +714,7 @@ HTML_SKELETON = """\
 
 <div id="topbar">
   <div class="logo">VIZCODE</div>
+  <button id="dashboard-btn" title="Open Analytics Dashboard" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"><span style="font-size:14px">📊</span> Dashboard</button>
   <div id="project-type-badge" style="display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;"></div>
   <div class="stats-bar">
     <div class="stat">Files <strong id="st-files">0</strong></div>

@@ -1640,3 +1640,346 @@ body {
         transform: translateY(10px) scale(0.95);
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD OVERLAY
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#dashboard-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 10, 15, 0.92);
+    z-index: 9000;
+    backdrop-filter: blur(4px);
+    animation: dash-fade-in 0.25s ease-out;
+}
+
+@keyframes dash-fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+#dashboard-panel {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#dashboard-header {
+    flex-shrink: 0;
+    height: 52px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+}
+
+.dash-logo-text {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    text-transform: uppercase;
+}
+
+.dash-logo-sep {
+    color: var(--border);
+    font-size: 18px;
+}
+
+.dash-logo-sub {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+#dashboard-close {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+#dashboard-close:hover {
+    border-color: #f87171;
+    color: #f87171;
+}
+
+#dashboard-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 20px 24px 32px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+/* ── Stat Strip ── */
+.dash-stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.dash-stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+}
+
+.dash-stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--ds-accent, var(--accent));
+    opacity: 0.7;
+}
+
+.dash-stat-card:hover {
+    border-color: var(--ds-accent, var(--accent));
+}
+
+.dash-stat-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+}
+
+.dash-stat-value {
+    font-size: 26px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--ds-accent, var(--accent));
+    line-height: 1;
+    margin-bottom: 4px;
+}
+
+.dash-stat-sub {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+/* ── Chart Grid ── */
+.dash-grid {
+    display: grid;
+    gap: 16px;
+}
+
+.dash-grid-2 {
+    grid-template-columns: 1fr 1fr;
+}
+
+.dash-grid-3 {
+    grid-template-columns: 1fr 1.6fr 1fr;
+}
+
+.dash-grid-full {
+    grid-template-columns: 1fr;
+}
+
+.dash-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.2s;
+}
+
+.dash-card:hover {
+    border-color: #2a3f5a;
+}
+
+.dash-card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dash-card-title-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+}
+
+.dash-chart-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 200px;
+}
+
+.dash-chart-wrap canvas {
+    max-width: 100%;
+}
+
+/* ── Fun Facts / Top Lists ── */
+.dash-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+}
+
+.dash-list-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    background: var(--panel2);
+    border-radius: 5px;
+    border: 1px solid transparent;
+    transition: border-color 0.15s;
+    cursor: default;
+}
+
+.dash-list-row:hover {
+    border-color: var(--border);
+}
+
+.dash-list-rank {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    width: 18px;
+    flex-shrink: 0;
+    text-align: right;
+}
+
+.dash-list-name {
+    flex: 1;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dash-list-val {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.dash-list-bar {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0.5;
+    flex-shrink: 0;
+    max-width: 60px;
+    transition: opacity 0.15s;
+}
+
+.dash-list-row:hover .dash-list-bar {
+    opacity: 0.9;
+}
+
+/* ── Section Label ── */
+.dash-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 20px 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dash-section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+/* ── Treemap Cells ── */
+.dash-treemap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    flex: 1;
+    align-content: flex-start;
+}
+
+.dash-tm-cell {
+    border-radius: 4px;
+    display: flex;
+    align-items: flex-end;
+    padding: 4px 6px;
+    overflow: hidden;
+    cursor: default;
+    transition: opacity 0.15s;
+    position: relative;
+}
+
+.dash-tm-cell:hover {
+    opacity: 0.85;
+}
+
+.dash-tm-label {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: rgba(255, 255, 255, 0.85);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+    line-height: 1.2;
+}
+
+/* ── No data placeholder ── */
+.dash-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 12px;
+    font-style: italic;
+}

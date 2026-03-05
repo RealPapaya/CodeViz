@@ -2433,7 +2433,7 @@ function buildSidebar() {
             `<span class="tree-arrow ${hasSubdirs ? '▶' : 'leaf'}">▶</span>` +
             `<span class="mod-dot" style="background:${m.color}"></span>` +
             `<span class="mod-name" title="${m.id}">${m.id}</span>` +
-            `<span class="mod-count" title="${m.file_count} analysed${m.other_count ? ` + ${m.other_count} other` : ''}">${m.file_count}${m.other_count ? `<span class="mod-count-extra">+${m.other_count}</span>` : ''}</span>`;
+            `<span class="mod-count" title="${m.file_count} analysed">${m.file_count}</span>`;
 
         // ── Sub-folder children container ──
         const children = document.createElement('div');
@@ -2582,9 +2582,7 @@ function loadLevel0() {
     const els = [];
     DATA.modules.forEach(m => {
         const otherCount = m.other_count || 0;
-        const totalLabel = otherCount
-            ? `${m.id}\n${m.file_count} + ${otherCount} files`
-            : `${m.id}\n${m.file_count} files`;
+        const totalLabel = `${m.id}\n${m.file_count} files`;
         const ttExtra = otherCount ? `\nOther/binary: ${otherCount}` : '';
         els.push({
             data: {
@@ -3838,3 +3836,403 @@ function refreshLegend() {
 
 // Call on init
 document.addEventListener('DOMContentLoaded', buildLegend);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VIZCODE DASHBOARD — Analytics Overlay
+// All chart instances stored here for destroy/recreate on resize
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const _dashCharts = {};   // id → Chart instance
+let _dashBuilt = false;
+
+// ── Chart.js global defaults ──────────────────────────────────────────────────
+function _applyChartDefaults() {
+    if (typeof Chart === 'undefined') return;
+    Chart.defaults.color = '#64748b';
+    Chart.defaults.borderColor = '#1a2535';
+    Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+    Chart.defaults.font.size = 11;
+    Chart.defaults.plugins.legend.labels.boxWidth = 10;
+    Chart.defaults.plugins.legend.labels.padding = 14;
+    Chart.defaults.plugins.tooltip.backgroundColor = '#0d1520';
+    Chart.defaults.plugins.tooltip.borderColor = '#1a2535';
+    Chart.defaults.plugins.tooltip.borderWidth = 1;
+    Chart.defaults.plugins.tooltip.titleColor = '#e2e8f0';
+    Chart.defaults.plugins.tooltip.bodyColor = '#94a3b8';
+    Chart.defaults.plugins.tooltip.padding = 10;
+}
+
+// ── DOM builder ───────────────────────────────────────────────────────────────
+function _buildDashboardDOM() {
+    if (document.getElementById('dashboard-overlay')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dashboard-overlay';
+    overlay.innerHTML = `
+<div id="dashboard-panel">
+  <div id="dashboard-header">
+    <span class="dash-logo-text">VIZCODE</span>
+    <span class="dash-logo-sep">|</span>
+    <span class="dash-logo-sub">📊 Analytics Dashboard</span>
+    <button id="dashboard-close" title="Close Dashboard (Esc)">✕</button>
+  </div>
+  <div id="dashboard-scroll">
+
+    <!-- ── Stat Strip ── -->
+    <div class="dash-stat-strip" id="dash-stat-strip"></div>
+
+    <!-- ── Row 1: File Types + Files per Module ── -->
+    <div class="dash-section-label">Codebase Composition</div>
+    <div class="dash-grid dash-grid-2" style="margin-bottom:16px">
+      <div class="dash-card">
+        <div class="dash-card-title"><span class="dash-card-title-dot"></span>File Type Distribution</div>
+        <div class="dash-chart-wrap" style="min-height:240px"><canvas id="chart-file-types"></canvas></div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#ffd700"></span>Files per Module</div>
+        <div class="dash-chart-wrap" style="min-height:240px"><canvas id="chart-files-per-mod"></canvas></div>
+      </div>
+    </div>
+
+    <!-- ── Row 2: Functions + Edge Types ── -->
+    <div class="dash-section-label">Structure & Connectivity</div>
+    <div class="dash-grid dash-grid-2" style="margin-bottom:16px">
+      <div class="dash-card">
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#a78bfa"></span>Functions per Module</div>
+        <div class="dash-chart-wrap" style="min-height:220px"><canvas id="chart-funcs-per-mod"></canvas></div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#fb923c"></span>Dependency Edge Types</div>
+        <div class="dash-chart-wrap" style="min-height:220px"><canvas id="chart-edge-types"></canvas></div>
+      </div>
+    </div>
+
+    <!-- ── Row 3: Top Lists ── -->
+    <div class="dash-section-label">Top Rankings</div>
+    <div class="dash-grid dash-grid-2" style="margin-bottom:16px">
+      <div class="dash-card">
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#34d399"></span>Largest Files by Size</div>
+        <div class="dash-list" id="list-largest-files"></div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#f472b6"></span>Most Functions in a File</div>
+        <div class="dash-list" id="list-most-funcs"></div>
+      </div>
+    </div>
+
+    <!-- ── Row 4: Module Size Treemap ── -->
+    <div class="dash-section-label">Module Size Map</div>
+    <div class="dash-card" style="margin-bottom:16px">
+      <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#60a5fa"></span>Module Footprint — proportional to total file size</div>
+      <div class="dash-treemap" id="dash-treemap" style="min-height:120px"></div>
+    </div>
+
+  </div>
+</div>`;
+    document.body.appendChild(overlay);
+
+    document.getElementById('dashboard-close').addEventListener('click', closeDashboard);
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeDashboard(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && overlay.style.display !== 'none') closeDashboard(); });
+}
+
+// ── Entry points ──────────────────────────────────────────────────────────────
+function openDashboard() {
+    _buildDashboardDOM();
+    _applyChartDefaults();
+    const overlay = document.getElementById('dashboard-overlay');
+    overlay.style.display = 'block';
+    if (!_dashBuilt) { _renderDashboard(); _dashBuilt = true; }
+}
+
+function closeDashboard() {
+    const overlay = document.getElementById('dashboard-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+// ── Data helpers ──────────────────────────────────────────────────────────────
+function _flatFiles() {
+    // Returns flat array of all file objects from files_by_module
+    if (!window.DATA) return [];
+    const out = [];
+    for (const [, files] of Object.entries(DATA.files_by_module || {})) {
+        for (const f of files) out.push(f);
+    }
+    return out;
+}
+
+function _allEdges() {
+    // Returns flat array of all file edge objects {s,t,type}
+    if (!window.DATA) return [];
+    const out = [];
+    for (const [, edges] of Object.entries(DATA.file_edges_by_module || {})) {
+        for (const e of edges) out.push(e);
+    }
+    return out;
+}
+
+function _fmtBytes(b) {
+    if (b === 0) return '0 B';
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+    return (b / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+function _fmtNum(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
+}
+
+// ── Stat Strip ────────────────────────────────────────────────────────────────
+function _buildStatStrip() {
+    const s = DATA.stats;
+    const allF = _flatFiles();
+    const totalSize = allF.reduce((a, f) => a + (f.size || 0), 0);
+    const edges = _allEdges();
+
+    // Estimated LOC: average 40 bytes/line heuristic for code
+    const estLOC = Math.round(totalSize / 40);
+
+    const cards = [
+        {
+            label: 'Total Files Analysed',
+            value: _fmtNum(s.files),
+            sub: `+ ${s.other_files || 0} other`,
+            accent: '#00d4ff',
+        },
+        {
+            label: 'Total Functions',
+            value: _fmtNum(s.functions),
+            sub: `${s.calls.toLocaleString()} call sites`,
+            accent: '#a78bfa',
+        },
+        {
+            label: 'Total Codebase Size',
+            value: _fmtBytes(totalSize),
+            sub: `~${_fmtNum(estLOC)} lines estimated`,
+            accent: '#34d399',
+        },
+        {
+            label: 'Dependency Edges',
+            value: _fmtNum(edges.length),
+            sub: `across ${s.modules} modules`,
+            accent: '#fb923c',
+        },
+    ];
+
+    const strip = document.getElementById('dash-stat-strip');
+    if (!strip) return;
+    strip.innerHTML = cards.map(c => `
+<div class="dash-stat-card" style="--ds-accent:${c.accent}">
+  <div class="dash-stat-label">${c.label}</div>
+  <div class="dash-stat-value">${c.value}</div>
+  <div class="dash-stat-sub">${c.sub}</div>
+</div>`).join('');
+}
+
+// ── Chart helpers ─────────────────────────────────────────────────────────────
+function _mkChart(id, type, data, options) {
+    if (_dashCharts[id]) { _dashCharts[id].destroy(); delete _dashCharts[id]; }
+    const canvas = document.getElementById(id);
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d');
+    _dashCharts[id] = new Chart(ctx, { type, data, options });
+    return _dashCharts[id];
+}
+
+// Palette used across charts
+const DASH_PALETTE = [
+    '#00d4ff', '#a78bfa', '#34d399', '#ffd700', '#fb923c',
+    '#f472b6', '#60a5fa', '#e879f9', '#10b981', '#f87171',
+    '#38bdf8', '#c084fc', '#4ade80', '#facc15', '#ff6b35',
+];
+
+// ── Chart: File Type Distribution ─────────────────────────────────────────────
+function _chartFileTypes() {
+    const tc = DATA.stats.type_counts || {};
+    const sorted = Object.entries(tc).sort((a, b) => b[1] - a[1]);
+    const labels = sorted.map(([k]) => k.replace('_', ' '));
+    const vals = sorted.map(([, v]) => v);
+    const colors = sorted.map((_, i) => DASH_PALETTE[i % DASH_PALETTE.length]);
+
+    _mkChart('chart-file-types', 'doughnut', {
+        labels,
+        datasets: [{
+            data: vals, backgroundColor: colors.map(c => c + 'cc'),
+            borderColor: colors, borderWidth: 1.5, hoverOffset: 6
+        }],
+    }, {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '60%',
+        plugins: {
+            legend: { position: 'right', labels: { color: '#94a3b8', boxWidth: 10, padding: 12 } },
+            tooltip: {
+                callbacks: {
+                    label: ctx => ` ${ctx.label}: ${ctx.parsed} file${ctx.parsed !== 1 ? 's' : ''}`,
+                }
+            },
+        },
+    });
+}
+
+// ── Chart: Files per Module ───────────────────────────────────────────────────
+function _chartFilesPerMod() {
+    const mods = (DATA.modules || []).slice().sort((a, b) => b.file_count - a.file_count).slice(0, 18);
+    const labels = mods.map(m => m.label.length > 18 ? m.label.slice(0, 16) + '…' : m.label);
+    const vals = mods.map(m => m.file_count);
+    const colors = mods.map(m => m.color || '#00d4ff');
+
+    _mkChart('chart-files-per-mod', 'bar', {
+        labels,
+        datasets: [{
+            label: 'Files', data: vals,
+            backgroundColor: colors.map(c => c + '99'),
+            borderColor: colors, borderWidth: 1.5, borderRadius: 3
+        }],
+    }, {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { grid: { color: '#1a253588' }, ticks: { color: '#64748b' } },
+            y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+        },
+    });
+}
+
+// ── Chart: Functions per Module ───────────────────────────────────────────────
+function _chartFuncsPerMod() {
+    const mods = (DATA.modules || []).slice().sort((a, b) => b.func_count - a.func_count).slice(0, 18);
+    const labels = mods.map(m => m.label.length > 18 ? m.label.slice(0, 16) + '…' : m.label);
+    const vals = mods.map(m => m.func_count);
+    const colors = mods.map(m => m.color ? m.color.replace('#', '') : 'a78bfa');
+
+    _mkChart('chart-funcs-per-mod', 'bar', {
+        labels,
+        datasets: [{
+            label: 'Functions', data: vals,
+            backgroundColor: '#a78bfa55',
+            borderColor: '#a78bfa', borderWidth: 1.5, borderRadius: 3
+        }],
+    }, {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { grid: { color: '#1a253588' }, ticks: { color: '#64748b' } },
+            y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+        },
+    });
+}
+
+// ── Chart: Edge Types ─────────────────────────────────────────────────────────
+function _chartEdgeTypes() {
+    const edges = _allEdges();
+    const counts = {};
+    for (const e of edges) counts[e.type] = (counts[e.type] || 0) + 1;
+    if (!Object.keys(counts).length) return;
+
+    const edgeDefs = DATA.edge_types || {};
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const labels = sorted.map(([k]) => edgeDefs[k]?.label || k);
+    const vals = sorted.map(([, v]) => v);
+    const colors = sorted.map(([k]) => edgeDefs[k]?.color || '#00d4ff');
+
+    _mkChart('chart-edge-types', 'doughnut', {
+        labels,
+        datasets: [{
+            data: vals,
+            backgroundColor: colors.map(c => c + 'cc'),
+            borderColor: colors, borderWidth: 1.5, hoverOffset: 5
+        }],
+    }, {
+        responsive: true, maintainAspectRatio: false,
+        cutout: '58%',
+        plugins: {
+            legend: { position: 'right', labels: { color: '#94a3b8', boxWidth: 10, padding: 10, font: { size: 10 } } },
+            tooltip: {
+                callbacks: {
+                    label: ctx => ` ${ctx.label}: ${ctx.parsed.toLocaleString()}`,
+                }
+            },
+        },
+    });
+}
+
+// ── Top Lists ─────────────────────────────────────────────────────────────────
+function _buildLargestFiles() {
+    const el = document.getElementById('list-largest-files');
+    if (!el) return;
+    const files = _flatFiles().filter(f => f.size > 0).sort((a, b) => b.size - a.size).slice(0, 10);
+    const max = files[0]?.size || 1;
+    el.innerHTML = files.map((f, i) => `
+<div class="dash-list-row" title="${f.path}">
+  <span class="dash-list-rank">${i + 1}</span>
+  <span class="dash-list-name">${f.label}</span>
+  <div class="dash-list-bar" style="width:${Math.round(f.size / max * 60)}px;background:#34d399"></div>
+  <span class="dash-list-val" style="color:#34d399">${_fmtBytes(f.size)}</span>
+</div>`).join('') || '<div class="dash-empty">No data</div>';
+}
+
+function _buildMostFuncFiles() {
+    const el = document.getElementById('list-most-funcs');
+    if (!el) return;
+    const files = _flatFiles().filter(f => (f.func_count || 0) > 0)
+        .sort((a, b) => (b.func_count || 0) - (a.func_count || 0)).slice(0, 10);
+    const max = files[0]?.func_count || 1;
+    el.innerHTML = files.map((f, i) => `
+<div class="dash-list-row" title="${f.path}">
+  <span class="dash-list-rank">${i + 1}</span>
+  <span class="dash-list-name">${f.label}</span>
+  <div class="dash-list-bar" style="width:${Math.round(f.func_count / max * 60)}px;background:#f472b6"></div>
+  <span class="dash-list-val" style="color:#f472b6">${f.func_count} fn</span>
+</div>`).join('') || '<div class="dash-empty">No function data</div>';
+}
+
+// ── Module Treemap ─────────────────────────────────────────────────────────────
+function _buildTreemap() {
+    const el = document.getElementById('dash-treemap');
+    if (!el) return;
+    const mods = (DATA.modules || []).map(m => {
+        const files = (DATA.files_by_module[m.id] || []);
+        const totalSz = files.reduce((a, f) => a + (f.size || 0), 0);
+        return { ...m, totalSz };
+    }).filter(m => m.totalSz > 0).sort((a, b) => b.totalSz - a.totalSz);
+
+    const grand = mods.reduce((a, m) => a + m.totalSz, 0) || 1;
+
+    el.innerHTML = mods.map(m => {
+        const pct = m.totalSz / grand;
+        // Width proportional to sqrt(size) for better visual distribution
+        const flex = Math.max(0.5, Math.sqrt(pct) * 10);
+        const color = m.color || '#00d4ff';
+        const h = Math.max(48, Math.round(pct * 300));
+        const label = m.label.length > 14 ? m.label.slice(0, 12) + '…' : m.label;
+        return `
+<div class="dash-tm-cell" title="${m.label}\n${_fmtBytes(m.totalSz)}\n${m.file_count} files"
+     style="background:${color}22;border:1px solid ${color}55;flex:${flex};height:${h}px;min-width:${Math.round(flex * 10)}px;max-width:260px">
+  <div>
+    <div class="dash-tm-label" style="font-size:10px;font-weight:700;color:${color}">${label}</div>
+    <div class="dash-tm-label" style="font-size:9px;color:rgba(255,255,255,0.4)">${_fmtBytes(m.totalSz)}</div>
+  </div>
+</div>`;
+    }).join('');
+}
+
+// ── Master render ─────────────────────────────────────────────────────────────
+function _renderDashboard() {
+    if (!window.DATA) return;
+    _buildStatStrip();
+    _chartFileTypes();
+    _chartFilesPerMod();
+    _chartFuncsPerMod();
+    _chartEdgeTypes();
+    _buildLargestFiles();
+    _buildMostFuncFiles();
+    _buildTreemap();
+}
+
+// ── Init on DOMContentLoaded (after data parse, called from main init) ─────────
+// The dashboard-btn is already in the HTML; openDashboard() is called by onclick.
