@@ -26,6 +26,48 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 JOBS: dict = {}
 JOBS_LOCK = threading.Lock()
 
+# ─── Search index constants ──────────────────────────────────────────────────
+_SI_SKIP_DIRS = {
+    'Build','build','.git','__pycache__','node_modules','.next','dist',
+    'out','.venv','venv','.cache','.nyc_output','vendor','.idea','.vscode',
+    'coverage','.output','storybook-static','DEBUG','RELEASE',
+}
+_SI_BINARY_EXTS = {
+    '.bin','.rom','.efi','.lib','.obj','.exe','.dll','.pdb',
+    '.so','.a','.o','.png','.jpg','.jpeg','.gif','.ico','.bmp',
+    '.webp','.tiff','.pdf','.zip','.tar','.gz','.7z','.rar',
+    '.woff','.woff2','.ttf','.eot','.mp4','.mp3','.wav',
+}
+_SI_MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+def _build_search_index(jid: str, root: str):
+    """Background thread: read all non-binary files into memory for instant search."""
+    index: dict[str, str] = {}  # rel_path -> full content string
+    try:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if d not in _SI_SKIP_DIRS)
+            for fname in filenames:
+                ext = Path(fname).suffix.lower()
+                if ext in _SI_BINARY_EXTS:
+                    continue
+                abs_path = os.path.join(dirpath, fname)
+                rel = os.path.relpath(abs_path, root).replace('\\', '/')
+                try:
+                    if os.path.getsize(abs_path) > _SI_MAX_FILE_BYTES:
+                        continue
+                    with open(abs_path, encoding='utf-8', errors='replace') as fh:
+                        index[rel] = fh.read()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    with JOBS_LOCK:
+        if jid in JOBS:
+            JOBS[jid]['search_index'] = index
+    print(f'[SEARCH-IDX] Job {jid}: indexed {len(index):,} files into memory')
+
+
 # Cleanup old .result_*.html files left from previous server design
 for _f in Path(SCRIPT_DIR).glob('.result_*.html'):
     _f.unlink(missing_ok=True)
@@ -214,121 +256,110 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_resp({'error': str(e)}, 500)
 
         elif p == '/search':
-            # Full-text content search — ALL readable files in codebase, grouped by file
-            jid    = qs.get('job',    [''])[0]
-            q      = qs.get('q',      [''])[0].strip()
-            offset = int(qs.get('offset', ['0'])[0])  # for pagination (file-group level)
+            # Full-text content search — uses pre-built in-memory index for speed
+            import re as _re
+            import fnmatch as _fnmatch
 
-            if not jid or not q or len(q) < 2:
-                self.json_resp({'groups': [], 'total_matches': 0, 'total_files': 0, 'has_more': False})
-                return
+            jid        = qs.get('job',        [''])[0]
+            q          = qs.get('q',          [''])[0].strip()
+            offset     = int(qs.get('offset', ['0'])[0])
+            match_case = qs.get('match_case', ['0'])[0] == '1'
+            whole_word = qs.get('whole_word', ['0'])[0] == '1'
+            is_regex   = qs.get('is_regex',   ['0'])[0] == '1'
+            inc_glob   = qs.get('include',    [''])[0].strip()
+            exc_glob   = qs.get('exclude',    [''])[0].strip()
+
+            _EMPTY = {'groups': [], 'total_matches': 0, 'total_files': 0,
+                      'has_more': False, 'next_offset': 0, 'indexed': False}
+
+            if not jid or not q or len(q) < 1:
+                self.json_resp(_EMPTY); return
 
             with JOBS_LOCK:
                 job = JOBS.get(jid, {})
             root = job.get('root', '')
             if not root:
-                self.json_resp({'groups': [], 'total_matches': 0, 'total_files': 0, 'has_more': False})
-                return
+                self.json_resp(_EMPTY); return
 
-            import re as _re
-
-            # Support regex toggle: prefix q with 'r/' to enable
-            use_regex = q.startswith('r/')
-            raw_q = q[2:] if use_regex else q
+            # ── Build regex pattern ───────────────────────────────────────────
+            flags = 0 if match_case else _re.IGNORECASE
+            raw_q = q
             try:
-                if use_regex:
-                    pattern = _re.compile(raw_q, _re.IGNORECASE)
-                else:
-                    pattern = _re.compile(_re.escape(raw_q), _re.IGNORECASE)
-            except _re.error as e:
-                self.json_resp({'error': f'Regex error: {e}', 'groups': [], 'total_matches': 0,
-                                'total_files': 0, 'has_more': False})
-                return
+                core = raw_q if is_regex else _re.escape(raw_q)
+                if whole_word:
+                    core = r'\b' + core + r'\b'
+                pattern = _re.compile(core, flags)
+            except _re.error as exc:
+                self.json_resp({**_EMPTY, 'error': f'Regex error: {exc}'}); return
 
-            MAX_LINE_LEN   = 300   # chars per line to return
-            MAX_LINES_FILE = 100   # max match-lines per file
-            PAGE_FILES     = 50    # file groups returned per page
-            SKIP_DIRS  = {
-                'Build','build','.git','__pycache__','node_modules','.next','dist',
-                'out','.venv','venv','.cache','.nyc_output','vendor','.idea','.vscode',
-            }
-            BINARY_EXTS = {
-                '.bin','.rom','.efi','.lib','.obj','.exe','.dll','.pdb',
-                '.so','.a','.o','.png','.jpg','.jpeg','.gif','.ico','.bmp',
-                '.webp','.tiff','.pdf','.zip','.tar','.gz','.7z','.rar',
-            }
+            # ── Glob helpers ──────────────────────────────────────────────────
+            def _parse_globs(raw):
+                return [g.strip() for g in raw.split(',') if g.strip()]
 
-            # ── Walk ALL files ────────────────────────────────────────────────
-            total_matches  = 0
-            total_files    = 0
-            all_groups     = []   # [{path, label, module, ext, matches:[{line,text,ms,me}]}]
+            inc_globs = _parse_globs(inc_glob)
+            exc_globs = _parse_globs(exc_glob)
 
-            # Retrieve module colour map from graph data if available
+            def _glob_match(rel, globs):
+                for g in globs:
+                    if _fnmatch.fnmatch(rel, g) or _fnmatch.fnmatch(rel.replace('\\', '/'), g):
+                        return True
+                    if _fnmatch.fnmatch(os.path.basename(rel), g):
+                        return True
+                return False
+
+            # ── Shared per-match extractor (used by both fast + fallback paths) ─
+            MAX_LINE_LEN   = 300
+            MAX_LINES_FILE = 500    # raised from 200 → capture more hits per file
+            PAGE_FILES     = 100    # raised from 50 → fewer Load-more clicks
+
             graph_data = job.get('data') or {}
-            mod_colors = {}
-            for mod in graph_data.get('modules', []):
-                mod_colors[mod['id']] = mod.get('color', '#64748b')
+            mod_colors = {m['id']: m.get('color', '#64748b')
+                          for m in graph_data.get('modules', [])}
 
-            root_norm = os.path.normpath(root)
-
-            for dirpath, dirnames, filenames in os.walk(root):
-                # Prune skip dirs in-place
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-
-                for fname in sorted(filenames):
-                    ext = Path(fname).suffix.lower()
-                    if ext in BINARY_EXTS:
+            def _extract_matches(content: str, fname: str):
+                """Return list of match dicts for one file's content string."""
+                if not pattern.search(content):
+                    return []
+                hits = []
+                for lineno, line in enumerate(content.split('\n'), 1):
+                    m = pattern.search(line)
+                    if not m:
                         continue
+                    text = line.rstrip('\r')
+                    if len(text) > MAX_LINE_LEN:
+                        start  = max(0, m.start() - 60)
+                        prefix = '…' if start > 0 else ''
+                        text   = prefix + text[start: start + MAX_LINE_LEN]
+                        adj    = m.start() - start + len(prefix)
+                        ms, me = max(0, adj), max(0, adj) + (m.end() - m.start())
+                    else:
+                        ms, me = m.start(), m.end()
+                    hits.append({'line': lineno, 'text': text, 'ms': ms, 'me': me})
+                    if len(hits) >= MAX_LINES_FILE:
+                        break
+                return hits
 
-                    abs_path = os.path.join(dirpath, fname)
-                    rel = os.path.relpath(abs_path, root).replace('\\', '/')
+            total_matches = 0
+            total_files   = 0
+            all_groups    = []
 
-                    # Heuristic: skip large files > 2 MB
-                    try:
-                        if os.path.getsize(abs_path) > 2 * 1024 * 1024:
-                            continue
-                    except OSError:
+            # ── Fast path: use pre-built in-memory index ──────────────────────
+            search_index: dict | None = job.get('search_index')
+            using_index = search_index is not None
+
+            if using_index:
+                for rel in sorted(search_index.keys()):
+                    if inc_globs and not _glob_match(rel, inc_globs):
                         continue
-
-                    matches = []
-                    try:
-                        with open(abs_path, encoding='utf-8', errors='replace') as fh:
-                            # Quick pre-screen: read whole file, check if pattern exists
-                            content = fh.read()
-                            if not pattern.search(content):
-                                continue
-                            # Now collect per-line matches
-                            for lineno, line in enumerate(content.split('\n'), 1):
-                                m = pattern.search(line)
-                                if m:
-                                    text = line.rstrip('\r')
-                                    # Clamp display
-                                    if len(text) > MAX_LINE_LEN:
-                                        # centre the match in the window
-                                        start = max(0, m.start() - 60)
-                                        text = ('…' if start > 0 else '') + text[start:start + MAX_LINE_LEN]
-                                        adj = m.start() - start + (1 if start > 0 else 0)
-                                        ms = max(0, adj)
-                                        me = ms + len(raw_q)
-                                    else:
-                                        ms = m.start()
-                                        me = m.end()
-                                    matches.append({
-                                        'line': lineno,
-                                        'text': text,
-                                        'ms':   ms,
-                                        'me':   me,
-                                    })
-                                    if len(matches) >= MAX_LINES_FILE:
-                                        break   # cap per file
-                    except Exception:
+                    if exc_globs and _glob_match(rel, exc_globs):
                         continue
-
-                    if not matches:
+                    fname = rel.rsplit('/', 1)[-1]
+                    ext   = Path(fname).suffix.lower()
+                    hits  = _extract_matches(search_index[rel], fname)
+                    if not hits:
                         continue
-
                     total_files   += 1
-                    total_matches += len(matches)
+                    total_matches += len(hits)
                     mod_id = rel.split('/')[0] if '/' in rel else '_root'
                     all_groups.append({
                         'path':    rel,
@@ -336,25 +367,211 @@ class Handler(BaseHTTPRequestHandler):
                         'module':  mod_id,
                         'ext':     ext,
                         'color':   mod_colors.get(mod_id, '#64748b'),
-                        'count':   len(matches),
-                        'matches': matches,
+                        'count':   len(hits),
+                        'matches': hits,
                     })
 
-            # ── Sort: most matches first ──────────────────────────────────────
-            all_groups.sort(key=lambda g: -g['count'])
+            else:
+                # ── Fallback path: walk filesystem (index still building) ─────
+                FALLBACK_SKIP = {
+                    'Build','build','.git','__pycache__','node_modules','.next','dist',
+                    'out','.venv','venv','.cache','.nyc_output','vendor','.idea','.vscode',
+                }
+                for dirpath, dirnames, filenames in os.walk(root):
+                    dirnames[:] = [d for d in dirnames if d not in FALLBACK_SKIP]
+                    for fname in sorted(filenames):
+                        ext = Path(fname).suffix.lower()
+                        if ext in _SI_BINARY_EXTS:
+                            continue
+                        abs_path = os.path.join(dirpath, fname)
+                        rel = os.path.relpath(abs_path, root).replace('\\', '/')
+                        if inc_globs and not _glob_match(rel, inc_globs):
+                            continue
+                        if exc_globs and _glob_match(rel, exc_globs):
+                            continue
+                        try:
+                            if os.path.getsize(abs_path) > _SI_MAX_FILE_BYTES:
+                                continue
+                            with open(abs_path, encoding='utf-8', errors='replace') as fh:
+                                content = fh.read()
+                        except Exception:
+                            continue
+                        hits = _extract_matches(content, fname)
+                        if not hits:
+                            continue
+                        total_files   += 1
+                        total_matches += len(hits)
+                        mod_id = rel.split('/')[0] if '/' in rel else '_root'
+                        all_groups.append({
+                            'path':    rel,
+                            'label':   fname,
+                            'module':  mod_id,
+                            'ext':     ext,
+                            'color':   mod_colors.get(mod_id, '#64748b'),
+                            'count':   len(hits),
+                            'matches': hits,
+                        })
 
-            # ── Paginate ──────────────────────────────────────────────────────
+            all_groups.sort(key=lambda g: (-g['count'], g['path']))
             page_groups = all_groups[offset: offset + PAGE_FILES]
-            has_more    = (offset + PAGE_FILES) < len(all_groups)
 
             self.json_resp({
                 'groups':        page_groups,
                 'total_matches': total_matches,
                 'total_files':   total_files,
-                'has_more':      has_more,
+                'has_more':      (offset + PAGE_FILES) < len(all_groups),
                 'next_offset':   offset + PAGE_FILES,
                 'query':         q,
+                'indexed':       using_index,   # lets frontend show ⚡ badge
             })
+
+        elif p == '/search-stream':
+            # SSE streaming content search — results appear progressively as found
+            import re as _re
+            import fnmatch as _fnmatch
+
+            jid        = qs.get('job',        [''])[0]
+            q          = qs.get('q',          [''])[0].strip()
+            match_case = qs.get('match_case', ['0'])[0] == '1'
+            whole_word = qs.get('whole_word', ['0'])[0] == '1'
+            is_regex   = qs.get('is_regex',   ['0'])[0] == '1'
+            inc_glob   = qs.get('include',    [''])[0].strip()
+            exc_glob   = qs.get('exclude',    [''])[0].strip()
+
+            # ── SSE headers ──────────────────────────────────────────────────────
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'keep-alive')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.end_headers()
+
+            def _sse(obj):
+                try:
+                    line = 'data: ' + json.dumps(obj, ensure_ascii=False) + '\n\n'
+                    self.wfile.write(line.encode('utf-8'))
+                    self.wfile.flush()
+                    return True
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return False  # client disconnected
+
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+
+            if not jid or not q or not job:
+                _sse({'done': True, 'error': 'Invalid job or query',
+                      'total_matches': 0, 'total_files': 0}); return
+
+            root = job.get('root', '')
+            if not root:
+                _sse({'done': True, 'total_matches': 0, 'total_files': 0}); return
+
+            # ── Regex ─────────────────────────────────────────────────────────────
+            flags = 0 if match_case else _re.IGNORECASE
+            raw_q = q
+            try:
+                core = raw_q if is_regex else _re.escape(raw_q)
+                if whole_word: core = r'\b' + core + r'\b'
+                pattern = _re.compile(core, flags)
+            except _re.error as exc:
+                _sse({'done': True, 'error': f'Regex error: {exc}',
+                      'total_matches': 0, 'total_files': 0}); return
+
+            # ── Glob helpers ──────────────────────────────────────────────────────
+            def _parse_globs(raw):
+                return [g.strip() for g in raw.split(',') if g.strip()]
+            inc_globs = _parse_globs(inc_glob)
+            exc_globs = _parse_globs(exc_glob)
+            def _glob_match(rel, globs):
+                for g in globs:
+                    if _fnmatch.fnmatch(rel, g) or _fnmatch.fnmatch(os.path.basename(rel), g):
+                        return True
+                return False
+
+            MAX_LINE_LEN   = 300
+            MAX_LINES_FILE = 500
+
+            graph_data = job.get('data') or {}
+            mod_colors = {m['id']: m.get('color', '#64748b')
+                          for m in graph_data.get('modules', [])}
+
+            def _extract(content, fname):
+                if not pattern.search(content): return []
+                hits = []
+                for lineno, line in enumerate(content.split('\n'), 1):
+                    m = pattern.search(line)
+                    if not m: continue
+                    text = line.rstrip('\r')
+                    if len(text) > MAX_LINE_LEN:
+                        start  = max(0, m.start() - 60)
+                        prefix = '…' if start > 0 else ''
+                        text   = prefix + text[start: start + MAX_LINE_LEN]
+                        adj    = m.start() - start + len(prefix)
+                        ms, me = max(0, adj), max(0, adj) + (m.end() - m.start())
+                    else:
+                        ms, me = m.start(), m.end()
+                    hits.append({'line': lineno, 'text': text, 'ms': ms, 'me': me})
+                    if len(hits) >= MAX_LINES_FILE: break
+                return hits
+
+            total_matches = 0
+            total_files   = 0
+
+            search_index = job.get('search_index')
+            using_index  = search_index is not None
+
+            # Stream each hit file immediately
+            source = sorted(search_index.items()) if using_index else None
+
+            if using_index:
+                for rel, content in sorted(search_index.items()):
+                    if inc_globs and not _glob_match(rel, inc_globs): continue
+                    if exc_globs and _glob_match(rel, exc_globs):     continue
+                    fname = rel.rsplit('/', 1)[-1]
+                    ext   = Path(fname).suffix.lower()
+                    hits  = _extract(content, fname)
+                    if not hits: continue
+                    total_files   += 1
+                    total_matches += len(hits)
+                    mod_id = rel.split('/')[0] if '/' in rel else '_root'
+                    ok = _sse({'group': {
+                        'path': rel, 'label': fname, 'module': mod_id,
+                        'ext': ext, 'color': mod_colors.get(mod_id, '#64748b'),
+                        'count': len(hits), 'matches': hits,
+                    }})
+                    if not ok: return
+            else:
+                # Fallback: filesystem walk
+                FSKIP = _SI_SKIP_DIRS
+                for dirpath, dirnames, filenames in os.walk(root):
+                    dirnames[:] = [d for d in dirnames if d not in FSKIP]
+                    for fname in sorted(filenames):
+                        ext = Path(fname).suffix.lower()
+                        if ext in _SI_BINARY_EXTS: continue
+                        abs_path = os.path.join(dirpath, fname)
+                        rel = os.path.relpath(abs_path, root).replace('\\', '/')
+                        if inc_globs and not _glob_match(rel, inc_globs): continue
+                        if exc_globs and _glob_match(rel, exc_globs):     continue
+                        try:
+                            if os.path.getsize(abs_path) > _SI_MAX_FILE_BYTES: continue
+                            with open(abs_path, encoding='utf-8', errors='replace') as fh:
+                                content = fh.read()
+                        except Exception: continue
+                        hits = _extract(content, fname)
+                        if not hits: continue
+                        total_files   += 1
+                        total_matches += len(hits)
+                        mod_id = rel.split('/')[0] if '/' in rel else '_root'
+                        ok = _sse({'group': {
+                            'path': rel, 'label': fname, 'module': mod_id,
+                            'ext': ext, 'color': mod_colors.get(mod_id, '#64748b'),
+                            'count': len(hits), 'matches': hits,
+                        }})
+                        if not ok: return
+
+            _sse({'done': True, 'total_matches': total_matches,
+                  'total_files': total_files, 'indexed': using_index})
 
         elif p == '/jobs':
             with JOBS_LOCK:
@@ -418,6 +635,9 @@ class Handler(BaseHTTPRequestHandler):
                     ) if k in s},
                         })
                     print(f'\n[DONE] Job {jid}: {s["files"]} files, {s["functions"]} funcs')
+                    # Kick off background search index (no disk I/O on queries)
+                    threading.Thread(target=_build_search_index, args=(jid, root),
+                                     daemon=True, name=f'search-idx-{jid}').start()
 
                 except Exception as e:
                     import traceback

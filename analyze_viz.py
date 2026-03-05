@@ -725,14 +725,31 @@ HTML_SKELETON = """\
   <div id="search-wrap">
     <div id="sr-modes">
       <button class="sr-mode active" data-mode="files" id="srm-files" title="Search file names and paths">📁 Files</button>
-      <button class="sr-mode" data-mode="code" id="srm-code" title="Search functions and code content">ƒ Code</button>
+      <button class="sr-mode" data-mode="code" id="srm-code" title="Search inside code content">ƒ Code</button>
     </div>
     <div id="sr-input-row">
       <span id="sr-icon">⌕</span>
       <input id="search" type="text" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">
+      <div id="sr-toggles">
+        <button class="sr-toggle" id="srt-case"  title="Match Case (Alt+C)">Aa</button>
+        <button class="sr-toggle" id="srt-word"  title="Match Whole Word (Alt+W)">ab</button>
+        <button class="sr-toggle" id="srt-regex" title="Use Regular Expression (Alt+R)">.*</button>
+      </div>
       <span id="sr-count"></span>
     </div>
-    <div id="sr-panel"></div>
+    <div id="sr-panel">
+      <div id="sr-filters">
+        <div class="sr-filter-row">
+          <span class="sr-filter-label">files to include</span>
+          <input class="sr-filter-input" id="sr-include" type="text" placeholder="e.g. *.c, *.h" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="sr-filter-row">
+          <span class="sr-filter-label">files to exclude</span>
+          <input class="sr-filter-input" id="sr-exclude" type="text" placeholder="e.g. Build/*, *.obj" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <div id="sr-results"></div>
+    </div>
   </div>
   <button id="pref-btn" title="Preferences" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
 </div>
