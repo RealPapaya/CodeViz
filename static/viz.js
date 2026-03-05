@@ -2419,8 +2419,8 @@ function buildFtFilter(modId = null, subDir = null) {
     const bodyDisplay = ftFilterCollapsed ? 'none' : 'flex';
 
     wrap.innerHTML =
-        `<div class="ft-filter-title" id="ft-filter-title" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
-             <span>File Types</span><span class="legend-toggle" style="font-size:13px; transition:transform 0.2s; ${togglerStyle}">▾</span>
+        `<div class="ft-filter-title" id="ft-filter-title" style="cursor:pointer; display:flex; align-items:center; gap:6px;">
+             <span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">File Types</span>
          </div>` +
         `<div id="ft-filter-body" style="display:${bodyDisplay}; flex-direction:column;">` +
         analysed.map(chipHtml).join('') +
@@ -2474,11 +2474,12 @@ function buildSidebar() {
     const sidebarTitle = document.getElementById('sidebar-title');
     if (sidebarTitle) {
         const togglerStyle = fsCollapsed ? 'transform: rotate(-90deg);' : '';
-        sidebarTitle.innerHTML = `<span>File System</span><span class="legend-toggle" style="font-size:13px; transition:transform 0.2s; ${togglerStyle}">▾</span>`;
+        sidebarTitle.innerHTML = `<span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">File System</span>`;
         sidebarTitle.style.cursor = 'pointer';
         sidebarTitle.style.display = 'flex';
-        sidebarTitle.style.justifyContent = 'space-between';
+        sidebarTitle.style.justifyContent = 'flex-start';
         sidebarTitle.style.alignItems = 'center';
+        sidebarTitle.style.gap = '6px';
 
         // Remove old listener if exists, normally not needed if innerHTML clears, but here it's on the title itself
         const newTitle = sidebarTitle.cloneNode(true);
