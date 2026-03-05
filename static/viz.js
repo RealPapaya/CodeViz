@@ -3468,7 +3468,7 @@ const _srState = {
     matchCase: false,
     wholeWord: false,
     isRegex:   false,
-    // Filter strings
+    // Filter strings (VS Code-style globs, applied server-side for code, client-side for files)
     include:   '',
     exclude:   '',
     // Flat results (files mode only)
@@ -3487,18 +3487,19 @@ const _srState = {
     // Tree expand state
     _openGroups:  new Set(),   // open file groups (code mode)
     _openFolders: new Set(),   // open folder nodes (tree mode)
-    // Advanced filters (code mode)
-    _filterExts: new Set(),    // empty = show all extensions
+    // Advanced filter
     _filterFuncOnly: false,    // show only lines that look like func definitions
+    // Virtual scroll
+    _vsEnd: 0,                 // items rendered so far (both modes)
     // Local index
     _indexBuilt: false,
     _fileIndex:  [],   // [{label,path,module,ext,file_type,func_count,size}]
 };
 
 // ── SSE stream handle ─────────────────────────────────────────────────────────
-let _srStream = null;   // current EventSource
+let _srStream = null;
 let _srStreamBatchTimer = null;
-let _srStreamPending = [];   // groups waiting to be flushed to _contentGroups
+let _srStreamPending = [];
 
 // ── Build search indices once ─────────────────────────────────────────────────
 function _srBuildIndex() {
@@ -3557,14 +3558,71 @@ function _srHighlight(text, q) {
 
 function _srSearchFiles(q) {
     if (!q) return [];
+    const ql = q.toLowerCase();
+
+    // Glob matching helper (client-side)
+    function globMatch(path, pattern) {
+        // Convert glob to regex: * → [^/]*, ** → .*, ? → [^/]
+        const re = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*\*/g, '\x00').replace(/\*/g, '[^/]*').replace(/\x00/g, '.*').replace(/\?/g, '[^/]');
+        try { return new RegExp('^' + re + '$', 'i').test(path) || new RegExp(re, 'i').test(path.split('/').pop()); }
+        catch (_) { return false; }
+    }
+    const incGlobs = (_srState.include || '').split(',').map(s => s.trim()).filter(Boolean);
+    const excGlobs = (_srState.exclude || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    // Fuzzy match: every char of q appears in order in the string
+    function fuzzyMatch(text) {
+        const t = text.toLowerCase();
+        let qi = 0;
+        for (let i = 0; i < t.length && qi < ql.length; i++) {
+            if (t[i] === ql[qi]) qi++;
+        }
+        return qi === ql.length;
+    }
+
+    function score(f) {
+        const label = f.label.toLowerCase();
+        const path  = f.path.toLowerCase();
+        if (label === ql) return 10000;
+        if (label.startsWith(ql)) return 5000 + (100 - Math.min(label.length, 100));
+        const li = label.indexOf(ql);
+        if (li >= 0) return 3000 + (100 - Math.min(li, 100));
+        const pi = path.indexOf(ql);
+        if (pi >= 0) return 1000 + (100 - Math.min(pi, 100));
+        if (fuzzyMatch(f.label)) return 500;
+        if (fuzzyMatch(f.path))  return 100;
+        return -1;
+    }
+
+    const mc = _srState.matchCase;
+    const ww = _srState.wholeWord;
+    const rx = _srState.isRegex;
+
+    let pattern = null;
+    if (rx) {
+        try { pattern = new RegExp(q, mc ? '' : 'i'); } catch (_) { pattern = null; }
+    }
+
     const scored = [];
     for (const f of _srState._fileIndex) {
-        if (_srApplyToggles(f.label) || _srApplyToggles(f.path)) {
-            scored.push({ ...f, _score: _srScore(f.label, q), _type: 'file' });
+        // Apply include/exclude globs
+        if (incGlobs.length > 0 && !incGlobs.some(g => globMatch(f.path, g))) continue;
+        if (excGlobs.length > 0 &&  excGlobs.some(g => globMatch(f.path, g))) continue;
+
+        let s = -1;
+        if (pattern) {
+            if (pattern.test(f.label) || pattern.test(f.path)) s = 1000;
+        } else if (ww) {
+            const re = new RegExp('\\b' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\b', mc ? '' : 'i');
+            if (re.test(f.label) || re.test(f.path)) s = score(f);
+        } else {
+            s = score(f);
         }
+        if (s >= 0) scored.push({ ...f, _score: s, _type: 'file' });
     }
-    scored.sort((a, b) => b._score - a._score);
-    return scored.slice(0, 16);
+    scored.sort((a, b) => b._score - a._score || a.label.localeCompare(b.label));
+    return scored;
 }
 
 // ── SSE streaming content search ──────────────────────────────────────────────
@@ -3580,7 +3638,7 @@ function _srStartStream(q) {
         _srState._contentFiles  = 0;
         _srState._contentLoading = false;
         _srState._contentDone    = true;
-        _srRenderPanel();
+        _srRenderResults(); _srRenderActionBar();
         return;
     }
 
@@ -3590,8 +3648,7 @@ function _srStartStream(q) {
     _srState._contentError   = '';
     _srState._contentLoading = true;
     _srState._contentDone    = false;
-    _srState._filterExts     = new Set();   // reset filters on new search
-    _srRenderPanel();
+    _srRenderResults(); _srRenderActionBar();
 
     const params = new URLSearchParams({
         job:        codeState.jobId,
@@ -3612,7 +3669,17 @@ function _srStartStream(q) {
         _srState._contentGroups.push(..._srStreamPending);
         _srStreamPending = [];
         _srStreamBatchTimer = null;
-        if (_srState.query === capturedQ) _srRenderPanel();
+        if (_srState.query === capturedQ) {
+            _srRenderResults();
+            _srRenderActionBar();
+            // Update count badge
+            const countEl = document.getElementById('sr-count');
+            if (countEl) {
+                const n = _srState._contentTotal;
+                countEl.textContent = n > 0 ? n.toLocaleString() : '';
+                countEl.style.color = 'var(--accent)';
+            }
+        }
     }
 
     es.onmessage = e => {
@@ -3625,16 +3692,16 @@ function _srStartStream(q) {
             _srState._contentLoading = false;
             _srState._contentDone    = true;
             es.close(); _srStream = null;
-            _srRenderPanel(); return;
+            _srRenderResults(); _srRenderActionBar(); return;
         }
 
         if (msg.group) {
             _srStreamPending.push(msg.group);
             _srState._contentTotal += msg.group.count;
             _srState._contentFiles++;
-            // Batch: render every 60ms to avoid flooding the DOM
+            // Batch: render every 80ms to avoid flooding the DOM
             if (!_srStreamBatchTimer) {
-                _srStreamBatchTimer = setTimeout(_flush, 60);
+                _srStreamBatchTimer = setTimeout(_flush, 80);
             }
         }
 
@@ -3645,7 +3712,7 @@ function _srStartStream(q) {
             _srState._contentDone    = true;
             _srState._contentIndexed = msg.indexed || false;
             es.close(); _srStream = null;
-            _srRenderPanel();
+            _srRenderResults(); _srRenderActionBar();
         }
     };
 
@@ -3656,7 +3723,7 @@ function _srStartStream(q) {
         clearTimeout(_srStreamBatchTimer);
         _flush();
         es.close(); _srStream = null;
-        _srRenderPanel();
+        _srRenderResults(); _srRenderActionBar();
     };
 }
 
@@ -3687,10 +3754,6 @@ function _srLineIsFunc(line, ext) {
 // ── Apply client-side filters to groups ───────────────────────────────────────
 function _srFilteredGroups() {
     let groups = _srState._contentGroups;
-    // Ext filter
-    if (_srState._filterExts.size > 0) {
-        groups = groups.filter(g => _srState._filterExts.has(g.ext));
-    }
     // Functions-only filter
     if (_srState._filterFuncOnly) {
         groups = groups.map(g => {
@@ -3730,13 +3793,18 @@ function _extIcon(ext) {
 function _srCollapseAll() {
     _srState._openGroups.clear();
     _srState._openFolders.clear();
-    _srRenderPanel();
+    // Toggle DOM directly — avoid full re-render
+    document.querySelectorAll('#sr-results .sr-match-lines').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('#sr-results .sr-chevron').forEach(el => {
+        el.classList.remove('open'); el.textContent = '▸';
+    });
+    document.querySelectorAll('#sr-results .sr-tree-folder-body').forEach(el => el.style.display = 'none');
+    _srRenderActionBar();
 }
 
 function _srExpandAll() {
     _srState._contentGroups.forEach(g => _srState._openGroups.add(g.path));
     if (_srState.viewMode === 'tree') {
-        // Open every folder prefix
         _srState._contentGroups.forEach(g => {
             const parts = g.path.split('/');
             for (let i = 1; i < parts.length; i++) {
@@ -3744,7 +3812,60 @@ function _srExpandAll() {
             }
         });
     }
-    _srRenderPanel();
+    // For small result sets do direct DOM toggle; for large do full render
+    const groups = _srFilteredGroups();
+    if (groups.length <= 200) {
+        groups.forEach(g => {
+            const hdr = document.querySelector(`#sr-results .sr-file-header[data-gpath="${CSS.escape(g.path)}"]`);
+            if (!hdr) return;
+            const grp = hdr.closest('.sr-file-group');
+            if (!grp) return;
+            let lines = grp.querySelector('.sr-match-lines');
+            if (!lines) {
+                // Need to build and insert match lines HTML
+                lines = document.createElement('div');
+                lines.className = 'sr-match-lines';
+                lines.innerHTML = _srMatchLinesHtml(g);
+                grp.appendChild(lines);
+                _srWireLineRows(lines);
+            }
+            lines.style.display = '';
+            const chev = hdr.querySelector('.sr-chevron');
+            if (chev) { chev.classList.add('open'); chev.textContent = '▾'; }
+        });
+        _srRenderActionBar();
+    } else {
+        _srRenderResults();
+    }
+}
+
+// ── Build match-lines HTML for one group (shared between expand & render) ─────
+function _srMatchLinesHtml(g) {
+    const q = _srState.query;
+    let html = '';
+    g.matches.forEach(m => {
+        const snip   = m.text || '';
+        const snipHl = escapeHtml(snip.slice(0, m.ms))
+            + '<mark>' + escapeHtml(snip.slice(m.ms, m.me)) + '</mark>'
+            + escapeHtml(snip.slice(m.me));
+        const isFn = _srLineIsFunc(snip, g.ext);
+        html += `<div class="sr-line-row${isFn ? ' sr-line-func' : ''}" data-gpath="${escapeHtml(g.path)}" data-line="${m.line}">
+    <span class="sr-line-num">${m.line}</span>
+    ${isFn ? '<span class="sr-fn-tag" title="Function definition">ƒ</span>' : ''}
+    <span class="sr-line-text">${snipHl}</span>
+  </div>`;
+    });
+    return html;
+}
+
+// ── Wire click/hover on line rows in a container ─────────────────────────────
+function _srWireLineRows(container) {
+    container.querySelectorAll('.sr-line-row').forEach(row => {
+        const path = row.dataset.gpath;
+        const line = parseInt(row.dataset.line, 10);
+        row.addEventListener('click',      () => _srSelectContentLine(path, line));
+        row.addEventListener('mouseenter', () => _srHoverResult({ path }));
+    });
 }
 
 // ── Build a folder tree from flat group list ──────────────────────────────────
@@ -3850,102 +3971,398 @@ function _countTreeMatches(node) {
     return n;
 }
 
-// ── Render the action toolbar + advanced filter chips ─────────────────────────
+// ── Render the action toolbar (clean: no chips) ─────────────────────────────
 function _srRenderActionBar() {
     const bar = document.getElementById('sr-action-bar');
     if (!bar) return;
 
-    const hasResults = _srState._contentGroups.length > 0;
-    if (_srState.mode !== 'code' || !hasResults) {
-        bar.style.display = 'none';
-        return;
-    }
-    bar.style.display = 'flex';
+    const hasResults = _srState.mode === 'code'
+        ? (_srState._contentGroups.length > 0 || _srState._contentLoading)
+        : _srState.results.length > 0;
+
+    if (!hasResults) { bar.style.display = 'none'; return; }
+
+    bar.style.display       = 'flex';
     bar.style.flexDirection = 'column';
-    bar.style.gap = '0';
-    bar.style.padding = '0';
+    bar.style.gap           = '0';
+    bar.style.padding       = '0';
 
     const isTree  = _srState.viewMode === 'tree';
-    const indexed = _srState._contentIndexed;
     const loading = _srState._contentLoading;
+    const indexed = _srState._contentIndexed;
 
-    // Top row: stats + collapse/expand + list/tree
-    const totalShown = _srFilteredGroups().length;
-    const totalAll   = _srState._contentFiles;
-    const filtered   = totalShown < totalAll;
+    if (_srState.mode === 'code') {
+        const totalShown = _srFilteredGroups().length;
+        const totalAll   = _srState._contentFiles;
+        const filtered   = totalShown < totalAll;
 
-    let topRow = `<div class="sr-ab-top">`;
-    topRow += `<span class="sr-ab-info">
-      <span class="sr-ab-count">${_srState._contentTotal.toLocaleString()}</span> results in
-      <span class="sr-ab-count">${totalShown.toLocaleString()}${filtered ? `<span class="sr-ab-filtered">/${totalAll}</span>` : ''}</span> files
-      ${indexed && !loading ? '<span class="sr-indexed-badge" title="⚡ In-memory index — all files searched instantly">⚡</span>' : ''}
-      ${loading ? '<span class="sr-ab-scanning">scanning…</span>' : ''}
-    </span>`;
-    topRow += `<span class="sr-ab-spacer"></span>`;
-    topRow += `<button class="sr-ab-btn" id="sr-collapse-all" title="Collapse All">⊟</button>`;
-    topRow += `<button class="sr-ab-btn" id="sr-expand-all"   title="Expand All">⊞</button>`;
-    topRow += `<div class="sr-ab-sep"></div>`;
-    topRow += `<button class="sr-ab-btn${!isTree ? ' active' : ''}" id="sr-view-list" title="View as List">≡ List</button>`;
-    topRow += `<button class="sr-ab-btn${isTree  ? ' active' : ''}" id="sr-view-tree" title="View as Tree">🌲 Tree</button>`;
-    topRow += `</div>`;
+        bar.innerHTML = `
+<div class="sr-ab-top">
+  <span class="sr-ab-info">
+    <span class="sr-ab-count">${_srState._contentTotal.toLocaleString()}</span>&thinsp;in&thinsp;
+    <span class="sr-ab-count">${totalShown.toLocaleString()}${filtered ? `<span class="sr-ab-filtered">/${totalAll}</span>` : ''}</span>&thinsp;files
+    ${indexed && !loading ? '<span class="sr-indexed-badge" title="In-memory index active">⚡</span>' : ''}
+    ${loading ? '<span class="sr-ab-scanning">scanning…</span>' : ''}
+  </span>
+  <span class="sr-ab-spacer"></span>
+  <button class="sr-ab-btn${_srState._filterFuncOnly ? ' active' : ''}" id="sr-ab-func" title="Show only function-definition line matches">ƒ</button>
+  <div class="sr-ab-sep"></div>
+  <button class="sr-ab-btn" id="sr-collapse-all" title="Collapse All">⊟</button>
+  <button class="sr-ab-btn" id="sr-expand-all"   title="Expand All">⊞</button>
+  <div class="sr-ab-sep"></div>
+  <button class="sr-ab-btn${!isTree ? ' active' : ''}" id="sr-view-list" title="View as List">≡</button>
+  <button class="sr-ab-btn${isTree  ? ' active' : ''}" id="sr-view-tree" title="View as Tree">⬡</button>
+</div>
+<div class="sr-ab-filters">
+  <div class="sr-ab-filter-input-wrap" title="Files to include (e.g. *.c, *.h, Module/*)">
+    <span class="sr-ab-filter-icon">⊕</span>
+    <input class="sr-ab-filter-input" id="sr-ab-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="files to include  *.c, *.h" spellcheck="false" autocomplete="off">
+    ${_srState.include ? `<button class="sr-ab-filter-clear" data-target="inc">✕</button>` : ''}
+  </div>
+  <div class="sr-ab-filter-input-wrap" title="Files to exclude (e.g. Build/*, *.obj)">
+    <span class="sr-ab-filter-icon sr-ab-filter-exc">⊖</span>
+    <input class="sr-ab-filter-input" id="sr-ab-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="files to exclude  Build/*, *.obj" spellcheck="false" autocomplete="off">
+    ${_srState.exclude ? `<button class="sr-ab-filter-clear" data-target="exc">✕</button>` : ''}
+  </div>
+</div>`;
 
-    // Filter chips row: func-only + file type chips
-    const extList = _srAvailableExts();
-    let filterRow = `<div class="sr-filter-chips" id="sr-filter-chips">`;
-    // Symbol type filter
-    filterRow += `<button class="sr-chip${_srState._filterFuncOnly ? ' active' : ''}" id="sr-chip-func" title="Show only matches on function definition lines">
-      <span>ƒ</span> Functions only
-    </button>`;
-    // Divider if exts exist
-    if (extList.length > 1) {
-        filterRow += `<span class="sr-chip-sep">·</span>`;
-        extList.forEach(([ext, cnt]) => {
-            const active = _srState._filterExts.has(ext);
-            const icon   = _extIcon(ext);
-            filterRow += `<button class="sr-chip${active ? ' active' : ''}" data-ext="${escapeHtml(ext)}" title="Filter to ${ext} files (${cnt.toLocaleString()} matches)">
-        ${icon} ${escapeHtml(ext.replace('.',''))} <span class="sr-chip-count">${cnt > 999 ? Math.round(cnt/1000)+'k' : cnt}</span>
-      </button>`;
+        document.getElementById('sr-ab-func').addEventListener('click', () => {
+            _srState._filterFuncOnly = !_srState._filterFuncOnly;
+            _srRenderResults(); _srRenderActionBar();
+        });
+        document.getElementById('sr-collapse-all').addEventListener('click', _srCollapseAll);
+        document.getElementById('sr-expand-all').addEventListener('click', _srExpandAll);
+        document.getElementById('sr-view-list').addEventListener('click', () => {
+            if (_srState.viewMode === 'list') return;
+            _srState.viewMode = 'list'; _srRenderResults(); _srRenderActionBar();
+        });
+        document.getElementById('sr-view-tree').addEventListener('click', () => {
+            if (_srState.viewMode === 'tree') return;
+            _srState.viewMode = 'tree'; _srRenderResults(); _srRenderActionBar();
+        });
+
+        const incInput = document.getElementById('sr-ab-inc');
+        const excInput = document.getElementById('sr-ab-exc');
+        let _abTimer = null;
+        function _abChanged() {
+            clearTimeout(_abTimer);
+            _abTimer = setTimeout(() => {
+                _srState.include = incInput?.value.trim() || '';
+                _srState.exclude = excInput?.value.trim() || '';
+                if (_srState.query) _srDebounce(_srState.query);
+                else _srRenderActionBar();
+            }, 400);
+        }
+        if (incInput) incInput.addEventListener('input', _abChanged);
+        if (excInput) excInput.addEventListener('input', _abChanged);
+        bar.querySelectorAll('.sr-ab-filter-clear').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.target === 'inc') { _srState.include = ''; if (incInput) incInput.value = ''; }
+                else { _srState.exclude = ''; if (excInput) excInput.value = ''; }
+                if (_srState.query) _srDebounce(_srState.query);
+                else _srRenderActionBar();
+            });
+        });
+        [incInput, excInput].forEach(inp => {
+            if (!inp) return;
+            inp.addEventListener('keydown', e => {
+                if (e.key === 'Escape') { inp.value = ''; inp.dispatchEvent(new Event('input')); e.stopPropagation(); }
+                if (e.key === 'Enter')  e.stopPropagation();
+            });
+        });
+
+    } else {
+        // FILES mode bar: just count + inline include/exclude
+        const n = _srState.results.length;
+        bar.innerHTML = `
+<div class="sr-ab-top">
+  <span class="sr-ab-info"><span class="sr-ab-count">${n.toLocaleString()}</span>&thinsp;files</span>
+  <span class="sr-ab-spacer"></span>
+  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" title="Files to include">
+    <span class="sr-ab-filter-icon">⊕</span>
+    <input class="sr-ab-filter-input" id="sr-ab-fi-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="*.c, *.h" spellcheck="false" autocomplete="off">
+    ${_srState.include ? `<button class="sr-ab-filter-clear" data-target="inc">✕</button>` : ''}
+  </div>
+  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" title="Files to exclude">
+    <span class="sr-ab-filter-icon sr-ab-filter-exc">⊖</span>
+    <input class="sr-ab-filter-input" id="sr-ab-fi-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="Build/*" spellcheck="false" autocomplete="off">
+    ${_srState.exclude ? `<button class="sr-ab-filter-clear" data-target="exc">✕</button>` : ''}
+  </div>
+</div>`;
+
+        const iInc = document.getElementById('sr-ab-fi-inc');
+        const iExc = document.getElementById('sr-ab-fi-exc');
+        let _fTimer = null;
+        function _fiChanged() {
+            clearTimeout(_fTimer);
+            _fTimer = setTimeout(() => {
+                _srState.include = iInc?.value.trim() || '';
+                _srState.exclude = iExc?.value.trim() || '';
+                _srBuildIndex();
+                _srState.results = _srSearchFiles(_srState.query);
+                _srRenderResults(); _srRenderActionBar();
+            }, 200);
+        }
+        if (iInc) iInc.addEventListener('input', _fiChanged);
+        if (iExc) iExc.addEventListener('input', _fiChanged);
+        bar.querySelectorAll('.sr-ab-filter-clear').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.target === 'inc') { _srState.include = ''; if (iInc) iInc.value = ''; }
+                else { _srState.exclude = ''; if (iExc) iExc.value = ''; }
+                _srState.results = _srSearchFiles(_srState.query);
+                _srRenderResults(); _srRenderActionBar();
+            });
+        });
+        [iInc, iExc].forEach(inp => {
+            if (!inp) return;
+            inp.addEventListener('keydown', e => {
+                if (e.key === 'Escape') { inp.value = ''; inp.dispatchEvent(new Event('input')); e.stopPropagation(); }
+                if (e.key === 'Enter')  e.stopPropagation();
+            });
         });
     }
-    // Clear filters button
-    const hasActiveFilters = _srState._filterFuncOnly || _srState._filterExts.size > 0;
-    if (hasActiveFilters) {
-        filterRow += `<button class="sr-chip sr-chip-clear" id="sr-chip-clear" title="Clear all filters">✕ Clear</button>`;
+}
+
+// ── Virtual-scroll helpers ────────────────────────────────────────────────────
+const _SR_VS_CHUNK = 80;
+let _srVsObserver = null;
+
+function _srVsObserve(sentinel, onVisible) {
+    if (_srVsObserver) { _srVsObserver.disconnect(); _srVsObserver = null; }
+    if (!sentinel) return;
+    _srVsObserver = new IntersectionObserver(entries => {
+        if (entries[0].isIntersecting) onVisible();
+    }, { root: document.getElementById('sr-panel'), rootMargin: '200px' });
+    _srVsObserver.observe(sentinel);
+}
+
+function _srVsStop() {
+    if (_srVsObserver) { _srVsObserver.disconnect(); _srVsObserver = null; }
+}
+
+// ── Render only the #sr-results area (virtual scroll) ────────────────────────
+function _srRenderResults() {
+    const resultsEl = document.getElementById('sr-results');
+    if (!resultsEl) return;
+    _srVsStop();
+    _srState._vsEnd = 0;
+
+    const q = _srState.query;
+
+    if (_srState.mode === 'files') {
+        const results = _srState.results;
+        if (!results.length) {
+            resultsEl.innerHTML = q
+                ? `<div class="sr-empty">No files matching <strong style="color:var(--text)">"${escapeHtml(q)}"</strong></div>`
+                : '';
+            return;
+        }
+        const end = Math.min(_SR_VS_CHUNK, results.length);
+        resultsEl.innerHTML = _srBuildFileRowsHtml(results, 0, end, q)
+            + (results.length > end ? '<div class="sr-vs-sentinel"></div>' : '');
+        _srState._vsEnd = end;
+        _srWireFileRows(resultsEl, results);
+        _srUpdateActive();
+
+        if (results.length > end) {
+            _srVsObserve(resultsEl.querySelector('.sr-vs-sentinel'), function _vsNext() {
+                const s = _srState._vsEnd;
+                const e2 = Math.min(s + _SR_VS_CHUNK, results.length);
+                const sentinel = resultsEl.querySelector('.sr-vs-sentinel');
+                if (!sentinel) return;
+                sentinel.insertAdjacentHTML('beforebegin', _srBuildFileRowsHtml(results, s, e2, q));
+                _srState._vsEnd = e2;
+                _srWireFileRows(resultsEl, results);
+                if (e2 >= results.length) _srVsStop();
+            });
+        }
+
+    } else {
+        const groups = _srFilteredGroups();
+
+        if (_srState._contentLoading && groups.length === 0) {
+            resultsEl.innerHTML = `<div class="sr-loading">
+              <span class="sr-dot"></span><span class="sr-dot"></span><span class="sr-dot"></span>
+              <span>Searching…</span></div>`;
+            return;
+        }
+        if (_srState._contentDone && groups.length === 0) {
+            resultsEl.innerHTML = q
+                ? `<div class="sr-empty">No results for <strong style="color:var(--text)">"${escapeHtml(q)}"</strong></div>`
+                : '';
+            return;
+        }
+
+        if (_srState.viewMode === 'tree') {
+            _srRenderTree(resultsEl, groups, q);
+        } else {
+            _srRenderCodeList(resultsEl, groups, q);
+        }
     }
-    filterRow += `</div>`;
+}
 
-    bar.innerHTML = topRow + filterRow;
+// ── Files mode: build a slice of rows as HTML ────────────────────────────────
+function _srBuildFileRowsHtml(results, start, end, q) {
+    let html = '';
+    for (let i = start; i < end; i++) {
+        const r = results[i];
+        if (!r) continue;
+        const mc  = _srModuleColor(r.module);
+        const ic  = _extIcon(r.ext);
+        const nm  = _srHighlight(r.label, q);
+        const dir = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
+        const dirHl  = dir ? `<span class="sr-fi-dir">${_srHighlight(dir, q)}</span>` : '';
+        const ac     = i === _srState.activeIdx ? ' sr-active' : '';
+        const fcBadge = r.func_count > 0
+            ? `<span class="sr-fi-fc" title="${r.func_count} functions">ƒ ${r.func_count}</span>` : '';
+        const szBadge = r.size > 0
+            ? `<span class="sr-fi-sz">${_fmtBytes(r.size)}</span>` : '';
+        html += `<div class="sr-fi-row${ac}" data-idx="${i}">
+  <div class="sr-fi-left" style="border-left-color:${mc}"><span class="sr-fi-icon">${ic}</span></div>
+  <div class="sr-fi-body">
+    <div class="sr-fi-name">${nm}</div>
+    <div class="sr-fi-path">${dirHl}<span class="sr-fi-mod" style="background:${mc}22;color:${mc};border:1px solid ${mc}44">${escapeHtml(r.module)}</span>${fcBadge}${szBadge}</div>
+  </div>
+</div>`;
+    }
+    return html;
+}
 
-    // Wire top row
-    document.getElementById('sr-collapse-all').addEventListener('click', _srCollapseAll);
-    document.getElementById('sr-expand-all').addEventListener('click', _srExpandAll);
-    document.getElementById('sr-view-list').addEventListener('click', () => {
-        _srState.viewMode = 'list'; _srRenderActionBar(); _srRenderPanel();
-    });
-    document.getElementById('sr-view-tree').addEventListener('click', () => {
-        _srState.viewMode = 'tree'; _srRenderActionBar(); _srRenderPanel();
-    });
+function _fmtBytes(b) {
+    if (b < 1024) return b + 'B';
+    if (b < 1048576) return (b/1024).toFixed(0) + 'KB';
+    return (b/1048576).toFixed(1) + 'MB';
+}
 
-    // Wire filter chips
-    const funcChip = document.getElementById('sr-chip-func');
-    if (funcChip) funcChip.addEventListener('click', () => {
-        _srState._filterFuncOnly = !_srState._filterFuncOnly;
-        _srRenderActionBar(); _srRenderPanel();
+function _srWireFileRows(container, results) {
+    container.querySelectorAll('.sr-fi-row:not([data-wired])').forEach(row => {
+        row.dataset.wired = '1';
+        const idx = parseInt(row.dataset.idx, 10);
+        const r   = results[idx];
+        if (!r) return;
+        row.addEventListener('click',      () => _srSelectResult(r));
+        row.addEventListener('mouseenter', () => { _srState.activeIdx = idx; _srHoverResult(r); _srUpdateActive(); });
     });
-    document.querySelectorAll('#sr-filter-chips [data-ext]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const ext = btn.dataset.ext;
-            if (_srState._filterExts.has(ext)) _srState._filterExts.delete(ext);
-            else _srState._filterExts.add(ext);
-            _srRenderActionBar(); _srRenderPanel();
+}
+
+// ── Code mode: virtual-scroll flat list ──────────────────────────────────────
+function _srRenderCodeList(resultsEl, groups, q) {
+    const end = Math.min(_SR_VS_CHUNK, groups.length);
+    let html = _srBuildCodeGroupsHtml(groups, 0, end, q);
+    if (groups.length > end) html += '<div class="sr-vs-sentinel"></div>';
+    if (_srState._contentLoading) html += _srStreamingBarHtml();
+    resultsEl.innerHTML = html;
+    _srState._vsEnd = end;
+    _srWireCodeGroups(resultsEl, groups);
+
+    if (groups.length > end) {
+        _srVsObserve(resultsEl.querySelector('.sr-vs-sentinel'), function _cvsNext() {
+            const s   = _srState._vsEnd;
+            const e2  = Math.min(s + _SR_VS_CHUNK, groups.length);
+            const sentinel = resultsEl.querySelector('.sr-vs-sentinel');
+            if (!sentinel) return;
+            sentinel.insertAdjacentHTML('beforebegin', _srBuildCodeGroupsHtml(groups, s, e2, q));
+            _srState._vsEnd = e2;
+            _srWireCodeGroups(resultsEl, groups);
+            if (e2 >= groups.length) _srVsStop();
+        });
+    }
+}
+
+function _srBuildCodeGroupsHtml(groups, start, end, q) {
+    let html = '';
+    for (let i = start; i < end; i++) {
+        const g = groups[i];
+        if (!g) continue;
+        const isOpen = _srState._openGroups.has(g.path);
+        const ic   = _extIcon(g.ext);
+        const mc   = g.color || _srModuleColor(g.module);
+        const dir  = g.path.includes('/') ? g.path.slice(0, g.path.lastIndexOf('/')) : '';
+        const fnHl = _srHighlight(g.label, q);
+        html += `<div class="sr-file-group">
+  <div class="sr-file-header" data-gpath="${escapeHtml(g.path)}">
+    <span class="sr-chevron${isOpen ? ' open' : ''}">${isOpen ? '▾' : '▸'}</span>
+    <span class="sr-file-icon">${ic}</span>
+    <div class="sr-file-name-wrap">
+      <span class="sr-file-name">${fnHl}</span>
+      ${dir ? `<span class="sr-file-dir">${escapeHtml(dir)}</span>` : ''}
+    </div>
+    <span class="sr-match-badge">${g.count}</span>
+    <span class="sr-meta-mod" style="background:${mc}22;color:${mc};border:1px solid ${mc}44;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;flex-shrink:0">${escapeHtml(g.module)}</span>
+  </div>
+  ${isOpen ? `<div class="sr-match-lines">${_srMatchLinesHtml(g)}</div>` : ''}
+</div>`;
+    }
+    return html;
+}
+
+function _srStreamingBarHtml() {
+    return `<div class="sr-streaming-bar">
+  <span class="sr-dot"></span><span class="sr-dot"></span><span class="sr-dot"></span>
+  <span class="sr-streaming-label">searching…</span></div>`;
+}
+
+// ── Wire code group headers (DOM-toggle, no full re-render) ───────────────────
+function _srWireCodeGroups(container, groups) {
+    container.querySelectorAll('.sr-file-header:not([data-wired])').forEach(hdr => {
+        hdr.dataset.wired = '1';
+        hdr.addEventListener('click', () => {
+            const p   = hdr.dataset.gpath;
+            const grp = hdr.closest('.sr-file-group');
+            if (!grp) return;
+            const wasOpen = _srState._openGroups.has(p);
+            if (wasOpen) {
+                _srState._openGroups.delete(p);
+                const lines = grp.querySelector('.sr-match-lines');
+                if (lines) lines.style.display = 'none';
+            } else {
+                _srState._openGroups.add(p);
+                let lines = grp.querySelector('.sr-match-lines');
+                if (!lines) {
+                    const g = groups.find(g => g.path === p) || _srState._contentGroups.find(g => g.path === p);
+                    if (g) {
+                        lines = document.createElement('div');
+                        lines.className = 'sr-match-lines';
+                        lines.innerHTML = _srMatchLinesHtml(g);
+                        grp.appendChild(lines);
+                        _srWireLineRows(lines);
+                    }
+                } else {
+                    lines.style.display = '';
+                }
+            }
+            const chev = hdr.querySelector('.sr-chevron');
+            if (chev) {
+                const nowOpen = _srState._openGroups.has(p);
+                chev.classList.toggle('open', nowOpen);
+                chev.textContent = nowOpen ? '▾' : '▸';
+            }
         });
     });
-    const clearBtn = document.getElementById('sr-chip-clear');
-    if (clearBtn) clearBtn.addEventListener('click', () => {
-        _srState._filterExts.clear();
-        _srState._filterFuncOnly = false;
-        _srRenderActionBar(); _srRenderPanel();
+    _srWireLineRows(container);
+}
+
+// ── Code mode: tree render ────────────────────────────────────────────────────
+function _srRenderTree(resultsEl, groups, q) {
+    const tree = _srBuildTree(groups);
+    let html = _srRenderTreeNode(tree, q, 0);
+    if (_srState._contentLoading) html += _srStreamingBarHtml();
+    resultsEl.innerHTML = html;
+    resultsEl.querySelectorAll('.sr-tree-folder-hdr').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+            const p = hdr.dataset.fpath;
+            if (_srState._openFolders.has(p)) _srState._openFolders.delete(p);
+            else _srState._openFolders.add(p);
+            const body = hdr.nextElementSibling;
+            if (body?.classList.contains('sr-tree-folder-body')) {
+                const isNowOpen = _srState._openFolders.has(p);
+                body.style.display = isNowOpen ? '' : 'none';
+                const chev = hdr.querySelector('.sr-chevron');
+                if (chev) { chev.classList.toggle('open', isNowOpen); chev.textContent = isNowOpen ? '▾' : '▸'; }
+            }
+        });
     });
+    _srWireCodeGroups(resultsEl, groups);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -3954,15 +4371,13 @@ function _srRenderPanel() {
     const countEl = document.getElementById('sr-count');
     if (!panel) return;
 
-    const q       = _srState.query;
-    const results = _srState.results;  // file-name search results only
+    const q = _srState.query;
 
-    // Update match count badge in input row
     if (countEl) {
         if (_srState._contentLoading && _srState._contentTotal === 0) {
             countEl.textContent = '…';
         } else {
-            const n = _srState.mode === 'code' ? _srState._contentTotal : results.length;
+            const n = _srState.mode === 'code' ? _srState._contentTotal : _srState.results.length;
             countEl.textContent = n > 0 ? n.toLocaleString() : (q ? '0' : '');
             countEl.style.color = n > 0 ? 'var(--accent)' : 'var(--muted)';
         }
@@ -3971,16 +4386,11 @@ function _srRenderPanel() {
     if (!q) { panel.classList.remove('visible'); _srRenderActionBar(); return; }
     panel.classList.add('visible');
 
-    // ── Summary bar ───────────────────────────────────────────────────────────
-    let summaryHtml = '';
-    if (_srState._contentError) {
-        summaryHtml = `<span class="sr-regex-err">⚠ ${escapeHtml(_srState._contentError)}</span>`;
-    } else if (_srState.mode === 'code' && _srState._contentDone && _srState._contentTotal === 0) {
-        summaryHtml = `No results for <strong style="color:var(--text)">"${escapeHtml(q)}"</strong>`;
-    }
+    let actionBar = document.getElementById('sr-action-bar');
+    let resultsEl = document.getElementById('sr-results');
 
-    panel.innerHTML = `
-<div id="sr-summary"${summaryHtml ? '' : ' style="display:none"'}>${summaryHtml}</div>
+    if (!actionBar || !resultsEl) {
+        panel.innerHTML = `
 <div id="sr-action-bar" class="sr-action-bar" style="display:none"></div>
 <div id="sr-results"></div>
 <div class="sr-footer">
@@ -3989,139 +4399,12 @@ function _srRenderPanel() {
   <span class="sr-footer-hint"><kbd>Tab</kbd> switch mode</span>
   <span class="sr-footer-hint"><kbd>Esc</kbd> close</span>
 </div>`;
+    }
 
     _srRenderActionBar();
-
-    const resultsEl = document.getElementById('sr-results');
-    if (!resultsEl) return;
-
-    let html = '';
-
-    // ── FILES mode: file-name search results ──────────────────────────────────
-    if (_srState.mode === 'files' && results.length > 0) {
-        html += `<div class="sr-section"><span>📁 Files</span><span class="sr-section-count">${results.length}</span></div>`;
-        results.forEach((r, i) => {
-            const bc = extColor(r.ext || '');
-            const el = (r.ext || '').replace('.','').toUpperCase().slice(0,4) || '—';
-            const mc = _srModuleColor(r.module);
-            const nm = _srHighlight(r.label, q);
-            const ac = i === _srState.activeIdx ? ' sr-active' : '';
-            const meta = `<div class="sr-meta">
-  <span class="sr-meta-mod" style="background:${mc}22;color:${mc};border:1px solid ${mc}44">${escapeHtml(r.module)}</span>
-  <span class="sr-meta-path">${escapeHtml(r.path)}</span></div>`;
-            html += `<div class="sr-row${ac}" data-idx="${i}" data-rtype="top">
-  <span class="sr-badge" style="background:${bc};color:#000">${el}</span>
-  <div class="sr-body"><div class="sr-name">${nm}</div>${meta}</div>
-</div>`;
-        });
-    }
-
-    // ── CODE mode: streaming content results ──────────────────────────────────
-    if (_srState.mode === 'code') {
-        const groups = _srFilteredGroups();
-
-        // Initial spinner (before any results arrive)
-        if (_srState._contentLoading && groups.length === 0) {
-            html += `<div class="sr-loading">
-              <span class="sr-dot"></span><span class="sr-dot"></span><span class="sr-dot"></span>
-              <span>Searching…</span></div>`;
-        }
-
-        if (_srState.viewMode === 'tree') {
-            const tree = _srBuildTree(groups);
-            html += _srRenderTreeNode(tree, q, 0);
-        } else {
-            groups.forEach(g => {
-                const isOpen = _srState._openGroups.has(g.path);
-                const chev   = isOpen ? '▾' : '▸';
-                const ic     = _extIcon(g.ext);
-                const mc     = g.color || _srModuleColor(g.module);
-                const dir    = g.path.includes('/') ? g.path.slice(0, g.path.lastIndexOf('/')) : '';
-                const fnHl   = _srHighlight(g.label, q);
-
-                html += `<div class="sr-file-group">
-  <div class="sr-file-header" data-gpath="${escapeHtml(g.path)}">
-    <span class="sr-chevron${isOpen ? ' open' : ''}">${chev}</span>
-    <span class="sr-file-icon">${ic}</span>
-    <div class="sr-file-name-wrap">
-      <span class="sr-file-name">${fnHl}</span>
-      ${dir ? `<span class="sr-file-dir">${escapeHtml(dir)}</span>` : ''}
-    </div>
-    <span class="sr-match-badge">${g.count}</span>
-    <span class="sr-meta-mod" style="background:${mc}22;color:${mc};border:1px solid ${mc}44;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;flex-shrink:0">${escapeHtml(g.module)}</span>
-  </div>`;
-                if (isOpen) {
-                    html += `<div class="sr-match-lines">`;
-                    g.matches.forEach(m => {
-                        const snip   = m.text || '';
-                        const snipHl = escapeHtml(snip.slice(0, m.ms))
-                            + '<mark>' + escapeHtml(snip.slice(m.ms, m.me)) + '</mark>'
-                            + escapeHtml(snip.slice(m.me));
-                        const isFn = _srLineIsFunc(snip, g.ext);
-                        html += `<div class="sr-line-row${isFn ? ' sr-line-func' : ''}" data-gpath="${escapeHtml(g.path)}" data-line="${m.line}">
-      <span class="sr-line-num">${m.line}</span>
-      ${isFn ? '<span class="sr-fn-tag" title="Function definition">ƒ</span>' : ''}
-      <span class="sr-line-text">${snipHl}</span>
-    </div>`;
-                    });
-                    html += `</div>`;
-                }
-                html += `</div>`;
-            });
-        }
-
-        // Ongoing streaming indicator (results already showing, more arriving)
-        if (_srState._contentLoading && groups.length > 0) {
-            html += `<div class="sr-streaming-bar">
-  <span class="sr-dot"></span><span class="sr-dot"></span><span class="sr-dot"></span>
-  <span class="sr-streaming-label">searching…</span>
-</div>`;
-        }
-    }
-
-    if (!html && !_srState._contentLoading) {
-        html = `<div class="sr-empty">No results for <strong style="color:var(--text)">"${escapeHtml(q)}"</strong></div>`;
-    }
-
-    resultsEl.innerHTML = html;
-
-    // ── Wire file rows (files mode) ───────────────────────────────────────────
-    resultsEl.querySelectorAll('.sr-row[data-rtype="top"]').forEach(row => {
-        const idx = parseInt(row.dataset.idx, 10);
-        const r   = results[idx];
-        if (!r) return;
-        row.addEventListener('click',      () => _srSelectResult(r));
-        row.addEventListener('mouseenter', () => { _srState.activeIdx = idx; _srHoverResult(r); _srUpdateActive(); });
-    });
-
-    // ── Wire tree folder headers ──────────────────────────────────────────────
-    resultsEl.querySelectorAll('.sr-tree-folder-hdr').forEach(hdr => {
-        hdr.addEventListener('click', () => {
-            const p = hdr.dataset.fpath;
-            if (_srState._openFolders.has(p)) _srState._openFolders.delete(p);
-            else _srState._openFolders.add(p);
-            _srRenderPanel();
-        });
-    });
-
-    // ── Wire file group expand headers ────────────────────────────────────────
-    resultsEl.querySelectorAll('.sr-file-header').forEach(hdr => {
-        hdr.addEventListener('click', () => {
-            const p = hdr.dataset.gpath;
-            if (_srState._openGroups.has(p)) _srState._openGroups.delete(p);
-            else _srState._openGroups.add(p);
-            _srRenderPanel();
-        });
-    });
-
-    // ── Wire match-line rows ──────────────────────────────────────────────────
-    resultsEl.querySelectorAll('.sr-line-row').forEach(row => {
-        const path = row.dataset.gpath;
-        const line = parseInt(row.dataset.line, 10);
-        row.addEventListener('click',      () => _srSelectContentLine(path, line));
-        row.addEventListener('mouseenter', () => _srHoverResult({ path }));
-    });
+    _srRenderResults();
 }
+
 
 
 // ── Navigate to a graph node + open code panel ────────────────────────────────
@@ -4186,10 +4469,12 @@ function _srSelectContentLine(filePath, line) {
 function _srUpdateActive() {
     const el = document.getElementById('sr-results');
     if (!el) return;
-    el.querySelectorAll('.sr-row[data-rtype="top"]').forEach((row, i) => {
-        row.classList.toggle('sr-active', i === _srState.activeIdx);
+    // Support both old sr-row style and new sr-fi-row style
+    el.querySelectorAll('.sr-row[data-rtype="top"], .sr-fi-row').forEach(row => {
+        const idx = parseInt(row.dataset.idx, 10);
+        row.classList.toggle('sr-active', idx === _srState.activeIdx);
     });
-    const active = el.querySelector('.sr-row.sr-active');
+    const active = el.querySelector('.sr-active');
     if (active) active.scrollIntoView({ block: 'nearest' });
 }
 
@@ -4255,6 +4540,9 @@ function _srSetMode(mode) {
     const filters = document.getElementById('sr-filters');
     if (input) input.placeholder = mode === 'files' ? 'Search files… ( / )' : 'Search code… ( / )';
     if (filters) filters.classList.toggle('visible', mode === 'code');
+    // Force panel skeleton rebuild on mode switch
+    const panel = document.getElementById('sr-panel');
+    if (panel) panel.innerHTML = '';
     if (_srState.query) {
         _srBuildIndex();
         if (mode === 'files') {

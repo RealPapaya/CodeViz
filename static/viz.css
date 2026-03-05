@@ -2542,65 +2542,6 @@ body {
     background: rgba(0,212,255,0.08);
 }
 
-/* ── Advanced filter chips row ───────────────────────────────────────────────── */
-.sr-filter-chips {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px 8px;
-    flex-wrap: wrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-}
-.sr-filter-chips::-webkit-scrollbar { display: none; }
-.sr-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,0.04);
-    color: var(--muted);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.15s;
-    line-height: 1.5;
-}
-.sr-chip:hover {
-    color: var(--text);
-    border-color: #64748b;
-    background: rgba(255,255,255,0.08);
-}
-.sr-chip.active {
-    color: #000;
-    border-color: var(--accent);
-    background: var(--accent);
-    font-weight: 600;
-}
-.sr-chip-count {
-    opacity: 0.7;
-    font-size: 9px;
-}
-.sr-chip-sep {
-    color: var(--border);
-    font-size: 12px;
-    padding: 0 2px;
-    flex-shrink: 0;
-}
-.sr-chip-clear {
-    border-color: #f87171;
-    color: #f87171;
-    margin-left: auto;
-}
-.sr-chip-clear:hover {
-    background: rgba(248,113,113,0.12);
-    border-color: #f87171;
-    color: #f87171;
-}
-
 /* ── Streaming progress bar at bottom of results ─────────────────────────────── */
 .sr-streaming-bar {
     display: flex;
@@ -2678,3 +2619,149 @@ body {
     align-items: center;
     gap: 3px;
 }
+
+/* ── VS Code-style include/exclude filter inputs ─────────────────────────────── */
+.sr-ab-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+}
+.sr-ab-filter-input-wrap {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #1a253522;
+    position: relative;
+}
+.sr-ab-filter-input-wrap:last-child { border-bottom: none; }
+.sr-ab-filter-icon {
+    font-size: 11px;
+    color: #34d399;
+    padding: 0 6px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    opacity: 0.8;
+}
+.sr-ab-filter-exc { color: #f87171 !important; }
+.sr-ab-filter-inline {
+    border-left: 1px solid var(--border);
+    max-width: 160px;
+}
+.sr-ab-filter-label {
+    font-size: 9px;
+    color: var(--muted);
+    padding: 0 6px;
+    white-space: nowrap;
+    width: 42px;
+    flex-shrink: 0;
+    text-transform: lowercase;
+    letter-spacing: 0.3px;
+    border-right: 1px solid var(--border);
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+}
+.sr-ab-filter-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 3px 6px;
+    outline: none;
+    min-width: 0;
+}
+.sr-ab-filter-input::placeholder { color: var(--muted); opacity: 0.45; font-style: italic; }
+.sr-ab-filter-input:focus { background: rgba(0,212,255,0.03); }
+.sr-ab-filter-clear {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 10px;
+    padding: 0 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    line-height: 1;
+}
+.sr-ab-filter-clear:hover { color: #f87171; }
+
+/* ── File search results: VS Code-style rows ─────────────────────────────────── */
+.sr-fi-row {
+    display: flex;
+    align-items: stretch;
+    cursor: pointer;
+    padding: 4px 10px 4px 0;
+    border-bottom: 1px solid #1a253518;
+    transition: background 0.08s;
+    min-height: 36px;
+    gap: 0;
+}
+.sr-fi-row:hover, .sr-fi-row.sr-active {
+    background: rgba(255,255,255,0.04);
+}
+.sr-fi-row.sr-active {
+    background: rgba(0,212,255,0.07);
+    outline: 1px solid rgba(0,212,255,0.2);
+}
+.sr-fi-left {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    flex-shrink: 0;
+    border-left: 2px solid transparent;
+    padding-left: 4px;
+}
+.sr-fi-icon { font-size: 14px; line-height: 1; }
+.sr-fi-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    overflow: hidden;
+}
+.sr-fi-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'JetBrains Mono', monospace;
+}
+.sr-fi-path {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+}
+.sr-fi-dir {
+    font-size: 10px;
+    color: var(--muted);
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+    min-width: 0;
+}
+.sr-fi-mod {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+.sr-fi-fc { font-size: 9px; color: #a78bfa; padding: 0 3px; flex-shrink: 0; }
+.sr-fi-sz { font-size: 9px; color: var(--muted); padding: 0 2px; flex-shrink: 0; }
+
+/* ── Virtual scroll sentinel ─────────────────────────────────────────────────── */
+.sr-vs-sentinel { height: 4px; pointer-events: none; }
