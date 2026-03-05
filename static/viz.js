@@ -21,8 +21,8 @@ const l2State = {
     externalModules: [],
     fileHistory: [],
     fileHistoryIdx: -1,
-    fileHistoryIdx: -1,
     showExternalEdges: true,
+    showExternalFuncs: false,
     expandOriginPos: null,
     preserveViewport: null,
     _prevNodeIds: null,
@@ -361,7 +361,7 @@ function setL1ToolbarVisible(v) {
 function updateDepMapExtToggle() {
     const btn = document.getElementById('l1-toggle-ext');
     if (!btn) return;
-    btn.textContent = depMapState.showExternalFiles ? 'Ext Files: On' : 'Ext Files: Off';
+    btn.textContent = depMapState.showExternalFiles ? 'External Files: On' : 'External Files: Off';
     btn.classList.toggle('active', depMapState.showExternalFiles);
 }
 
@@ -464,17 +464,28 @@ function rerenderCurrentL1() {
 function initL2Toolbar() {
     const prevBtn = document.getElementById('l2-prev');
     const nextBtn = document.getElementById('l2-next');
-    const toggleExtBtn = document.getElementById('l2-toggle-ext');
+    const toggleExtLinesBtn = document.getElementById('l2-toggle-ext-lines');
+    const toggleExtFuncsBtn = document.getElementById('l2-toggle-ext-funcs');
     const expandBtn = document.getElementById('l2-expand-all');
     const collapseBtn = document.getElementById('l2-collapse-all');
 
     if (prevBtn) prevBtn.addEventListener('click', goL2Prev);
     if (nextBtn) nextBtn.addEventListener('click', goL2Next);
-    if (toggleExtBtn) {
-        toggleExtBtn.addEventListener('click', () => {
+    if (toggleExtLinesBtn) {
+        toggleExtLinesBtn.addEventListener('click', () => {
             l2State.showExternalEdges = !l2State.showExternalEdges;
             updateExternalToggle();
             applyExternalEdgeVisibility();
+        });
+    }
+    if (toggleExtFuncsBtn) {
+        toggleExtFuncsBtn.addEventListener('click', () => {
+            l2State.showExternalFuncs = !l2State.showExternalFuncs;
+            if (l2State.showExternalFuncs) {
+                l2State.showExternalEdges = true;
+            }
+            updateExternalFuncsToggle();
+            renderL2Flowchart(l2State.activeFile);
         });
     }
 
@@ -855,10 +866,18 @@ function onL2MouseNav(e) {
 }
 
 function updateExternalToggle() {
-    const btn = document.getElementById('l2-toggle-ext');
+    const btn = document.getElementById('l2-toggle-ext-lines');
     if (!btn) return;
-    btn.textContent = l2State.showExternalEdges ? 'Ext Lines: On' : 'Ext Lines: Off';
+    btn.textContent = l2State.showExternalEdges ? 'External Lines: On' : 'External Lines: Off';
     btn.classList.toggle('active', l2State.showExternalEdges);
+}
+
+function updateExternalFuncsToggle() {
+    const btn = document.getElementById('l2-toggle-ext-funcs');
+    if (!btn) return;
+    btn.textContent = l2State.showExternalFuncs ? 'External Functions: On' : 'External Functions: Off';
+    btn.classList.toggle('active', l2State.showExternalFuncs);
+    setL2ToolbarVisible(state.level === 2);
 }
 
 function applyExternalEdgeVisibility() {
@@ -894,8 +913,10 @@ function goL2Next() {
 
 function setL2ToolbarVisible(v) {
     const bar = document.getElementById('l2-toolbar');
-    if (!bar) return;
-    bar.classList.toggle('hidden', !v);
+    if (bar) bar.classList.toggle('hidden', !v);
+
+    const extLinesBtn = document.getElementById('l2-toggle-ext-lines');
+    if (extLinesBtn) extLinesBtn.style.display = (v && l2State.showExternalFuncs) ? 'block' : 'none';
 }
 
 function updateL2Toolbar(fileRel, stats) {
@@ -910,7 +931,7 @@ function updateL2Toolbar(fileRel, stats) {
         parts.push(`${stats.funcs || 0} funcs`);
         parts.push(`${stats.internalEdges || 0} edges`);
         if (stats.extModules) parts.push(`${stats.extModules} modules`);
-        if (stats.extFuncs) parts.push(`${stats.extFuncs} ext funcs`);
+        if (stats.extFuncs) parts.push(`${stats.extFuncs} external functions`);
         if (stats.legacy) parts.push('legacy edges');
         statsEl.textContent = parts.join(' | ');
     }
@@ -971,7 +992,7 @@ function syncBreadcrumbForFile(fileRel) {
 }
 
 function focusL2Func(fileRel, idx, opts = {}) {
-    const { center = false } = opts;
+    const { center = false, openCodePanel = true } = opts;
     const funcs = DATA.funcs_by_file[fileRel] || [];
     if (!funcs[idx]) return;
     l2State.activeFuncIdx = idx;
@@ -983,7 +1004,9 @@ function focusL2Func(fileRel, idx, opts = {}) {
             cy.animate({ center: { eles: node }, duration: 200 });
         }
     }
-    _syncCodePanel(fileRel, funcs[idx].label);
+    if (openCodePanel) {
+        _syncCodePanel(fileRel, funcs[idx].label);
+    }
     updateL2NavButtons();
 }
 
@@ -1176,14 +1199,15 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                     internalEdgeCount++;
                     continue;
                 }
-                if (nameToFiles[callee]) {
+                if (!l2State.showExternalFuncs) continue;
+                if (Object.prototype.hasOwnProperty.call(nameToFiles, callee)) {
                     // Ambiguous: multiple possible files
                     const k = `pot:${callee}`;
                     if (!potMap.has(k)) potMap.set(k, { callee, files: nameToFiles[callee], callers: new Set() });
                     potMap.get(k).callers.add(i);
                     continue;
                 }
-                const targetFile = nameToFile[callee] || null;
+                const targetFile = Object.prototype.hasOwnProperty.call(nameToFile, callee) ? nameToFile[callee] : null;
                 if (!targetFile) {
                     if (!unkMap.has(callee)) unkMap.set(callee, new Set());
                     unkMap.get(callee).add(i);
@@ -1363,7 +1387,8 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 legacy: !hasCallList,
             });
             updateExternalToggle();
-            focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: false });
+            updateExternalFuncsToggle();
+            focusL2Func(fileRel, l2State.activeFuncIdx || 0, { center: false, openCodePanel: false });
 
             const savedVP = l2State.preserveViewport;
             const originPos = l2State.expandOriginPos;
@@ -1514,12 +1539,12 @@ function drillDownExtFunc(node) {
         if (cy.$id(childId).length) continue;  // already in graph
 
         let tf = null, modName = '', ec = '#64748b', bc = '#64748b', dLabel = '';
-        if (nameToFiles[callee]) {
+        if (Object.prototype.hasOwnProperty.call(nameToFiles, callee)) {
             tf = nameToFiles[callee][0];
             modName = fileToModule[tf] || '';
             ec = bc = '#a78bfa';   // ambiguous — purple
             dLabel = 'ambiguous';
-        } else if (nameToFile[callee]) {
+        } else if (Object.prototype.hasOwnProperty.call(nameToFile, callee)) {
             tf = nameToFile[callee];
             modName = fileToModule[tf] || '';
             const dVal = _pathDist(targetFile, tf);
@@ -1778,16 +1803,16 @@ function extColor(ext) {
         // ACPI
         '.asl': '#a78bfa',
         // ── Python ──────────────────────────────────────────────────────────
-        '.py':  '#4584c3',
+        '.py': '#4584c3',
         // ── JavaScript / TypeScript ──────────────────────────────────────────
-        '.js':  '#f0c040',
+        '.js': '#f0c040',
         '.mjs': '#f0c040',
         '.cjs': '#e8b830',
         '.jsx': '#61dafb',
-        '.ts':  '#3b8fd4',
+        '.ts': '#3b8fd4',
         '.tsx': '#61dafb',
         // ── Go ───────────────────────────────────────────────────────────────
-        '.go':  '#00c6db',
+        '.go': '#00c6db',
     };
     return map[ext] || '#64748b';
 }
@@ -1795,59 +1820,59 @@ function extColor(ext) {
 // ─── File type → cytoscape node shape ────────────────────────────────────────
 const FILE_TYPE_SHAPE = {
     // BIOS / C
-    'c_source':      { sh: 'ellipse',              w: 160, h: 48 },
-    'header':        { sh: 'round-rectangle',       w: 155, h: 44 },
-    'assembly':      { sh: 'triangle',              w: 120, h: 56 },
-    'module_inf':    { sh: 'diamond',               w: 190, h: 60 },
-    'package_dec':   { sh: 'hexagon',               w: 190, h: 58 },
-    'platform_dsc':  { sh: 'star',                  w: 160, h: 60 },
-    'flash_desc':    { sh: 'vee',                   w: 160, h: 56 },
-    'ami_sdl':       { sh: 'octagon',               w: 170, h: 56 },
-    'ami_sd':        { sh: 'concave-hexagon',        w: 170, h: 54 },
-    'ami_cif':       { sh: 'barrel',                w: 160, h: 56 },
-    'makefile':      { sh: 'tag',                   w: 150, h: 46 },
-    'hii_vfr':       { sh: 'round-tag',             w: 165, h: 50 },
-    'hii_hfr':       { sh: 'round-tag',             w: 165, h: 50 },
-    'hii_form':      { sh: 'round-tag',             w: 165, h: 50 },
-    'hii_string':    { sh: 'round-rectangle',       w: 155, h: 44 },
-    'acpi_asl':      { sh: 'pentagon',              w: 160, h: 56 },
+    'c_source': { sh: 'ellipse', w: 160, h: 48 },
+    'header': { sh: 'round-rectangle', w: 155, h: 44 },
+    'assembly': { sh: 'triangle', w: 120, h: 56 },
+    'module_inf': { sh: 'diamond', w: 190, h: 60 },
+    'package_dec': { sh: 'hexagon', w: 190, h: 58 },
+    'platform_dsc': { sh: 'star', w: 160, h: 60 },
+    'flash_desc': { sh: 'vee', w: 160, h: 56 },
+    'ami_sdl': { sh: 'octagon', w: 170, h: 56 },
+    'ami_sd': { sh: 'concave-hexagon', w: 170, h: 54 },
+    'ami_cif': { sh: 'barrel', w: 160, h: 56 },
+    'makefile': { sh: 'tag', w: 150, h: 46 },
+    'hii_vfr': { sh: 'round-tag', w: 165, h: 50 },
+    'hii_hfr': { sh: 'round-tag', w: 165, h: 50 },
+    'hii_form': { sh: 'round-tag', w: 165, h: 50 },
+    'hii_string': { sh: 'round-rectangle', w: 155, h: 44 },
+    'acpi_asl': { sh: 'pentagon', w: 160, h: 56 },
     // ── Python ───────────────────────────────────────────────────────────────
     // Rhomboid (parallelogram) — distinctly Python-y, like an ouroboros coil
-    'py_source':     { sh: 'rhomboid',              w: 170, h: 52 },
+    'py_source': { sh: 'rhomboid', w: 170, h: 52 },
     // ── JavaScript ───────────────────────────────────────────────────────────
     // Cut-rectangle — like a bracket { } in the corner
-    'js_source':     { sh: 'cut-rectangle',         w: 165, h: 48 },
+    'js_source': { sh: 'cut-rectangle', w: 165, h: 48 },
     // JSX — same family as JS, slightly wider for component name
-    'jsx_source':    { sh: 'cut-rectangle',         w: 175, h: 50 },
+    'jsx_source': { sh: 'cut-rectangle', w: 175, h: 50 },
     // ── TypeScript ────────────────────────────────────────────────────────────
     // Bottom-round-rectangle — "typed" = smoother than JS
-    'ts_source':     { sh: 'bottom-round-rectangle', w: 165, h: 50 },
-    'tsx_source':    { sh: 'bottom-round-rectangle', w: 175, h: 52 },
+    'ts_source': { sh: 'bottom-round-rectangle', w: 165, h: 50 },
+    'tsx_source': { sh: 'bottom-round-rectangle', w: 175, h: 52 },
     // ── Go ────────────────────────────────────────────────────────────────────
     // Hexagon — clean, structured, like Go's package layout
-    'go_source':     { sh: 'hexagon',               w: 175, h: 58 },
+    'go_source': { sh: 'hexagon', w: 175, h: 58 },
     // Fallbacks
-    'other':         { sh: 'round-rectangle',       w: 155, h: 46 },
-    'binary':        { sh: 'round-rectangle',       w: 150, h: 42 },
+    'other': { sh: 'round-rectangle', w: 155, h: 46 },
+    'binary': { sh: 'round-rectangle', w: 150, h: 42 },
 };
 
 // ─── Edge type → color + style ───────────────────────────────────────────────
 const EDGE_TYPE_STYLE = {
-    'include':      { color: '#c084fc', style: 'solid',  label: 'Inc' },
-    'sources':      { color: '#ffd700', style: 'solid',  label: 'Src' },
-    'package':      { color: '#00d4ff', style: 'dashed', label: 'Pkg' },
-    'library':      { color: '#a78bfa', style: 'dashed', label: 'Lib' },
-    'elink':        { color: '#ff6b35', style: 'dotted', label: 'ELINK' },
-    'cif_own':      { color: '#34d399', style: 'solid',  label: 'owns' },
-    'component':    { color: '#60a5fa', style: 'solid',  label: 'Comp' },
-    'depex':        { color: '#f472b6', style: 'dotted', label: 'Depex' },
-    'guid_ref':     { color: '#fb923c', style: 'dashed', label: 'GUID' },
-    'str_ref':      { color: '#e879f9', style: 'dashed', label: 'Strings' },
-    'asl_include':  { color: '#818cf8', style: 'solid',  label: 'ASL' },
+    'include': { color: '#c084fc', style: 'solid', label: 'Inc' },
+    'sources': { color: '#ffd700', style: 'solid', label: 'Src' },
+    'package': { color: '#00d4ff', style: 'dashed', label: 'Pkg' },
+    'library': { color: '#a78bfa', style: 'dashed', label: 'Lib' },
+    'elink': { color: '#ff6b35', style: 'dotted', label: 'ELINK' },
+    'cif_own': { color: '#34d399', style: 'solid', label: 'owns' },
+    'component': { color: '#60a5fa', style: 'solid', label: 'Comp' },
+    'depex': { color: '#f472b6', style: 'dotted', label: 'Depex' },
+    'guid_ref': { color: '#fb923c', style: 'dashed', label: 'GUID' },
+    'str_ref': { color: '#e879f9', style: 'dashed', label: 'Strings' },
+    'asl_include': { color: '#818cf8', style: 'solid', label: 'ASL' },
     'callback_ref': { color: '#f87171', style: 'dotted', label: 'Callback' },
-    'hii_pkg':      { color: '#94a3b8', style: 'solid',  label: 'HII-Pkg' },
+    'hii_pkg': { color: '#94a3b8', style: 'solid', label: 'HII-Pkg' },
     // ── Universal import (Python / JS / TS / Go) ──────────────────────────
-    'import':       { color: '#10b981', style: 'dashed', label: 'Import' },
+    'import': { color: '#10b981', style: 'dashed', label: 'Import' },
 };
 
 function fileNodeData(f, modColor) {
@@ -2281,33 +2306,33 @@ const CY_STYLE = [
 // ─── File Type Filter ────────────────────────────────────────────────────────
 const FT_GROUPS = [
     // ── BIOS / C ──────────────────────────────────────────────────────────────
-    { key: 'c_source',     label: '.c/.cpp',   exts: ['.c', '.cpp', '.cc'],            group: 'bios' },
-    { key: 'header',       label: '.h/.hpp',   exts: ['.h', '.hpp'],                   group: 'bios' },
-    { key: 'assembly',     label: '.asm/.s',   exts: ['.asm', '.s', '.S', '.nasm'],    group: 'bios' },
-    { key: 'module_inf',   label: '.inf',      exts: ['.inf'],                          group: 'bios' },
-    { key: 'package_dec',  label: '.dec',      exts: ['.dec'],                          group: 'bios' },
-    { key: 'platform_dsc', label: '.dsc',      exts: ['.dsc'],                          group: 'bios' },
-    { key: 'flash_desc',   label: '.fdf',      exts: ['.fdf'],                          group: 'bios' },
-    { key: 'ami_sdl',      label: '.sdl',      exts: ['.sdl'],                          group: 'bios' },
-    { key: 'ami_sd',       label: '.sd',       exts: ['.sd'],                           group: 'bios' },
-    { key: 'ami_cif',      label: '.cif',      exts: ['.cif'],                          group: 'bios' },
-    { key: 'makefile',     label: '.mak',      exts: ['.mak'],                          group: 'bios' },
-    { key: 'hii_vfr',      label: '.vfr',      exts: ['.vfr'],                          group: 'bios' },
-    { key: 'hii_hfr',      label: '.hfr',      exts: ['.hfr'],                          group: 'bios' },
-    { key: 'hii_string',   label: '.uni',      exts: ['.uni'],                          group: 'bios' },
-    { key: 'acpi_asl',     label: '.asl',      exts: ['.asl'],                          group: 'bios' },
+    { key: 'c_source', label: '.c/.cpp', exts: ['.c', '.cpp', '.cc'], group: 'bios' },
+    { key: 'header', label: '.h/.hpp', exts: ['.h', '.hpp'], group: 'bios' },
+    { key: 'assembly', label: '.asm/.s', exts: ['.asm', '.s', '.S', '.nasm'], group: 'bios' },
+    { key: 'module_inf', label: '.inf', exts: ['.inf'], group: 'bios' },
+    { key: 'package_dec', label: '.dec', exts: ['.dec'], group: 'bios' },
+    { key: 'platform_dsc', label: '.dsc', exts: ['.dsc'], group: 'bios' },
+    { key: 'flash_desc', label: '.fdf', exts: ['.fdf'], group: 'bios' },
+    { key: 'ami_sdl', label: '.sdl', exts: ['.sdl'], group: 'bios' },
+    { key: 'ami_sd', label: '.sd', exts: ['.sd'], group: 'bios' },
+    { key: 'ami_cif', label: '.cif', exts: ['.cif'], group: 'bios' },
+    { key: 'makefile', label: '.mak', exts: ['.mak'], group: 'bios' },
+    { key: 'hii_vfr', label: '.vfr', exts: ['.vfr'], group: 'bios' },
+    { key: 'hii_hfr', label: '.hfr', exts: ['.hfr'], group: 'bios' },
+    { key: 'hii_string', label: '.uni', exts: ['.uni'], group: 'bios' },
+    { key: 'acpi_asl', label: '.asl', exts: ['.asl'], group: 'bios' },
     // ── Python ────────────────────────────────────────────────────────────────
-    { key: 'py_source',    label: '.py',       exts: ['.py'],                           group: 'python' },
+    { key: 'py_source', label: '.py', exts: ['.py'], group: 'python' },
     // ── JavaScript / TypeScript ───────────────────────────────────────────────
-    { key: 'js_source',    label: '.js/.mjs',  exts: ['.js', '.mjs', '.cjs'],          group: 'js' },
-    { key: 'jsx_source',   label: '.jsx',      exts: ['.jsx'],                          group: 'js' },
-    { key: 'ts_source',    label: '.ts',       exts: ['.ts'],                           group: 'ts' },
-    { key: 'tsx_source',   label: '.tsx',      exts: ['.tsx'],                          group: 'ts' },
+    { key: 'js_source', label: '.js/.mjs', exts: ['.js', '.mjs', '.cjs'], group: 'js' },
+    { key: 'jsx_source', label: '.jsx', exts: ['.jsx'], group: 'js' },
+    { key: 'ts_source', label: '.ts', exts: ['.ts'], group: 'ts' },
+    { key: 'tsx_source', label: '.tsx', exts: ['.tsx'], group: 'ts' },
     // ── Go ────────────────────────────────────────────────────────────────────
-    { key: 'go_source',    label: '.go',       exts: ['.go'],                           group: 'go' },
+    { key: 'go_source', label: '.go', exts: ['.go'], group: 'go' },
     // ── Unanalysed ────────────────────────────────────────────────────────────
-    { key: 'other',        label: 'Other',     exts: [], isExtra: true },
-    { key: 'binary',       label: 'Binary',    exts: [], isExtra: true },
+    { key: 'other', label: 'Other', exts: [], isExtra: true },
+    { key: 'binary', label: 'Binary', exts: [], isExtra: true },
 ];
 // Default: all analysed types on
 const ftActiveFilter = new Set([
@@ -2930,6 +2955,9 @@ function renderFilesFlat(modId, files, subPath) {
 
 // ── Post-layout handler: handles expand animation OR focus fly-in ──────────────
 function _postLayoutL1() {
+    // Refresh legend with only the edge types / node shapes visible in this view
+    refreshLegend();
+
     const savedVP = depMapState.preserveViewport;
     const originPos = depMapState.expandOriginPos;
     const focusPath = depMapState.pendingFocusFile;
@@ -3684,81 +3712,128 @@ function _distLabel(d) {
 
 // ─── Graph Legend ─────────────────────────────────────────────────────────────
 const LEGEND_EDGES = [
-    { type: 'include',      label: 'Include',  color: '#c084fc', style: 'solid' },
-    { type: 'import',       label: 'Import',   color: '#10b981', style: 'dashed' },
-    { type: 'sources',      label: 'Src',      color: '#ffd700', style: 'solid' },
-    { type: 'package',      label: 'Pkg',      color: '#00d4ff', style: 'dashed' },
-    { type: 'library',      label: 'Lib',      color: '#a78bfa', style: 'dashed' },
-    { type: 'cif_own',      label: 'owns',     color: '#34d399', style: 'solid' },
-    { type: 'component',    label: 'Comp',     color: '#60a5fa', style: 'solid' },
-    { type: 'guid_ref',     label: 'GUID',     color: '#fb923c', style: 'dashed' },
-    { type: 'elink',        label: 'ELINK',    color: '#ff6b35', style: 'dotted' },
-    { type: 'str_ref',      label: 'Strings',  color: '#e879f9', style: 'dashed' },
-    { type: 'hii_pkg',      label: 'HII-Pkg',  color: '#94a3b8', style: 'solid' },
-    { type: 'callback_ref', label: 'Callback', color: '#f87171', style: 'dotted' },
-    { type: 'asl_include',  label: 'ASL',      color: '#818cf8', style: 'solid' },
-    { type: 'depex',        label: 'Depex',    color: '#f472b6', style: 'dotted' },
+    // elKey = value stored in edge.data('el')
+    { type: 'include', label: 'Include', color: '#c084fc', style: 'solid', elKey: 'Inc' },
+    { type: 'import', label: 'Import', color: '#10b981', style: 'dashed', elKey: 'Import' },
+    { type: 'sources', label: 'Src', color: '#ffd700', style: 'solid', elKey: 'Src' },
+    { type: 'package', label: 'Pkg', color: '#00d4ff', style: 'dashed', elKey: 'Pkg' },
+    { type: 'library', label: 'Lib', color: '#a78bfa', style: 'dashed', elKey: 'Lib' },
+    { type: 'cif_own', label: 'owns', color: '#34d399', style: 'solid', elKey: 'owns' },
+    { type: 'component', label: 'Comp', color: '#60a5fa', style: 'solid', elKey: 'Comp' },
+    { type: 'guid_ref', label: 'GUID', color: '#fb923c', style: 'dashed', elKey: 'GUID' },
+    { type: 'elink', label: 'ELINK', color: '#ff6b35', style: 'dotted', elKey: 'ELINK' },
+    { type: 'str_ref', label: 'Strings', color: '#e879f9', style: 'dashed', elKey: 'Strings' },
+    { type: 'hii_pkg', label: 'HII-Pkg', color: '#94a3b8', style: 'solid', elKey: 'HII-Pkg' },
+    { type: 'callback_ref', label: 'Callback', color: '#f87171', style: 'dotted', elKey: 'Callback' },
+    { type: 'asl_include', label: 'ASL', color: '#818cf8', style: 'solid', elKey: 'ASL' },
+    { type: 'depex', label: 'Depex', color: '#f472b6', style: 'dotted', elKey: 'Depex' },
 ];
 const LEGEND_NODES = [
-    // BIOS
-    { shape: '◆', label: '.inf',         color: '#ffd700' },
-    { shape: '⬡', label: '.dec',         color: '#00d4ff' },
-    { shape: '⬟', label: '.sdl',         color: '#34d399' },
-    { shape: '▣', label: '.cif',         color: '#60a5fa' },
-    { shape: '●', label: '.c/.h',        color: '#3b82f6' },
-    { shape: '▲', label: '.asm',         color: '#f59e0b' },
-    { shape: '⬠', label: '.dsc',         color: '#e2e8f0' },
-    { shape: '‣', label: '.vfr/.hfr',    color: '#f472b6' },
-    { shape: '□', label: '.uni',         color: '#fb923c' },
-    { shape: '▷', label: '.asl',         color: '#a78bfa' },
-    // Python
-    { shape: '⬦', label: '.py',          color: '#4584c3' },
-    // JavaScript / TypeScript
-    { shape: '◱', label: '.js/.mjs',     color: '#f0c040' },
-    { shape: '◱', label: '.jsx',         color: '#61dafb' },
-    { shape: '⬔', label: '.ts/.tsx',     color: '#3b8fd4' },
-    // Go
-    { shape: '⬡', label: '.go',          color: '#00c6db' },
+    // exts = file extensions (lowercase, with dot) that map to this legend entry
+    { shape: '◆', label: '.inf', color: '#ffd700', exts: ['.inf'] },
+    { shape: '⬡', label: '.dec', color: '#00d4ff', exts: ['.dec'] },
+    { shape: '⬟', label: '.sdl', color: '#34d399', exts: ['.sdl'] },
+    { shape: '▣', label: '.cif', color: '#60a5fa', exts: ['.cif'] },
+    { shape: '●', label: '.c/.h', color: '#3b82f6', exts: ['.c', '.h'] },
+    { shape: '▲', label: '.asm', color: '#f59e0b', exts: ['.asm', '.s', '.nasm'] },
+    { shape: '⬠', label: '.dsc', color: '#e2e8f0', exts: ['.dsc'] },
+    { shape: '‣', label: '.vfr/.hfr', color: '#f472b6', exts: ['.vfr', '.hfr'] },
+    { shape: '□', label: '.uni', color: '#fb923c', exts: ['.uni'] },
+    { shape: '▷', label: '.asl', color: '#a78bfa', exts: ['.asl', '.aslc'] },
+    { shape: '⬦', label: '.py', color: '#4584c3', exts: ['.py'] },
+    { shape: '◱', label: '.js/.mjs', color: '#f0c040', exts: ['.js', '.mjs', '.cjs'] },
+    { shape: '◱', label: '.jsx', color: '#61dafb', exts: ['.jsx'] },
+    { shape: '⬔', label: '.ts/.tsx', color: '#3b8fd4', exts: ['.ts', '.tsx'] },
+    { shape: '⬡', label: '.go', color: '#00c6db', exts: ['.go'] },
 ];
 
+// ─── SVG edge preview helper (shared) ────────────────────────────────────────
+function _edgeLine(col, style) {
+    const dash = style === 'dashed' ? '6,4' : style === 'dotted' ? '2,3' : 'none';
+    const strokeDash = dash !== 'none' ? `stroke-dasharray="${dash}"` : '';
+    return `<svg width="32" height="10" style="vertical-align:middle;overflow:visible">
+        <line x1="0" y1="5" x2="32" y2="5" stroke="${col}" stroke-width="2" ${strokeDash}/>
+        <polygon points="28,2 34,5 28,8" fill="${col}"/>
+    </svg>`;
+}
+
 function buildLegend() {
+    // Only created dynamically in refreshLegend now
+}
+
+// ─── Dynamic Legend Refresh ───────────────────────────────────────────────────
+// Call after any graph (re)render in L1. Reads cy elements and shows only the
+// edge types / node shapes that actually appear in the current view.
+function refreshLegend() {
+    // 1. Collect edge el-keys present in the graph
+    const usedEdgeKeys = new Set();
+    cy.edges().forEach(edge => {
+        const el = edge.data('el');
+        if (el != null) usedEdgeKeys.add(el);
+    });
+
+    // 2. Collect file extensions present in file/dep_ext_file nodes
+    const usedExts = new Set();
+    cy.nodes().forEach(node => {
+        const t = node.data('_t');
+        if (t !== 'file' && t !== 'dep_ext_file') return;
+        const f = node.data('_f');
+        const path = (f && f.path) || node.data('label') || '';
+        if (!path) return;
+        const dotIdx = path.lastIndexOf('.');
+        if (dotIdx !== -1) usedExts.add(path.slice(dotIdx).toLowerCase());
+    });
+
+    // 3. Filter legend arrays
+    const activeEdges = LEGEND_EDGES.filter(e => usedEdgeKeys.has(e.elKey));
+    const activeNodes = LEGEND_NODES.filter(n => n.exts.some(ext => usedExts.has(ext)));
+
     const wrap = document.getElementById('graph-wrap');
-    if (!wrap || document.getElementById('graph-legend')) return;
+    if (!wrap) return;
 
-    const leg = document.createElement('div');
-    leg.id = 'graph-legend';
-    leg.className = 'legend-collapsed';  // start collapsed
+    let leg = document.getElementById('graph-legend');
 
-    // Build SVG line dash preview
-    function edgeLine(col, style) {
-        const dash = style === 'dashed' ? '6,4' : style === 'dotted' ? '2,3' : 'none';
-        const strokeDash = dash !== 'none' ? `stroke-dasharray="${dash}"` : '';
-        return `<svg width="32" height="10" style="vertical-align:middle;overflow:visible">
-            <line x1="0" y1="5" x2="32" y2="5" stroke="${col}" stroke-width="2" ${strokeDash}/>
-            <polygon points="28,2 34,5 28,8" fill="${col}"/>
-        </svg>`;
+    if (activeEdges.length === 0 && activeNodes.length === 0) {
+        if (leg) leg.remove();
+        return;
     }
 
-    leg.innerHTML = `
+    // Ensure legend container exists
+    if (!leg) {
+        leg = document.createElement('div');
+        leg.id = 'graph-legend';
+        leg.className = 'legend-collapsed';
+        leg.innerHTML = `
 <div id="legend-title" class="legend-title" onclick="this.parentElement.classList.toggle('legend-collapsed')">
   <span>⬡</span> Legend <span class="legend-toggle">▾</span>
 </div>
-<div class="legend-body">
-  <div class="legend-section-label">Edge Types</div>
-  ${LEGEND_EDGES.map(e => `
+<div class="legend-body" id="legend-body"></div>`;
+        wrap.appendChild(leg);
+    }
+
+    const body = document.getElementById('legend-body');
+    if (!body) return;
+    // Otherwise show it
+    // (no-op, handled by recreating the leg element if needed)
+    // 4. Render
+    let html = '';
+    if (activeEdges.length) {
+        html += `<div class="legend-section-label">Edge Types</div>`;
+        html += activeEdges.map(e => `
   <div class="legend-row">
-    ${edgeLine(e.color, e.style)}
+    ${_edgeLine(e.color, e.style)}
     <span class="legend-label" style="color:${e.color}">${e.label}</span>
-  </div>`).join('')}
-  <div class="legend-section-label" style="margin-top:8px">Node Shapes</div>
-  ${LEGEND_NODES.map(n => `
+  </div>`).join('');
+    }
+    if (activeNodes.length) {
+        html += `<div class="legend-section-label" style="margin-top:8px">Node Shapes</div>`;
+        html += activeNodes.map(n => `
   <div class="legend-row">
     <span class="legend-shape" style="color:${n.color}">${n.shape}</span>
     <span class="legend-label" style="color:${n.color}">${n.label}</span>
-  </div>`).join('')}
-</div>`;
-
-    wrap.appendChild(leg);
+  </div>`).join('');
+    }
+    body.innerHTML = html;
 }
 
 // Call on init
