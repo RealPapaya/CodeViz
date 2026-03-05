@@ -722,11 +722,19 @@ HTML_SKELETON = """\
     <div class="stat">Functions <strong id="st-funcs">0</strong></div>
   </div>
   <div style="flex:1"></div>
-  <div id="search-wrap" style="display:flex;align-items:center;position:relative;">
-    <span class="search-icon" style="position:absolute;left:10px;color:var(--muted);font-size:14px;">🔍</span>
-    <input id="search" type="text" placeholder="Search... (/)" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px 8px 32px;border-radius:6px;font-size:13px;width:100%;outline:none;">
-    <button id="pref-btn" title="Preferences" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:12px;padding:4px;transition:color 0.2s;">⚙</button>
+  <div id="search-wrap">
+    <div id="sr-modes">
+      <button class="sr-mode active" data-mode="files" id="srm-files" title="Search file names and paths">📁 Files</button>
+      <button class="sr-mode" data-mode="code" id="srm-code" title="Search functions and code content">ƒ Code</button>
+    </div>
+    <div id="sr-input-row">
+      <span id="sr-icon">⌕</span>
+      <input id="search" type="text" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">
+      <span id="sr-count"></span>
+    </div>
+    <div id="sr-panel"></div>
   </div>
+  <button id="pref-btn" title="Preferences" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
 </div>
 
 <div id="breadcrumb">

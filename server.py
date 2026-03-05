@@ -213,6 +213,149 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.json_resp({'error': str(e)}, 500)
 
+        elif p == '/search':
+            # Full-text content search — ALL readable files in codebase, grouped by file
+            jid    = qs.get('job',    [''])[0]
+            q      = qs.get('q',      [''])[0].strip()
+            offset = int(qs.get('offset', ['0'])[0])  # for pagination (file-group level)
+
+            if not jid or not q or len(q) < 2:
+                self.json_resp({'groups': [], 'total_matches': 0, 'total_files': 0, 'has_more': False})
+                return
+
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+            root = job.get('root', '')
+            if not root:
+                self.json_resp({'groups': [], 'total_matches': 0, 'total_files': 0, 'has_more': False})
+                return
+
+            import re as _re
+
+            # Support regex toggle: prefix q with 'r/' to enable
+            use_regex = q.startswith('r/')
+            raw_q = q[2:] if use_regex else q
+            try:
+                if use_regex:
+                    pattern = _re.compile(raw_q, _re.IGNORECASE)
+                else:
+                    pattern = _re.compile(_re.escape(raw_q), _re.IGNORECASE)
+            except _re.error as e:
+                self.json_resp({'error': f'Regex error: {e}', 'groups': [], 'total_matches': 0,
+                                'total_files': 0, 'has_more': False})
+                return
+
+            MAX_LINE_LEN   = 300   # chars per line to return
+            MAX_LINES_FILE = 100   # max match-lines per file
+            PAGE_FILES     = 50    # file groups returned per page
+            SKIP_DIRS  = {
+                'Build','build','.git','__pycache__','node_modules','.next','dist',
+                'out','.venv','venv','.cache','.nyc_output','vendor','.idea','.vscode',
+            }
+            BINARY_EXTS = {
+                '.bin','.rom','.efi','.lib','.obj','.exe','.dll','.pdb',
+                '.so','.a','.o','.png','.jpg','.jpeg','.gif','.ico','.bmp',
+                '.webp','.tiff','.pdf','.zip','.tar','.gz','.7z','.rar',
+            }
+
+            # ── Walk ALL files ────────────────────────────────────────────────
+            total_matches  = 0
+            total_files    = 0
+            all_groups     = []   # [{path, label, module, ext, matches:[{line,text,ms,me}]}]
+
+            # Retrieve module colour map from graph data if available
+            graph_data = job.get('data') or {}
+            mod_colors = {}
+            for mod in graph_data.get('modules', []):
+                mod_colors[mod['id']] = mod.get('color', '#64748b')
+
+            root_norm = os.path.normpath(root)
+
+            for dirpath, dirnames, filenames in os.walk(root):
+                # Prune skip dirs in-place
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+
+                for fname in sorted(filenames):
+                    ext = Path(fname).suffix.lower()
+                    if ext in BINARY_EXTS:
+                        continue
+
+                    abs_path = os.path.join(dirpath, fname)
+                    rel = os.path.relpath(abs_path, root).replace('\\', '/')
+
+                    # Heuristic: skip large files > 2 MB
+                    try:
+                        if os.path.getsize(abs_path) > 2 * 1024 * 1024:
+                            continue
+                    except OSError:
+                        continue
+
+                    matches = []
+                    try:
+                        with open(abs_path, encoding='utf-8', errors='replace') as fh:
+                            # Quick pre-screen: read whole file, check if pattern exists
+                            content = fh.read()
+                            if not pattern.search(content):
+                                continue
+                            # Now collect per-line matches
+                            for lineno, line in enumerate(content.split('\n'), 1):
+                                m = pattern.search(line)
+                                if m:
+                                    text = line.rstrip('\r')
+                                    # Clamp display
+                                    if len(text) > MAX_LINE_LEN:
+                                        # centre the match in the window
+                                        start = max(0, m.start() - 60)
+                                        text = ('…' if start > 0 else '') + text[start:start + MAX_LINE_LEN]
+                                        adj = m.start() - start + (1 if start > 0 else 0)
+                                        ms = max(0, adj)
+                                        me = ms + len(raw_q)
+                                    else:
+                                        ms = m.start()
+                                        me = m.end()
+                                    matches.append({
+                                        'line': lineno,
+                                        'text': text,
+                                        'ms':   ms,
+                                        'me':   me,
+                                    })
+                                    if len(matches) >= MAX_LINES_FILE:
+                                        break   # cap per file
+                    except Exception:
+                        continue
+
+                    if not matches:
+                        continue
+
+                    total_files   += 1
+                    total_matches += len(matches)
+                    mod_id = rel.split('/')[0] if '/' in rel else '_root'
+                    all_groups.append({
+                        'path':    rel,
+                        'label':   fname,
+                        'module':  mod_id,
+                        'ext':     ext,
+                        'color':   mod_colors.get(mod_id, '#64748b'),
+                        'count':   len(matches),
+                        'matches': matches,
+                    })
+
+            # ── Sort: most matches first ──────────────────────────────────────
+            all_groups.sort(key=lambda g: -g['count'])
+
+            # ── Paginate ──────────────────────────────────────────────────────
+            page_groups = all_groups[offset: offset + PAGE_FILES]
+            has_more    = (offset + PAGE_FILES) < len(all_groups)
+
+            self.json_resp({
+                'groups':        page_groups,
+                'total_matches': total_matches,
+                'total_files':   total_files,
+                'has_more':      has_more,
+                'next_offset':   offset + PAGE_FILES,
+                'query':         q,
+            })
+
         elif p == '/jobs':
             with JOBS_LOCK:
                 snapshot = [(k, {kk: vv for kk, vv in v.items() if kk != 'data'})

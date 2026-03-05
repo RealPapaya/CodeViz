@@ -155,6 +155,9 @@ window.addEventListener('DOMContentLoaded', () => {
                 // Preferences init
                 initPreferences();
 
+                // Search system init (must be after DATA loads)
+                initSearch();
+
                 // L1 toolbar init
                 initL1Toolbar();
 
@@ -3454,21 +3457,590 @@ function setSidebarActive(modId) {
     }
 }
 
-// ─── Search ───────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEARCH SYSTEM V2 — Multi-mode, keyboard navigation, graph fly-to
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const _srState = {
+    mode: 'files',           // 'files' | 'code'
+    query: '',
+    results: [],             // current flat result list (files/funcs)
+    activeIdx: -1,           // keyboard-selected index
+    _contentDebounce: null,  // timer for async content search
+    _contentGroups: [],      // grouped server results [{path,label,module,ext,count,matches,color}]
+    _contentTotal: 0,        // total match lines from server
+    _contentFiles: 0,        // total files from server
+    _contentHasMore: false,  // more pages available
+    _contentNextOffset: 0,   // next offset for pagination
+    _contentLoading: false,  // in-flight request
+    _indexBuilt: false,
+    _fileIndex: [],          // [{label,path,module,ext,file_type,id,func_count,size}]
+    _funcIndex: [],          // [{name,filePath,fileLabel,module,ext}]
+    _openGroups: new Set(),  // which file groups are expanded in content panel
+};
+
+// ── Build search indices once after DATA loads ────────────────────────────────
+function _srBuildIndex() {
+    if (_srState._indexBuilt || !window.DATA) return;
+    _srState._indexBuilt = true;
+
+    // File index
+    for (const [, files] of Object.entries(DATA.files_by_module || {})) {
+        for (const f of files) {
+            _srState._fileIndex.push({
+                label: f.label, path: f.path, module: f.path.split('/')[0] || '_root',
+                ext: f.ext || '', file_type: f.file_type || 'other',
+                id: f.id, func_count: f.func_count || 0, size: f.size || 0,
+            });
+        }
+    }
+
+    // Function index
+    for (const [filePath, funcs] of Object.entries(DATA.funcs_by_file || {})) {
+        const fileLabel = filePath.split('/').pop();
+        const module = filePath.split('/')[0] || '_root';
+        const ext = '.' + (fileLabel.split('.').pop() || '');
+        for (const fn of funcs) {
+            _srState._funcIndex.push({
+                name: fn.label, filePath, fileLabel, module, ext,
+                is_public: fn.is_public, is_efiapi: fn.is_efiapi,
+            });
+        }
+    }
+}
+
+// ── Fuzzy/scored match ────────────────────────────────────────────────────────
+function _srScore(text, q) {
+    // Returns score >= 0, or -1 if no match
+    const t = text.toLowerCase(), ql = q.toLowerCase();
+    if (!t.includes(ql)) return -1;
+    const idx = t.indexOf(ql);
+    if (t === ql) return 1000;
+    if (idx === 0) return 500;
+    if (t.startsWith(ql)) return 400;
+    if (text.includes(q)) return 300; // case-sensitive exact
+    return 100 - idx;   // later match = lower score
+}
+
+function _srHighlight(text, q) {
+    if (!q) return escapeHtml(text);
+    const ql = q.toLowerCase(), tl = text.toLowerCase();
+    const idx = tl.indexOf(ql);
+    if (idx < 0) return escapeHtml(text);
+    return escapeHtml(text.slice(0, idx))
+        + '<mark>' + escapeHtml(text.slice(idx, idx + q.length)) + '</mark>'
+        + escapeHtml(text.slice(idx + q.length));
+}
+
+// ── Search files ──────────────────────────────────────────────────────────────
+function _srSearchFiles(q) {
+    if (!q) return [];
+    const scored = [];
+    for (const f of _srState._fileIndex) {
+        // Score against label and path
+        const ls = _srScore(f.label, q);
+        const ps = _srScore(f.path, q) * 0.4;
+        const best = Math.max(ls, ps);
+        if (best >= 0) scored.push({ ...f, _score: best, _type: 'file' });
+    }
+    scored.sort((a, b) => b._score - a._score);
+    return scored.slice(0, 14);
+}
+
+// ── Search functions ──────────────────────────────────────────────────────────
+function _srSearchFuncs(q) {
+    if (!q) return [];
+    const scored = [];
+    for (const fn of _srState._funcIndex) {
+        const s = _srScore(fn.name, q);
+        if (s >= 0) scored.push({ ...fn, _score: s, _type: 'func' });
+    }
+    scored.sort((a, b) => b._score - a._score);
+    return scored.slice(0, 14);
+}
+
+// ── Async content search via server (grouped, paginated) ──────────────────────
+async function _srSearchContent(q, offset = 0) {
+    if (!codeState.jobId || !q || q.length < 2) {
+        _srState._contentGroups = [];
+        _srState._contentTotal = 0;
+        _srState._contentFiles = 0;
+        _srState._contentHasMore = false;
+        _srState._contentLoading = false;
+        _srRenderPanel();
+        return;
+    }
+    _srState._contentLoading = true;
+    if (offset === 0) {
+        _srState._contentGroups = [];
+        _srState._contentTotal = 0;
+        _srState._contentFiles = 0;
+    }
+    _srRenderPanel(); // show spinner
+
+    try {
+        const url = `/search?job=${encodeURIComponent(codeState.jobId)}&q=${encodeURIComponent(q)}&offset=${offset}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        // Bail if query changed during request
+        if (_srState.query !== q) return;
+
+        if (data.error) { _srState._contentLoading = false; _srRenderPanel(); return; }
+
+        if (offset === 0) {
+            _srState._contentGroups  = data.groups || [];
+            _srState._contentTotal   = data.total_matches || 0;
+            _srState._contentFiles   = data.total_files   || 0;
+        } else {
+            _srState._contentGroups  = [..._srState._contentGroups, ...(data.groups || [])];
+        }
+        _srState._contentHasMore    = data.has_more || false;
+        _srState._contentNextOffset = data.next_offset || 0;
+        _srState._contentLoading    = false;
+    } catch (_) {
+        _srState._contentLoading = false;
+    }
+
+    if (_srState.query === q) _srRenderPanel();
+}
+
+// ── Render results panel ──────────────────────────────────────────────────────
+function _srRenderPanel() {
+    const panel = document.getElementById('sr-panel');
+    const countEl = document.getElementById('sr-count');
+    if (!panel) return;
+
+    const q = _srState.query;
+    const results = _srState.results;
+
+    if (!q) {
+        panel.classList.remove('visible');
+        if (countEl) countEl.textContent = '';
+        return;
+    }
+    panel.classList.add('visible');
+
+    // ── Count display ─────────────────────────────────────────────────────────
+    if (countEl) {
+        if (_srState._contentLoading && _srState._contentTotal === 0) {
+            countEl.textContent = '…';
+        } else {
+            const n = _srState.mode === 'code'
+                ? _srState._contentTotal
+                : results.length;
+            countEl.textContent = n > 0 ? n.toLocaleString() : '0';
+        }
+    }
+
+    // ── Build HTML ───────────────────────────────────────────────────────────
+    let html = '';
+
+    // ── Files / Functions section ─────────────────────────────────────────────
+    if (results.length > 0) {
+        const sectionLabel = _srState.mode === 'files' ? '📁 Files' : 'ƒ Functions';
+        html += `<div class="sr-section"><span>${sectionLabel}</span><span class="sr-section-count">${results.length}</span></div>`;
+        results.forEach((r, i) => {
+            const badge_color = extColor(r.ext || '');
+            const ext_label = (r.ext || '').replace('.', '').toUpperCase().slice(0, 4) || '—';
+            const modColor = _srModuleColor(r.module);
+            const nameHl = _srHighlight(r._type === 'file' ? r.label : r.name, q);
+            const active = i === _srState.activeIdx ? ' sr-active' : '';
+
+            let meta = '';
+            if (r._type === 'file') {
+                meta = `<div class="sr-meta">
+  <span class="sr-meta-mod" style="background:${modColor}22;color:${modColor};border:1px solid ${modColor}44">${escapeHtml(r.module)}</span>
+  <span class="sr-meta-path">${escapeHtml(r.path)}</span>
+</div>`;
+            } else {
+                const pub = r.is_efiapi
+                    ? '<span style="color:#ffd700;font-size:9px">EFIAPI</span>'
+                    : r.is_public
+                    ? '<span style="color:#34d399;font-size:9px">pub</span>'
+                    : '<span style="color:#64748b;font-size:9px">priv</span>';
+                meta = `<div class="sr-meta">
+  ${pub}
+  <span class="sr-meta-mod" style="background:${modColor}22;color:${modColor};border:1px solid ${modColor}44">${escapeHtml(r.module)}</span>
+  <span class="sr-meta-path">${escapeHtml(r.fileLabel)}</span>
+</div>`;
+            }
+            html += `<div class="sr-row${active}" data-idx="${i}" data-type="top">
+  <span class="sr-badge" style="background:${badge_color};color:#000">${ext_label}</span>
+  <div class="sr-body"><div class="sr-name">${nameHl}</div>${meta}</div>
+</div>`;
+        });
+    }
+
+    // ── Content section (grouped by file, VS Code-style) ──────────────────────
+    if (_srState.mode === 'code') {
+        const groups = _srState._contentGroups;
+
+        // Summary header
+        let summaryText = '';
+        if (_srState._contentLoading && groups.length === 0) {
+            summaryText = `<div class="sr-loading">
+              <span class="sr-loading-dot"></span>
+              <span class="sr-loading-dot"></span>
+              <span class="sr-loading-dot"></span>
+              <span>Searching entire codebase…</span></div>`;
+        } else if (groups.length > 0 || _srState._contentTotal > 0) {
+            const totalTxt = _srState._contentTotal.toLocaleString();
+            const filesTxt = _srState._contentFiles.toLocaleString();
+            const moreTxt  = _srState._contentHasMore ? ` (showing ${groups.length} of ${filesTxt})` : '';
+            summaryText = `<div class="sr-section">
+              <span>📄 Content Matches</span>
+              <span class="sr-section-count" style="color:var(--accent)">${totalTxt} in ${filesTxt} files${moreTxt}</span>
+            </div>`;
+        } else if (!_srState._contentLoading) {
+            summaryText = '';
+        }
+        html += summaryText;
+
+        // File groups
+        groups.forEach((g, gi) => {
+            const ext_label = (g.ext || '').replace('.', '').toUpperCase().slice(0, 4) || '—';
+            const badge_color = extColor(g.ext || '');
+            const modColor = g.color || _srModuleColor(g.module);
+            const isOpen = _srState._openGroups.has(g.path);
+            const arrow = isOpen ? '▾' : '▸';
+
+            html += `<div class="sr-file-group" data-path="${escapeHtml(g.path)}">
+  <div class="sr-file-header" data-gpath="${escapeHtml(g.path)}">
+    <span class="sr-arrow">${arrow}</span>
+    <span class="sr-badge" style="background:${badge_color};color:#000;font-size:8px">${ext_label}</span>
+    <span class="sr-file-name">${_srHighlight(g.label, q)}</span>
+    <span class="sr-file-count">${g.count}</span>
+    <span class="sr-meta-mod" style="background:${modColor}22;color:${modColor};border:1px solid ${modColor}44;font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px">${escapeHtml(g.module)}</span>
+  </div>`;
+
+            if (isOpen) {
+                g.matches.forEach(m => {
+                    const snip = m.text || '';
+                    const snipHl = escapeHtml(snip.slice(0, m.ms))
+                        + '<mark>' + escapeHtml(snip.slice(m.ms, m.me)) + '</mark>'
+                        + escapeHtml(snip.slice(m.me));
+                    html += `<div class="sr-line-row" data-gpath="${escapeHtml(g.path)}" data-line="${m.line}">
+      <span class="sr-line-num">${m.line}</span>
+      <span class="sr-snippet-inline">${snipHl}</span>
+    </div>`;
+                });
+            }
+            html += `</div>`;
+        });
+
+        // Load more button
+        if (_srState._contentHasMore && !_srState._contentLoading) {
+            html += `<div style="padding:10px;text-align:center">
+              <button id="sr-load-more" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 16px;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit;transition:all 0.15s" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
+                Load more files ↓
+              </button>
+            </div>`;
+        } else if (_srState._contentLoading && groups.length > 0) {
+            html += `<div class="sr-loading" style="justify-content:center">
+              <span class="sr-loading-dot"></span><span class="sr-loading-dot"></span><span class="sr-loading-dot"></span>
+            </div>`;
+        }
+    }
+
+    // ── No results ────────────────────────────────────────────────────────────
+    if (results.length === 0 && _srState._contentGroups.length === 0 && !_srState._contentLoading) {
+        html += `<div class="sr-empty">No results for <strong style="color:var(--text)">"${escapeHtml(q)}"</strong></div>`;
+    }
+
+    // ── Footer ────────────────────────────────────────────────────────────────
+    html += `<div class="sr-footer">
+      <span class="sr-footer-hint"><kbd>↑↓</kbd> navigate</span>
+      <span class="sr-footer-hint"><kbd>↵</kbd> open</span>
+      <span class="sr-footer-hint"><kbd>Tab</kbd> switch mode</span>
+      <span class="sr-footer-hint"><kbd>Esc</kbd> close</span>
+    </div>`;
+
+    panel.innerHTML = html;
+
+    // ── Wire top-result rows (files/funcs) ────────────────────────────────────
+    panel.querySelectorAll('.sr-row[data-type="top"]').forEach(row => {
+        const idx = parseInt(row.dataset.idx, 10);
+        const r = results[idx];
+        if (!r) return;
+        row.addEventListener('click', () => _srSelectResult(r));
+        row.addEventListener('mouseenter', () => {
+            _srState.activeIdx = idx;
+            _srHoverResult(r);
+            _srUpdateActive();
+        });
+    });
+
+    // ── Wire file group toggle headers ────────────────────────────────────────
+    panel.querySelectorAll('.sr-file-header').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+            const path = hdr.dataset.gpath;
+            if (_srState._openGroups.has(path)) _srState._openGroups.delete(path);
+            else _srState._openGroups.add(path);
+            _srRenderPanel();
+        });
+    });
+
+    // ── Wire individual line rows ─────────────────────────────────────────────
+    panel.querySelectorAll('.sr-line-row').forEach(row => {
+        const path = row.dataset.gpath;
+        const line = parseInt(row.dataset.line, 10);
+        row.addEventListener('click', () => _srSelectContentLine(path, line));
+        row.addEventListener('mouseenter', () => {
+            _srHoverResult({ path });
+        });
+    });
+
+    // ── Load more ─────────────────────────────────────────────────────────────
+    const loadMoreBtn = document.getElementById('sr-load-more');
+    if (loadMoreBtn) {
+        loadMoreBtn.addEventListener('click', () => {
+            _srSearchContent(_srState.query, _srState._contentNextOffset);
+        });
+    }
+}
+
+// ── Navigate to a specific line in a content result ──────────────────────────
+function _srSelectContentLine(filePath, line) {
+    _srClose();
+    const module = filePath ? filePath.split('/')[0] : null;
+    if (filePath && module) {
+        if (state.level !== 1 || state.activeModule !== module) {
+            drillToModule(module, { focusFile: filePath });
+        } else {
+            const target = cy.nodes().filter(n => { const f = n.data('_f'); return f && f.path === filePath; }).first();
+            if (target && target.length) {
+                highlightNode(target);
+                cy.animate({ center: { eles: target }, zoom: Math.max(cy.zoom(), 1.8) },
+                    { duration: 500, easing: 'ease-in-out-cubic' });
+            }
+        }
+    }
+    if (filePath) {
+        setTimeout(async () => {
+            await loadFileInPanel(filePath);
+            if (line) {
+                setTimeout(() => {
+                    const lineEl = document.getElementById(`cl-${line - 1}`);
+                    if (lineEl) {
+                        document.querySelectorAll('.code-line.fn-highlight').forEach(el => el.classList.remove('fn-highlight'));
+                        lineEl.classList.add('fn-highlight');
+                        lineEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    }
+                }, 300);
+            }
+        }, 150);
+    }
+}
+function _srHoverResult(r) {
+    if (!cy) return;
+    const filePath = r.filePath || r.path;
+    if (!filePath) return;
+    cy.nodes().forEach(n => {
+        const f = n.data('_f');
+        if (f && f.path === filePath) highlightNode(n);
+    });
+}
+
+function _srModuleColor(modId) {
+    if (!window.DATA) return '#64748b';
+    const mod = (DATA.modules || []).find(m => m.id === modId);
+    return mod?.color || '#64748b';
+}
+
+// ── Navigate to result (click or Enter) ──────────────────────────────────────
+function _srSelectResult(r) {
+    _srClose();
+    const filePath = r.filePath || r.path;
+    const module   = r.module   || (filePath ? filePath.split('/')[0] : null);
+    const funcName = r._type === 'func' ? r.name : null;
+
+    // Navigate graph to the file
+    if (filePath && module) {
+        if (state.level !== 1 || state.activeModule !== module) {
+            drillToModule(module, { focusFile: filePath });
+        } else {
+            // Already in correct module — just pan to the node
+            const target = cy.nodes().filter(n => {
+                const f = n.data('_f');
+                return f && f.path === filePath;
+            }).first();
+            if (target && target.length) {
+                highlightNode(target);
+                cy.animate({ center: { eles: target }, zoom: Math.max(cy.zoom(), 1.8) },
+                    { duration: 500, easing: 'ease-in-out-cubic' });
+            }
+        }
+    }
+
+    // Open file in code panel + jump to function
+    if (filePath) {
+        setTimeout(() => loadFileInPanel(filePath, funcName), 150);
+    }
+
+    // For content results, also jump to line
+    if (r._type === 'content' && r.line) {
+        setTimeout(() => {
+            const lineEl = document.getElementById(`cl-${r.line - 1}`);
+            if (lineEl) {
+                lineEl.classList.add('fn-highlight');
+                lineEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+        }, 500);
+    }
+}
+
+// ── Keyboard navigation inside panel ─────────────────────────────────────────
+function _srUpdateActive() {
+    const panel = document.getElementById('sr-panel');
+    if (!panel) return;
+    panel.querySelectorAll('.sr-row').forEach((row, i) => {
+        row.classList.toggle('sr-active', i === _srState.activeIdx);
+    });
+    const active = panel.querySelector('.sr-row.sr-active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+// ── Open / Close ──────────────────────────────────────────────────────────────
+function _srClose() {
+    const panel = document.getElementById('sr-panel');
+    if (panel) panel.classList.remove('visible');
+    _srState.activeIdx = -1;
+    // Remove any cytoscape hover highlights
+    if (cy) cy.elements().removeClass('faded hl');
+}
+
+// ── Main input handler ────────────────────────────────────────────────────────
 function onSearch(e) {
-    const q = e.target.value.trim().toLowerCase();
-    if (!q) { cy.elements().removeClass('faded hl'); return; }
-    cy.elements().addClass('faded');
-    cy.nodes().forEach(n => { if (n.data('label').toLowerCase().includes(q)) n.removeClass('faded').addClass('hl'); });
+    const q = e.target.value.trim();
+    _srState.query = q;
+    _srState.activeIdx = -1;
+    _srState._contentGroups = [];
+    _srState._contentTotal = 0;
+    _srState._contentFiles = 0;
+    _srState._contentHasMore = false;
+    _srState._openGroups = new Set();
+
+    if (!q) {
+        _srClose();
+        if (cy) cy.elements().removeClass('faded hl');
+        return;
+    }
+
+    _srBuildIndex();
+
+    if (_srState.mode === 'files') {
+        _srState.results = _srSearchFiles(q);
+    } else {
+        _srState.results = _srSearchFuncs(q);
+        // Debounce async content search
+        clearTimeout(_srState._contentDebounce);
+        _srState._contentLoading = true;
+        _srState._contentDebounce = setTimeout(() => _srSearchContent(q, 0), 400);
+    }
+
+    // Also fade non-matching nodes in graph (background feedback)
+    if (cy && state.level <= 1) {
+        cy.elements().addClass('faded');
+        cy.nodes().forEach(n => {
+            const f = n.data('_f');
+            const label = (f ? f.label : n.data('label')) || '';
+            if (label.toLowerCase().includes(q.toLowerCase())) n.removeClass('faded').addClass('hl');
+        });
+    }
+
+    _srRenderPanel();
+}
+
+// ── Mode toggle ───────────────────────────────────────────────────────────────
+function _srSetMode(mode) {
+    _srState.mode = mode;
+    document.querySelectorAll('.sr-mode').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    const input = document.getElementById('search');
+    if (input) {
+        input.placeholder = mode === 'files' ? 'Search files… ( / )' : 'Search functions & code… ( / )';
+    }
+    // Re-run search with new mode
+    if (_srState.query) onSearch({ target: { value: _srState.query } });
+}
+
+// ── Init (called from main DOMContentLoaded) ──────────────────────────────────
+function initSearch() {
+    const input = document.getElementById('search');
+    const panel = document.getElementById('sr-panel');
+    if (!input) return;
+
+    // Wire mode buttons
+    document.querySelectorAll('.sr-mode').forEach(btn => {
+        btn.addEventListener('click', () => _srSetMode(btn.dataset.mode));
+    });
+
+    // Input events
+    input.addEventListener('input', onSearch);
+
+    // Keyboard navigation
+    input.addEventListener('keydown', e => {
+        const allResults = [..._srState.results, ..._srState._contentResults];
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            _srState.activeIdx = Math.min(_srState.activeIdx + 1, allResults.length - 1);
+            _srUpdateActive();
+            if (allResults[_srState.activeIdx]) _srHoverResult(allResults[_srState.activeIdx]);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            _srState.activeIdx = Math.max(_srState.activeIdx - 1, 0);
+            _srUpdateActive();
+            if (allResults[_srState.activeIdx]) _srHoverResult(allResults[_srState.activeIdx]);
+        } else if (e.key === 'Enter') {
+            const r = allResults[_srState.activeIdx];
+            if (r) _srSelectResult(r);
+            else if (allResults.length === 1) _srSelectResult(allResults[0]);
+        } else if (e.key === 'Escape') {
+            input.value = '';
+            _srState.query = '';
+            _srClose();
+            if (cy) cy.elements().removeClass('faded hl');
+            input.blur();
+        } else if (e.key === 'Tab') {
+            e.preventDefault();
+            // Toggle mode
+            _srSetMode(_srState.mode === 'files' ? 'code' : 'files');
+        }
+    });
+
+    // Click outside closes panel
+    document.addEventListener('click', e => {
+        if (!e.target.closest('#search-wrap')) _srClose();
+    });
+
+    // Re-open on focus if has query
+    input.addEventListener('focus', () => {
+        if (_srState.query) _srRenderPanel();
+    });
 }
 
 // ─── Keyboard ─────────────────────────────────────────────────────────────────
 function onKey(e) {
-    if (e.target.tagName === 'INPUT') return;
-    if (e.key === '/') { e.preventDefault(); document.getElementById('search').focus(); }
+    const tag = e.target.tagName;
+    const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
+    if (e.key === '/') {
+        if (!inInput) { e.preventDefault(); document.getElementById('search').focus(); }
+        return;
+    }
+    if (inInput) return;
     if (e.key === 'Escape') {
+        const srPanel = document.getElementById('sr-panel');
+        if (srPanel && srPanel.classList.contains('visible')) {
+            document.getElementById('search').value = '';
+            _srState.query = '';
+            _srClose();
+            if (cy) cy.elements().removeClass('faded hl');
+            return;
+        }
         document.getElementById('search').value = '';
-        cy.elements().removeClass('faded hl');
+        if (cy) cy.elements().removeClass('faded hl');
         goBack();
     }
     if (e.key === 'm' || e.key === 'M') { state.history = []; loadLevel0(); }
