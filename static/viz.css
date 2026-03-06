@@ -2030,7 +2030,7 @@ body {
     background: transparent;
     color: var(--muted);
     cursor: pointer;
-    font-size: 0;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0;
     transition: all 0.15s;
@@ -2044,12 +2044,9 @@ body {
 .sr-mode-icon {
     width: 16px;
     height: 16px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    fill: currentColor;
     display: block;
+    flex-shrink: 0;
 }
 
 .sr-mode:hover {
@@ -3064,4 +3061,125 @@ body {
 
 .sr-fi-tree-file:hover {
     background: rgba(255, 255, 255, 0.05);
+}
+
+/* ── Layout Switcher ─────────────────────────────────────────────────────────── */
+#layout-switcher {
+    position: absolute;
+    bottom: 18px;
+    left: 18px;
+    z-index: 25;
+    background: rgba(5, 10, 15, 0.90);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 28px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    min-width: 148px;
+    transition: box-shadow 0.2s;
+}
+
+#layout-switcher:hover {
+    box-shadow: 0 6px 32px rgba(0, 212, 255, 0.12);
+    border-color: #253545;
+}
+
+.ls-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+}
+
+.ls-header:hover {
+    background: rgba(0, 212, 255, 0.06);
+}
+
+.ls-header-icon {
+    font-size: 12px;
+    color: var(--accent);
+    opacity: 0.8;
+}
+
+.ls-header-text {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    flex: 1;
+}
+
+.ls-chevron {
+    font-size: 11px;
+    color: var(--muted);
+    transition: transform 0.2s;
+}
+
+#layout-switcher.ls-collapsed .ls-chevron {
+    transform: rotate(-90deg);
+}
+
+#layout-switcher.ls-collapsed .ls-btns {
+    display: none;
+}
+
+.ls-btns {
+    display: flex;
+    flex-direction: column;
+    padding: 5px 6px 6px;
+    gap: 2px;
+}
+
+.ls-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    text-align: left;
+    width: 100%;
+    transition: background 0.13s, border-color 0.13s, color 0.13s;
+    white-space: nowrap;
+    font-family: inherit;
+}
+
+.ls-btn:hover {
+    background: rgba(0, 212, 255, 0.07);
+    border-color: rgba(0, 212, 255, 0.25);
+    color: #b0d8e8;
+}
+
+.ls-btn.active {
+    background: rgba(0, 212, 255, 0.13);
+    border-color: rgba(0, 212, 255, 0.55);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.ls-btn.active .ls-icon {
+    filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.6));
+}
+
+.ls-icon {
+    font-size: 13px;
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.ls-name {
+    font-size: 11px;
+    line-height: 1.2;
 }

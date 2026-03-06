@@ -167,6 +167,9 @@ window.addEventListener('DOMContentLoaded', () => {
                 // Tooltip actions init
                 initTooltipActions();
 
+                // Layout Switcher init
+                initLayoutSwitcher();
+
                 // Ensure Canvas redraws after Google Fonts are fully loaded
                 document.fonts.ready.then(() => {
                     if (cy) applyCyFont(getSavedFont());
@@ -2697,6 +2700,7 @@ function loadLevel0() {
     cy.add(els);
     applyCyFont(getSavedFont());
 
+    _syncLayoutIndicator('cose');
     const lay = cy.layout({
         name: 'cose', animate: false, randomize: true,
         nodeRepulsion: 10000, idealEdgeLength: 200, nodeOverlap: 20, padding: 60,
@@ -2984,6 +2988,7 @@ function renderFilesFlat(modId, files, subPath) {
 
         if (extraEls.length === 0) {
             // Simple path: no extras, just run dagre normally
+            _syncLayoutIndicator('dagre-lr');
             const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
             lay.one('layoutstop', () => {
                 if (_renderToken !== _l1Token) return;
@@ -5750,3 +5755,173 @@ function _renderDashboard() {
 
 // ── Init on DOMContentLoaded (after data parse, called from main init) ─────────
 // The dashboard-btn is already in the HTML; openDashboard() is called by onclick.
+
+// ─── Layout Switcher ─────────────────────────────────────────────────────────
+const LAYOUT_PRESETS = [
+    {
+        id: 'dagre-lr',
+        icon: '→',
+        label: 'Hierarchy LR',
+        tip: 'Hierarchical Left → Right (DAG)',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'dagre', rankDir: 'LR',
+            animate: true, animationDuration: 380,
+            nodeSep: 28, rankSep: 90, padding: 45,
+        }),
+    },
+    {
+        id: 'dagre-tb',
+        icon: '↓',
+        label: 'Hierarchy TB',
+        tip: 'Hierarchical Top → Bottom (DAG)',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'dagre', rankDir: 'TB',
+            animate: true, animationDuration: 380,
+            nodeSep: 22, rankSep: 80, padding: 45,
+        }),
+    },
+    {
+        id: 'cose',
+        icon: '⚡',
+        label: 'Force',
+        tip: 'Force-Directed (CoSE) — physics simulation',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'cose',
+            animate: true, animationDuration: 600,
+            randomize: false,
+            nodeRepulsion: 9000,
+            idealEdgeLength: 160,
+            nodeOverlap: 20,
+            padding: 55,
+            gravity: 0.25,
+        }),
+    },
+    {
+        id: 'concentric',
+        icon: '◎',
+        label: 'Radial',
+        tip: 'Concentric / Radial — most connected node at centre',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'concentric',
+            animate: true, animationDuration: 420,
+            concentric: n => n.connectedEdges().length,
+            levelWidth: nodes => Math.max(2, Math.ceil(nodes.length / 8)),
+            minNodeSpacing: 28,
+            padding: 50,
+            clockwise: true,
+            startAngle: Math.PI * 1.5,
+        }),
+    },
+    {
+        id: 'breadthfirst',
+        icon: '🌲',
+        label: 'Tree',
+        tip: 'Breadth-First Tree — top-down spanning tree',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'breadthfirst',
+            animate: true, animationDuration: 420,
+            directed: true,
+            padding: 45,
+            spacingFactor: 1.6,
+            avoidOverlap: true,
+        }),
+    },
+    {
+        id: 'circle',
+        icon: '⊙',
+        label: 'Circle',
+        tip: 'Circular — all nodes evenly on a ring',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'circle',
+            animate: true, animationDuration: 400,
+            padding: 50,
+            avoidOverlap: true,
+            startAngle: Math.PI * 3 / 2,
+        }),
+    },
+];
+
+const layoutSwitcherState = {
+    currentId: 'dagre-lr',   // default for L1/L2
+    collapsed: false,
+};
+
+function initLayoutSwitcher() {
+    const wrap = document.getElementById('graph-wrap');
+    if (!wrap) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'layout-switcher';
+    panel.innerHTML = _buildLayoutSwitcherHTML();
+    wrap.appendChild(panel);
+
+    // Toggle collapse on header click
+    panel.querySelector('.ls-header').addEventListener('click', () => {
+        layoutSwitcherState.collapsed = !layoutSwitcherState.collapsed;
+        panel.classList.toggle('ls-collapsed', layoutSwitcherState.collapsed);
+    });
+
+    // Layout button clicks
+    panel.querySelector('.ls-btns').addEventListener('click', e => {
+        const btn = e.target.closest('.ls-btn');
+        if (!btn) return;
+        const id = btn.dataset.layoutId;
+        if (id) applyLayoutPreset(id);
+    });
+}
+
+function _buildLayoutSwitcherHTML() {
+    return `
+        <div class="ls-header">
+            <span class="ls-header-icon">⊞</span>
+            <span class="ls-header-text">Layout</span>
+            <span class="ls-chevron">▾</span>
+        </div>
+        <div class="ls-btns">
+            ${LAYOUT_PRESETS.map(p => `
+                <button class="ls-btn${p.id === layoutSwitcherState.currentId ? ' active' : ''}"
+                        data-layout-id="${p.id}" title="${p.tip}">
+                    <span class="ls-icon">${p.icon}</span>
+                    <span class="ls-name">${p.label}</span>
+                </button>
+            `).join('')}
+        </div>
+    `;
+}
+
+function applyLayoutPreset(id) {
+    const preset = LAYOUT_PRESETS.find(p => p.id === id);
+    if (!preset || !cy) return;
+
+    layoutSwitcherState.currentId = id;
+
+    // Update active button visuals
+    document.querySelectorAll('#layout-switcher .ls-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.layoutId === id);
+    });
+
+    showLoading(true, 'Applying layout…');
+    const config = preset.config();
+    const lay = cy.layout(config);
+    lay.one('layoutstop', () => {
+        showLoading(false);
+        cy.animate({ fit: { eles: cy.elements(), padding: 40 }, duration: 300 });
+    });
+    lay.run();
+
+    showToast(`Layout: ${preset.label}`, 'info');
+}
+
+// Called by loadLevel0 / renderFilesFlat to sync the active indicator
+function _syncLayoutIndicator(id) {
+    layoutSwitcherState.currentId = id;
+    document.querySelectorAll('#layout-switcher .ls-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.layoutId === id);
+    });
+}
