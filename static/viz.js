@@ -990,6 +990,7 @@ function resetL2History() {
 
 function resolveModuleForFile(fileRel) {
     if (!fileRel || !DATA) return null;
+    if (!fileRel.includes('/')) return '_root';
     const map = DATA.file_to_module || {};
     let mod = map[fileRel] || null;
     if (!mod) {
@@ -2682,6 +2683,16 @@ let ftFilterCollapsed = false;
 function buildFtFilter(modId = null, subDir = null) {
     const wrap = document.getElementById('ft-filter');
     if (!wrap) return;
+    if (state.level !== 1) {
+        wrap.style.display = 'none';
+        wrap.innerHTML = '';
+        return;
+    }
+    if (!modId) {
+        wrap.style.display = 'none';
+        wrap.innerHTML = '';
+        return;
+    }
 
     // Detect which types actually exist in data
     const presentTypes = new Set();
@@ -2796,6 +2807,130 @@ function buildFtFilter(modId = null, subDir = null) {
 
 let fsCollapsed = false;
 
+function collectAllFilesForTree() {
+    const out = [];
+    Object.values(DATA.files_by_module || {}).forEach(files => {
+        files.forEach(f => out.push(f));
+    });
+    Object.values(DATA.other_files_by_module || {}).forEach(files => {
+        files.forEach(f => out.push(f));
+    });
+    return out;
+}
+
+function buildFullFileTree(allFiles) {
+    const root = { name: '', path: '', children: [], files: [] };
+    const nodeMap = { '': root };
+    function getNode(folderPath) {
+        if (nodeMap[folderPath]) return nodeMap[folderPath];
+        const parts = folderPath.split('/');
+        const name = parts[parts.length - 1];
+        const parent = parts.slice(0, -1).join('/');
+        const parentNode = getNode(parent);
+        const node = { name, path: folderPath, children: [], files: [] };
+        parentNode.children.push(node);
+        nodeMap[folderPath] = node;
+        return node;
+    }
+    for (const f of allFiles) {
+        if (!f || !f.path) continue;
+        const lastSlash = f.path.lastIndexOf('/');
+        const folder = lastSlash >= 0 ? f.path.slice(0, lastSlash) : '';
+        getNode(folder).files.push(f);
+    }
+    function sortNode(n) {
+        n.children.sort((a, b) => a.name.localeCompare(b.name));
+        n.files.sort((a, b) => (a.label || a.path).localeCompare(b.label || b.path));
+        n.children.forEach(sortNode);
+    }
+    sortNode(root);
+    return root;
+}
+
+function buildFullTreeRows(container, node, depth) {
+    node.children.forEach(child => {
+        const modId = child.path.split('/')[0] || child.name;
+        const isTop = depth === 0;
+        const subPath = child.path.startsWith(modId + '/') ? child.path.slice(modId.length + 1) : '';
+        const hasKids = child.children.length > 0 || child.files.length > 0;
+        const row = document.createElement('div');
+        row.className = `tree-row ${isTop ? 'mod-row' : 'subdir-row'}`;
+        row.dataset.modId = modId;
+        if (isTop) {
+            row.id = `mi-${modId}`;
+        } else {
+            row.dataset.subPath = subPath;
+        }
+
+        const count = countFiles(child);
+        if (isTop) {
+            const mc = _srModuleColor(modId);
+            row.innerHTML =
+                `<span class="tree-arrow ${hasKids ? '' : 'leaf'}">▶</span>` +
+                `<span class="mod-dot" style="background:${mc}"></span>` +
+                `<span class="mod-name" title="${child.path}">${child.name}</span>` +
+                `<span class="mod-count" title="${count} files">${count}</span>`;
+        } else {
+            const indent = 20 + depth * 14;
+            row.innerHTML =
+                `<span style="flex-shrink:0;width:${indent}px"></span>` +
+                `<span class="tree-arrow ${hasKids ? '' : 'leaf'}">▶</span>` +
+                `<span class="subdir-icon">📁</span>` +
+                `<span class="subdir-name" title="${child.path}">${child.name}</span>` +
+                `<span class="subdir-count">${count}</span>`;
+        }
+
+        const children = document.createElement('div');
+        children.className = 'tree-children';
+        if (hasKids) {
+            buildFullTreeRows(children, child, depth + 1);
+        }
+
+        row.addEventListener('click', e => {
+            e.stopPropagation();
+            const arrow = row.querySelector('.tree-arrow');
+            const isOpen = children.classList.contains('open');
+            if (hasKids) {
+                children.classList.toggle('open', !isOpen);
+                arrow?.classList.toggle('open', !isOpen);
+            }
+            if (isTop) {
+                drillToModule(modId);
+            } else {
+                filterGraphToSubPath(modId, subPath);
+                setSubdirActive(modId, subPath);
+            }
+        });
+
+        container.appendChild(row);
+        container.appendChild(children);
+    });
+
+    const fileIndent = 24 + depth * 14;
+    node.files.forEach(f => {
+        const row = document.createElement('div');
+        row.className = 'tree-row file-row';
+        row.dataset.path = f.path;
+        const label = f.label || f.path;
+        const ic = _extIcon(f.ext || '');
+        row.innerHTML =
+            `<span style="flex-shrink:0;width:${fileIndent}px"></span>` +
+            `<span class="file-icon">${ic}</span>` +
+            `<span class="file-name" title="${f.path}">${label}</span>`;
+
+        row.addEventListener('click', e => {
+            e.stopPropagation();
+            const ft = f.file_type || 'other';
+            if (ft === 'other' && !ftActiveFilter.has('other')) ftActiveFilter.add('other');
+            if (ft === 'binary' && !ftActiveFilter.has('binary')) ftActiveFilter.add('binary');
+            const modId = resolveModuleForFile(f.path);
+            if (modId) drillToModule(modId, { focusFile: f.path });
+        });
+
+        container.appendChild(row);
+    });
+}
+
 function buildSidebar() {
     const list = document.getElementById('module-list');
     list.innerHTML = '';
@@ -2835,46 +2970,36 @@ function buildSidebar() {
         }
     }
 
-    buildFtFilter(null, null);
-    DATA.modules.forEach(m => {
-        const allFiles = DATA.files_by_module[m.id] || [];
-        const tree = buildFileTree(allFiles, m.id);
-        const hasSubdirs = tree.children.length > 0;
+    const rootPath = (DATA.stats?.root || '').replace(/\\/g, '/').replace(/\/$/, '');
+    const rootName = rootPath.split('/').filter(Boolean).pop() || 'VIZCODE';
+    const allFiles = collectAllFilesForTree();
+    const tree = buildFullFileTree(allFiles);
+    const totalCount = countFiles(tree);
+    const hasKids = tree.children.length > 0 || tree.files.length > 0;
 
-        // ── Module row ──
-        const modRow = document.createElement('div');
-        modRow.className = 'tree-row mod-row';
-        modRow.id = `mi-${m.id}`;
-        modRow.innerHTML =
-            `<span class="tree-arrow ${hasSubdirs ? '▶' : 'leaf'}">▶</span>` +
-            `<span class="mod-dot" style="background:${m.color}"></span>` +
-            `<span class="mod-name" title="${m.id}">${m.id}</span>` +
-            `<span class="mod-count" title="${m.file_count} analysed">${m.file_count}</span>`;
+    const rootRow = document.createElement('div');
+    rootRow.className = 'tree-row root-row';
+    rootRow.innerHTML =
+        `<span class="tree-arrow ${hasKids ? 'open' : 'leaf'}">▶</span>` +
+        `<span class="root-icon">🗂</span>` +
+        `<span class="root-name" title="${rootPath}">${rootName}</span>` +
+        `<span class="root-count">${totalCount}</span>`;
 
-        // ── Sub-folder children container ──
-        const children = document.createElement('div');
-        children.className = 'tree-children';
+    const rootChildren = document.createElement('div');
+    rootChildren.className = 'tree-children open';
+    if (hasKids) buildFullTreeRows(rootChildren, tree, 0);
 
-        if (hasSubdirs) {
-            buildTreeRows(children, tree, m.id, m.color, 0);
+    rootRow.addEventListener('click', () => {
+        const arrow = rootRow.querySelector('.tree-arrow');
+        const isOpen = rootChildren.classList.contains('open');
+        if (hasKids) {
+            rootChildren.classList.toggle('open', !isOpen);
+            arrow?.classList.toggle('open', !isOpen);
         }
-
-        // Module click → show ALL files for this module (no filter)
-        modRow.addEventListener('click', () => {
-            const arrow = modRow.querySelector('.tree-arrow');
-            const isOpen = children.classList.contains('open');
-
-            if (hasSubdirs) {
-                children.classList.toggle('open', !isOpen);
-                arrow.classList.toggle('open', !isOpen);
-            }
-            // Always render all files in graph when clicking module name
-            drillToModule(m.id);
-        });
-
-        list.appendChild(modRow);
-        list.appendChild(children);
     });
+
+    list.appendChild(rootRow);
+    list.appendChild(rootChildren);
 }
 
 // Recursively build a virtual tree node from flat file list
@@ -2988,8 +3113,8 @@ function filterGraphToSubPath(modId, subPath) {
 function loadLevel0() {
     showLoading(true, 'Rendering modules...');
     hideFuncView();
-    buildFtFilter(null, null);
     state.level = 0; state.activeModule = null; state.activeFile = null; state.activeSubDir = null;
+    buildFtFilter(null, null);
     updateBreadcrumb(); setSidebarActive(null);
     setL1ToolbarVisible(false);
     // Reset L1 nav history when returning to module overview
@@ -3478,6 +3603,8 @@ function drillToFile(fileRel) {
     state.level = 2; state.activeFile = fileRel;
     updateBreadcrumb();
     setL1ToolbarVisible(false);
+    const ftWrap = document.getElementById('ft-filter');
+    if (ftWrap) ftWrap.style.display = 'none';
 
     // showFuncView handles code panel sync — do NOT call loadFileInPanel separately
     openL2File(fileRel, { newSession: true, pushHistory: true });

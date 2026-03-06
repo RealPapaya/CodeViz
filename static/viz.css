@@ -373,6 +373,32 @@ body {
     margin-left: 4px
 }
 
+/* root row */
+.root-row {
+    padding: 6px 8px 6px 4px;
+    font-weight: 600
+}
+
+.root-icon {
+    flex-shrink: 0;
+    margin: 0 6px 0 4px;
+    font-size: 12px
+}
+
+.root-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.root-count {
+    font-size: 10px;
+    color: var(--muted);
+    flex-shrink: 0;
+    margin-left: 4px
+}
+
 /* sub-folder rows */
 .subdir-row {
     padding: 3px 8px 3px 0
@@ -411,6 +437,26 @@ body {
 
 .subdir-row.active {
     box-shadow: inset 2px 0 0 var(--accent)
+}
+
+/* file rows */
+.file-row {
+    padding: 2px 8px 2px 0
+}
+
+.file-icon {
+    flex-shrink: 0;
+    font-size: 11px;
+    margin-right: 5px
+}
+
+.file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: 11px
 }
 
 /* subtree container */
