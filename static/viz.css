@@ -3255,6 +3255,7 @@ body {
     font-weight: 500;
     text-align: left;
     width: 100%;
+    position: relative;
     transition: background 0.13s, border-color 0.13s, color 0.13s;
     white-space: nowrap;
     font-family: inherit;
@@ -3288,4 +3289,28 @@ body {
 .ls-name {
     font-size: 11px;
     line-height: 1.2;
+}
+
+/* Advanced layout buttons that require an unloaded CDN extension */
+.ls-btn.ls-unavailable {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: grayscale(0.4);
+}
+.ls-btn.ls-unavailable:hover {
+    background: rgba(255,255,255,0.03);
+    border-color: rgba(255,255,255,0.08);
+    color: var(--muted);
+    transform: none;
+}
+/* Small warning badge on unavailable buttons */
+.ls-warn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 9px;
+    font-weight: 800;
+    color: #f59e0b;
+    line-height: 1;
+    pointer-events: none;
 }
