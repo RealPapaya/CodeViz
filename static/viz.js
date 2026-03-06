@@ -509,6 +509,9 @@ function initL2Toolbar() {
         expandBtn.addEventListener('click', () => {
             if (!l2State.activeFile) return;
             l2State.expandedModules = new Set(l2State.externalModules || []);
+            if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
+            (l2State.sysCategories || []).forEach(c => l2State.expandedSysCategories.add(c));
+            if (l2State.hasUnresolved) l2State.expandedSysCategories.add('__unk__');
             renderL2Flowchart(l2State.activeFile);
         });
     }
@@ -517,12 +520,12 @@ function initL2Toolbar() {
         collapseBtn.addEventListener('click', () => {
             if (!l2State.activeFile) return;
             l2State.expandedModules = new Set();
+            if (l2State.expandedSysCategories) l2State.expandedSysCategories.clear();
             renderL2Flowchart(l2State.activeFile);
         });
     }
 
     updateExternalToggle();
-    updateExternalFuncsToggle();
     updateL2NavButtons();
     window.addEventListener('mouseup', onL2MouseNav);
 }
@@ -894,12 +897,6 @@ function updateExternalFuncsToggle() {
     if (!btn) return;
     btn.textContent = l2State.showExternalFuncs ? 'External Functions: On' : 'External Functions: Off';
     btn.classList.toggle('active', l2State.showExternalFuncs);
-    // Show/hide Expand All & Collapse All buttons along with External Functions toggle
-    const expandBtn = document.getElementById('l2-expand-all');
-    const collapseBtn = document.getElementById('l2-collapse-all');
-    const btnDisplay = l2State.showExternalFuncs ? '' : 'none';
-    if (expandBtn) expandBtn.style.display = btnDisplay;
-    if (collapseBtn) collapseBtn.style.display = btnDisplay;
     setL2ToolbarVisible(state.level === 2);
 }
 
@@ -939,7 +936,7 @@ function setL2ToolbarVisible(v) {
     if (bar) bar.classList.toggle('hidden', !v);
 
     const extLinesBtn = document.getElementById('l2-toggle-ext-lines');
-    if (extLinesBtn) extLinesBtn.style.display = (v && l2State.showExternalFuncs) ? '' : 'none';
+    if (extLinesBtn) extLinesBtn.style.display = (v && l2State.showExternalFuncs) ? 'block' : 'none';
 }
 
 function updateL2Toolbar(fileRel, stats) {
@@ -983,7 +980,7 @@ function resetL2State(fileRel) {
     l2State.externalModules = [];
     l2State._sysMap = null;
     l2State._unkMap = null;
-    l2State._funcs  = null;
+    l2State._funcs = null;
 }
 
 function resetL2History() {
@@ -1113,39 +1110,61 @@ function toggleExternalGroup(modName) {
 }
 
 // ─── Toggle sys_group (known system APIs + unresolved) ────────────────────────
-// Expands/collapses WITHOUT re-running dagre layout.
-// New nodes are placed near the group's former position; existing positions kept.
+// Mirrors toggleExternalGroup: saves origin + viewport, re-runs renderL2Flowchart
+// so dagre handles layout (no overlaps) and spawn animation fires normally.
 function toggleSysGroup(catName) {
     if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
 
     const isUnk = catName === '__unk__';
     const catSlug = isUnk ? null : _safeId(catName) + '-' + _hashId(catName);
     const groupId = isUnk ? 'extmod-unknown' : `syscat-${catSlug}`;
+
+    if (l2State.expandedSysCategories.has(catName)) {
+        l2State.expandedSysCategories.delete(catName);
+        l2State.expandOriginPos = null;
+    } else {
+        l2State.expandedSysCategories.add(catName);
+        const groupNode = cy.$id(groupId);
+        l2State.expandOriginPos = (groupNode && groupNode.length)
+            ? { ...groupNode.position() }
+            : null;
+    }
+
+    l2State.preserveViewport = { pan: { ...cy.pan() }, zoom: cy.zoom() };
+    renderL2Flowchart(l2State.activeFile);
+}
+
+// ─── (dead code below — kept so git diff is readable, never called) ──────────
+function _toggleSysGroup_old(catName) {
+    if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
+    const isUnk = catName === '__unk__';
+    const catSlug = isUnk ? null : _safeId(catName) + '-' + _hashId(catName);
+    const groupId = isUnk ? 'extmod-unknown' : `syscat-${catSlug}`;
     const isExpanded = l2State.expandedSysCategories.has(catName);
 
     const SYS_CAT_STYLE = {
-        'UEFI Boot Services':    { color: '#60a5fa', bg: '#0b1e38' },
+        'UEFI Boot Services': { color: '#60a5fa', bg: '#0b1e38' },
         'UEFI Runtime Services': { color: '#818cf8', bg: '#110e2e' },
-        'EDK2 MemoryLib':        { color: '#34d399', bg: '#0a2218' },
-        'EDK2 BaseLib':          { color: '#00d4ff', bg: '#021a22' },
-        'EDK2 DebugLib':         { color: '#fbbf24', bg: '#1f1500' },
-        'EDK2 PrintLib':         { color: '#fbbf24', bg: '#1f1500' },
-        'EDK2 MemAlloc':         { color: '#34d399', bg: '#0a2218' },
-        'PEI Services':          { color: '#a78bfa', bg: '#180d2e' },
-        'EDK2 HobLib':           { color: '#a78bfa', bg: '#180d2e' },
-        'EDK2 UefiLib':          { color: '#60a5fa', bg: '#0b1e38' },
-        'EDK2 DevicePath':       { color: '#60a5fa', bg: '#0b1e38' },
-        'C Runtime':             { color: '#fb923c', bg: '#1e0e00' },
-        'AMI SDK':               { color: '#e879f9', bg: '#1e0820' },
-        'CPU/IO Lib':            { color: '#f87171', bg: '#200808' },
-        'Status Code':           { color: '#94a3b8', bg: '#0f1520' },
+        'EDK2 MemoryLib': { color: '#34d399', bg: '#0a2218' },
+        'EDK2 BaseLib': { color: '#00d4ff', bg: '#021a22' },
+        'EDK2 DebugLib': { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 PrintLib': { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 MemAlloc': { color: '#34d399', bg: '#0a2218' },
+        'PEI Services': { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 HobLib': { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 UefiLib': { color: '#60a5fa', bg: '#0b1e38' },
+        'EDK2 DevicePath': { color: '#60a5fa', bg: '#0b1e38' },
+        'C Runtime': { color: '#fb923c', bg: '#1e0e00' },
+        'AMI SDK': { color: '#e879f9', bg: '#1e0820' },
+        'CPU/IO Lib': { color: '#f87171', bg: '#200808' },
+        'Status Code': { color: '#94a3b8', bg: '#0f1520' },
     };
     const SYS_DEFAULT = { color: '#64748b', bg: '#101820' };
     const style = isUnk ? { color: '#475569', bg: '#1a1218' } : (SYS_CAT_STYLE[catName] || SYS_DEFAULT);
 
     const sysMap = l2State._sysMap || new Map();
     const unkMap = l2State._unkMap || new Map();
-    const funcs  = l2State._funcs  || [];
+    const funcs = l2State._funcs || [];
 
     if (isExpanded) {
         // ── Collapse: remove individual func nodes, restore group node ─────────
@@ -1526,28 +1545,30 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         });
     }
 
-    // ─── Store sysMap on l2State so toggleSysGroup can access it ─────────────
+    // ─── Store sysMap on l2State so toggleSysGroup and expand/collapse all can access ─
     l2State._sysMap = sysMap;
     l2State._unkMap = unkMap;
-    l2State._funcs  = funcs;
+    l2State._funcs = funcs;
+    l2State.sysCategories = Array.from(sysMap.keys());
+    l2State.hasUnresolved = unkMap.size > 0;
 
     // ─── Known System / UEFI / C-runtime category groups ─────────────────────
     const SYS_CAT_STYLE = {
-        'UEFI Boot Services':    { color: '#60a5fa', bg: '#0b1e38' },
+        'UEFI Boot Services': { color: '#60a5fa', bg: '#0b1e38' },
         'UEFI Runtime Services': { color: '#818cf8', bg: '#110e2e' },
-        'EDK2 MemoryLib':        { color: '#34d399', bg: '#0a2218' },
-        'EDK2 BaseLib':          { color: '#00d4ff', bg: '#021a22' },
-        'EDK2 DebugLib':         { color: '#fbbf24', bg: '#1f1500' },
-        'EDK2 PrintLib':         { color: '#fbbf24', bg: '#1f1500' },
-        'EDK2 MemAlloc':         { color: '#34d399', bg: '#0a2218' },
-        'PEI Services':          { color: '#a78bfa', bg: '#180d2e' },
-        'EDK2 HobLib':           { color: '#a78bfa', bg: '#180d2e' },
-        'EDK2 UefiLib':          { color: '#60a5fa', bg: '#0b1e38' },
-        'EDK2 DevicePath':       { color: '#60a5fa', bg: '#0b1e38' },
-        'C Runtime':             { color: '#fb923c', bg: '#1e0e00' },
-        'AMI SDK':               { color: '#e879f9', bg: '#1e0820' },
-        'CPU/IO Lib':            { color: '#f87171', bg: '#200808' },
-        'Status Code':           { color: '#94a3b8', bg: '#0f1520' },
+        'EDK2 MemoryLib': { color: '#34d399', bg: '#0a2218' },
+        'EDK2 BaseLib': { color: '#00d4ff', bg: '#021a22' },
+        'EDK2 DebugLib': { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 PrintLib': { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 MemAlloc': { color: '#34d399', bg: '#0a2218' },
+        'PEI Services': { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 HobLib': { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 UefiLib': { color: '#60a5fa', bg: '#0b1e38' },
+        'EDK2 DevicePath': { color: '#60a5fa', bg: '#0b1e38' },
+        'C Runtime': { color: '#fb923c', bg: '#1e0e00' },
+        'AMI SDK': { color: '#e879f9', bg: '#1e0820' },
+        'CPU/IO Lib': { color: '#f87171', bg: '#200808' },
+        'Status Code': { color: '#94a3b8', bg: '#0f1520' },
     };
     const SYS_DEFAULT = { color: '#64748b', bg: '#101820' };
 
@@ -1705,7 +1726,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
             if (savedVP && originPos) {
                 cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
 
-                const newNodes = cy.nodes('[_t="ext_func"]').filter(n => !prevIds.has(n.id()));
+                const newNodes = cy.nodes('[_t="ext_func"],[_t="sys_func"]').filter(n => !prevIds.has(n.id()));
 
                 if (newNodes.length > 0) {
                     const finalPos = new Map();
@@ -3645,6 +3666,22 @@ function onNodeTap(node) {
             toggleSysGroup(d.syscat);
             return;
         }
+        // sys_func node — highlight and scroll code panel to the callsite
+        if (d._t === 'sys_func') {
+            highlightNode(node);
+            const callerIdx = pickCallerIdxForExternal(node);
+            if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
+            syncActiveL2FuncCode(d.fn);
+            return;
+        }
+        // sys_func / unk_func node — highlight and scroll code panel to the callsite
+        if (d._t === 'sys_func') {
+            highlightNode(node);
+            const callerIdx = pickCallerIdxForExternal(node);
+            if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
+            syncActiveL2FuncCode(d.fn);
+            return;
+        }
         if (d._t === 'ext_func') {
             const now = performance.now();
             const sameNode = extClickLastId === node.id();
@@ -4919,18 +4956,8 @@ function _srWireCodeGroups(container, groups) {
         hdr.dataset.wired = '1';
         hdr.addEventListener('click', () => {
             const p = hdr.dataset.gpath;
-            if (!p) return;
-
-            // Always resolve against the LIVE DOM: if a streaming flush replaced
-            // the DOM while this click was in-flight, hdr may be detached.
-            // Re-query by data-gpath so we always operate on the visible element.
-            const resultsEl = document.getElementById('sr-results');
-            const liveHdr = resultsEl
-                ? resultsEl.querySelector(`.sr-file-header[data-gpath="${CSS.escape(p)}"]`)
-                : hdr;
-            const grp = (liveHdr || hdr).closest('.sr-file-group');
+            const grp = hdr.closest('.sr-file-group');
             if (!grp) return;
-
             const wasOpen = _srState._openGroups.has(p);
             if (wasOpen) {
                 _srState._openGroups.delete(p);
@@ -4952,7 +4979,7 @@ function _srWireCodeGroups(container, groups) {
                     lines.style.display = '';
                 }
             }
-            const chev = grp.querySelector('.sr-chevron');
+            const chev = hdr.querySelector('.sr-chevron');
             if (chev) {
                 const nowOpen = _srState._openGroups.has(p);
                 chev.classList.toggle('open', nowOpen);
