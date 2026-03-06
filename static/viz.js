@@ -522,6 +522,7 @@ function initL2Toolbar() {
     }
 
     updateExternalToggle();
+    updateExternalFuncsToggle();
     updateL2NavButtons();
     window.addEventListener('mouseup', onL2MouseNav);
 }
@@ -893,6 +894,12 @@ function updateExternalFuncsToggle() {
     if (!btn) return;
     btn.textContent = l2State.showExternalFuncs ? 'External Functions: On' : 'External Functions: Off';
     btn.classList.toggle('active', l2State.showExternalFuncs);
+    // Show/hide Expand All & Collapse All buttons along with External Functions toggle
+    const expandBtn = document.getElementById('l2-expand-all');
+    const collapseBtn = document.getElementById('l2-collapse-all');
+    const btnDisplay = l2State.showExternalFuncs ? '' : 'none';
+    if (expandBtn) expandBtn.style.display = btnDisplay;
+    if (collapseBtn) collapseBtn.style.display = btnDisplay;
     setL2ToolbarVisible(state.level === 2);
 }
 
@@ -932,7 +939,7 @@ function setL2ToolbarVisible(v) {
     if (bar) bar.classList.toggle('hidden', !v);
 
     const extLinesBtn = document.getElementById('l2-toggle-ext-lines');
-    if (extLinesBtn) extLinesBtn.style.display = (v && l2State.showExternalFuncs) ? 'block' : 'none';
+    if (extLinesBtn) extLinesBtn.style.display = (v && l2State.showExternalFuncs) ? '' : 'none';
 }
 
 function updateL2Toolbar(fileRel, stats) {
@@ -4912,8 +4919,18 @@ function _srWireCodeGroups(container, groups) {
         hdr.dataset.wired = '1';
         hdr.addEventListener('click', () => {
             const p = hdr.dataset.gpath;
-            const grp = hdr.closest('.sr-file-group');
+            if (!p) return;
+
+            // Always resolve against the LIVE DOM: if a streaming flush replaced
+            // the DOM while this click was in-flight, hdr may be detached.
+            // Re-query by data-gpath so we always operate on the visible element.
+            const resultsEl = document.getElementById('sr-results');
+            const liveHdr = resultsEl
+                ? resultsEl.querySelector(`.sr-file-header[data-gpath="${CSS.escape(p)}"]`)
+                : hdr;
+            const grp = (liveHdr || hdr).closest('.sr-file-group');
             if (!grp) return;
+
             const wasOpen = _srState._openGroups.has(p);
             if (wasOpen) {
                 _srState._openGroups.delete(p);
@@ -4935,7 +4952,7 @@ function _srWireCodeGroups(container, groups) {
                     lines.style.display = '';
                 }
             }
-            const chev = hdr.querySelector('.sr-chevron');
+            const chev = grp.querySelector('.sr-chevron');
             if (chev) {
                 const nowOpen = _srState._openGroups.has(p);
                 chev.classList.toggle('open', nowOpen);
