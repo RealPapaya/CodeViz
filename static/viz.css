@@ -3183,3 +3183,11 @@ body {
     font-size: 11px;
     line-height: 1.2;
 }
+
+/* ── sys_group / sys_func node tooltip distinction (handled via node colours) ── */
+/* Pulse animation on sys_group nodes to hint they're expandable */
+@keyframes sys-group-pulse {
+    0%   { border-opacity: 0.7; }
+    50%  { border-opacity: 1.0; }
+    100% { border-opacity: 0.7; }
+}

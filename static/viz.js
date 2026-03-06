@@ -962,6 +962,7 @@ function resetL2State(fileRel) {
     l2State.activeFile = fileRel;
     l2State.activeFuncIdx = 0;
     l2State.expandedModules = new Set();
+    l2State.expandedSysCategories = new Set();
     l2State.externalModules = [];
 }
 
@@ -1173,17 +1174,29 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
 
     // extMap:  modName → Map<funcName, { files[], callers:Set }>
     // potMap:  key     → { callee, files[], callers:Set }   (ambiguous)
+    // sysMap:  category → Map<funcName, callers:Set>        (known system/UEFI/C-runtime)
     // unkMap:  callee  → callers:Set                         (truly unresolvable)
     const extMap = new Map();
     const potMap = new Map();
+    const sysMap = new Map();   // NEW: categorised known-system calls
     const unkMap = new Map();
     let internalEdgeCount = 0;
+
+    // Lookup table from DATA (built by analyze_viz.py KNOWN_SYS_FUNCS)
+    const knownCats = DATA.func_known_categories || {};
 
     function addExt(modName, callee, targetFiles, callerIdx) {
         if (!extMap.has(modName)) extMap.set(modName, new Map());
         const fm = extMap.get(modName);
         if (!fm.has(callee)) fm.set(callee, { files: targetFiles, callers: new Set() });
         fm.get(callee).callers.add(callerIdx);
+    }
+
+    function addSys(category, callee, callerIdx) {
+        if (!sysMap.has(category)) sysMap.set(category, new Map());
+        const cm = sysMap.get(category);
+        if (!cm.has(callee)) cm.set(callee, new Set());
+        cm.get(callee).add(callerIdx);
     }
 
     if (hasCallList) {
@@ -1215,8 +1228,14 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 }
                 const targetFile = Object.prototype.hasOwnProperty.call(nameToFile, callee) ? nameToFile[callee] : null;
                 if (!targetFile) {
-                    if (!unkMap.has(callee)) unkMap.set(callee, new Set());
-                    unkMap.get(callee).add(i);
+                    // Check if it's a known system/UEFI/C-runtime function
+                    const knownCat = knownCats[callee];
+                    if (knownCat) {
+                        addSys(knownCat, callee, i);
+                    } else {
+                        if (!unkMap.has(callee)) unkMap.set(callee, new Set());
+                        unkMap.get(callee).add(i);
+                    }
                     continue;
                 }
                 addExt(fileToModule[targetFile] || '_root', callee, [targetFile], i);
@@ -1340,28 +1359,147 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         });
     }
 
-    // ─── True unknown (system / compiler) ────────────────────────────────────
-    if (unkMap.size > 0) {
-        const unkId = 'extmod-unknown';
-        els.push({
-            data: {
-                id: unkId, label: `System / Unknown\n${unkMap.size} funcs`,
-                bg: '#2a1515', bc: '#64748b', w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
-                _t: 'ext_group', mod: 'Unknown',
-                tt: `System calls or unresolved symbols\nCount: ${unkMap.size}`,
-            }
-        });
-        const callerSet = new Map();
-        unkMap.forEach(callers => callers.forEach(idx => callerSet.set(idx, (callerSet.get(idx) || 0) + 1)));
-        callerSet.forEach((count, callerIdx) => {
+    // ─── Known System / UEFI / C-runtime categories (sysMap) ────────────────
+    // Colour palette per category — matches category names from KNOWN_SYS_FUNCS
+    const SYS_CAT_STYLE = {
+        'UEFI Boot Services':    { color: '#60a5fa', bg: '#0b1e38', icon: '🔵' },
+        'UEFI Runtime Services': { color: '#818cf8', bg: '#110e2e', icon: '🟣' },
+        'EDK2 MemoryLib':        { color: '#34d399', bg: '#0a2218', icon: '🟢' },
+        'EDK2 BaseLib':          { color: '#00d4ff', bg: '#021a22', icon: '🔵' },
+        'EDK2 DebugLib':         { color: '#fbbf24', bg: '#1f1500', icon: '🟡' },
+        'EDK2 PrintLib':         { color: '#fbbf24', bg: '#1f1500', icon: '🟡' },
+        'EDK2 MemAlloc':         { color: '#34d399', bg: '#0a2218', icon: '🟢' },
+        'PEI Services':          { color: '#a78bfa', bg: '#180d2e', icon: '🟣' },
+        'EDK2 HobLib':           { color: '#a78bfa', bg: '#180d2e', icon: '🟣' },
+        'EDK2 UefiLib':          { color: '#60a5fa', bg: '#0b1e38', icon: '🔵' },
+        'EDK2 DevicePath':       { color: '#60a5fa', bg: '#0b1e38', icon: '🔵' },
+        'C Runtime':             { color: '#fb923c', bg: '#1e0e00', icon: '🟠' },
+        'AMI SDK':               { color: '#e879f9', bg: '#1e0820', icon: '🟤' },
+        'CPU/IO Lib':            { color: '#f87171', bg: '#200808', icon: '🔴' },
+        'Status Code':           { color: '#94a3b8', bg: '#0f1520', icon: '⚪' },
+    };
+    const SYS_DEFAULT = { color: '#64748b', bg: '#101820', icon: '⚙️' };
+
+    // Track expanded state in l2State (like l2State.expandedModules)
+    if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
+
+    for (const [catName, fnMap] of sysMap.entries()) {
+        const catSlug = _safeId(catName) + '-' + _hashId(catName);
+        const groupId = `syscat-${catSlug}`;
+        const style = SYS_CAT_STYLE[catName] || SYS_DEFAULT;
+        const funcCount = fnMap.size;
+        const isExpanded = l2State.expandedSysCategories.has(catName);
+
+        // Count total callers across all funcs in this category
+        const allCallers = new Map(); // callerIdx → call count
+        fnMap.forEach((callerSet) => callerSet.forEach(idx => allCallers.set(idx, (allCallers.get(idx) || 0) + 1)));
+
+        if (!isExpanded) {
+            // ── Collapsed: single group node ────────────────────────────────
             els.push({
                 data: {
-                    id: `unke-${callerIdx}`, source: `fn-${callerIdx}`, target: unkId,
-                    w: Math.min(3, 1 + count / 3), ec: '#64748b', es: 'dotted', el: 'ext',
-                    tt: `→ system calls (${count})`,
+                    id: groupId,
+                    label: `${catName}\n${funcCount} fn`,
+                    bg: style.bg, bc: style.color,
+                    w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
+                    _t: 'sys_group', syscat: catName,
+                    tt: `${catName}\n${funcCount} function${funcCount !== 1 ? 's' : ''}\n\nDouble-click to expand ↕`,
                 }
             });
-        });
+            allCallers.forEach((count, callerIdx) => {
+                els.push({
+                    data: {
+                        id: `syse-${catSlug}-${callerIdx}`,
+                        source: `fn-${callerIdx}`, target: groupId,
+                        w: Math.min(3, 1 + count / 3), ec: style.color,
+                        es: 'solid', el: 'sys',
+                        tt: `→ ${catName} (${count} call${count > 1 ? 's' : ''})`,
+                    }
+                });
+            });
+        } else {
+            // ── Expanded: individual function nodes ─────────────────────────
+            let fnIdx = 0;
+            fnMap.forEach((callerSet, funcName) => {
+                const fnId = `sysfn-${catSlug}-${_hashId(funcName)}`;
+                els.push({
+                    data: {
+                        id: fnId,
+                        label: `${funcName}\n(${catName})`,
+                        bg: style.bg, bc: style.color,
+                        w: 160, h: 42, sh: 'roundrectangle', lvl: 2,
+                        _t: 'sys_func', fn: funcName, syscat: catName,
+                        tt: `${funcName}\nCategory: ${catName}\n\nThis is a well-known system API.\nNo source in this codebase.`,
+                    }
+                });
+                callerSet.forEach(callerIdx => {
+                    els.push({
+                        data: {
+                            id: `sysfne-${catSlug}-${callerIdx}-${_hashId(funcName)}`,
+                            source: `fn-${callerIdx}`, target: fnId,
+                            w: 1.5, ec: style.color, es: 'solid', el: 'sys',
+                            tt: `${funcs[callerIdx].label} → ${funcName}`,
+                        }
+                    });
+                });
+                fnIdx++;
+            });
+        }
+    }
+
+    // ─── True unknown (truly unresolvable — reduced to a last resort) ─────────
+    if (unkMap.size > 0) {
+        const unkId = 'extmod-unknown';
+        const isExpanded = l2State.expandedSysCategories.has('__unk__');
+
+        if (!isExpanded) {
+            els.push({
+                data: {
+                    id: unkId,
+                    label: `Unresolved\n${unkMap.size} symbol${unkMap.size !== 1 ? 's' : ''}`,
+                    bg: '#1a1218', bc: '#475569',
+                    w: 160, h: 52, sh: 'roundrectangle', lvl: 2,
+                    _t: 'sys_group', syscat: '__unk__',
+                    tt: `Unresolved symbols (${unkMap.size})\nNot found in any analysed file\nand not a known system API.\n\nDouble-click to expand ↕`,
+                }
+            });
+            const callerSet = new Map();
+            unkMap.forEach(callers => callers.forEach(idx => callerSet.set(idx, (callerSet.get(idx) || 0) + 1)));
+            callerSet.forEach((count, callerIdx) => {
+                els.push({
+                    data: {
+                        id: `unke-${callerIdx}`, source: `fn-${callerIdx}`, target: unkId,
+                        w: Math.min(3, 1 + count / 3), ec: '#475569', es: 'dotted', el: '',
+                        tt: `→ unresolved symbols (${count})`,
+                    }
+                });
+            });
+        } else {
+            // Expanded: show each unresolved symbol individually
+            unkMap.forEach((callers, funcName) => {
+                const fnId = `unkfn-${_hashId(funcName)}`;
+                els.push({
+                    data: {
+                        id: fnId,
+                        label: `${funcName}\n(unresolved)`,
+                        bg: '#1a1218', bc: '#475569',
+                        w: 160, h: 42, sh: 'roundrectangle', lvl: 2,
+                        _t: 'sys_func', fn: funcName, syscat: '__unk__',
+                        tt: `${funcName}\nUnresolved: no definition found.\nMay be a macro, compiler intrinsic,\nor from a non-scanned library.`,
+                    }
+                });
+                callers.forEach(callerIdx => {
+                    els.push({
+                        data: {
+                            id: `unkfne-${_hashId(funcName)}-${callerIdx}`,
+                            source: `fn-${callerIdx}`, target: fnId,
+                            w: 1.2, ec: '#475569', es: 'dotted', el: '',
+                            tt: `${funcs[callerIdx].label} → ${funcName} (unresolved)`,
+                        }
+                    });
+                });
+            });
+        }
     }
 
     l2State._animGen++;
@@ -1634,7 +1772,9 @@ function renderL2Legend() {
   <div class="legend-row"><span class="legend-shape" style="color:#60a5fa">▣</span><span class="legend-label" style="color:#60a5fa">Current file func</span></div>
   <div class="legend-row"><span class="legend-shape" style="color:#64748b">▣</span><span class="legend-label" style="color:#64748b">External func</span></div>
   <div class="legend-row"><span class="legend-shape" style="color:#a78bfa">▣</span><span class="legend-label" style="color:#a78bfa">Ambiguous func</span></div>
-  <div class="legend-row"><span style="font-size:10px;margin-right:4px">↳</span><span class="legend-label" style="color:#94a3b8">Double-click to drill</span></div>
+  <div class="legend-row"><span class="legend-shape" style="color:#34d399">▣</span><span class="legend-label" style="color:#34d399">Known system API</span></div>
+  <div class="legend-row"><span class="legend-shape" style="color:#475569">▣</span><span class="legend-label" style="color:#475569">Unresolved symbol</span></div>
+  <div class="legend-row"><span style="font-size:10px;margin-right:4px">↳</span><span class="legend-label" style="color:#94a3b8">Double-click to expand</span></div>
 </div>`;
     wrap.appendChild(leg);
 
@@ -2209,6 +2349,17 @@ function initCy() {
         const d = e.target.data();
         if (d._t === 'ext_func' || d._t === 'drilled_func' || d._t === 'potential_func') {
             drillDownExtFunc(e.target);
+        }
+        // Expand/collapse known-system category groups and the unresolved group
+        if (d._t === 'sys_group') {
+            const cat = d.syscat;
+            if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
+            if (l2State.expandedSysCategories.has(cat)) {
+                l2State.expandedSysCategories.delete(cat);
+            } else {
+                l2State.expandedSysCategories.add(cat);
+            }
+            renderL2Flowchart(l2State.activeFile);
         }
     });
     document.getElementById('cy').addEventListener('contextmenu', e => e.preventDefault());
