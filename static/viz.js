@@ -69,6 +69,7 @@ const codeState = {
     funcList: [],      // list of {name, line} for current file
     funcIdx: 0,        // current func index in funcList
     isOpen: false,
+    userClosed: false, // true when user explicitly closed panel — prevents auto-reopen
     rawLines: [],      // cache raw contents for exact callsite matching
 };
 
@@ -246,8 +247,17 @@ function initCodePanel() {
     document.getElementById('cp-close').onclick = closeCodePanel;
 
     document.getElementById('code-toggle-btn').onclick = () => {
-        if (codeState.isOpen) closeCodePanel();
-        else openCodePanel();
+        if (codeState.isOpen) {
+            closeCodePanel();
+        } else {
+            codeState.userClosed = false; // user wants panel open
+            // If we have a current file loaded, sync it
+            if (codeState.currentFile) {
+                _syncCodePanel(codeState.currentFile, codeState.currentFunc);
+            } else {
+                openCodePanel();
+            }
+        }
     };
 
     // Graph button: drill to caller/callee or go back to graph
@@ -964,6 +974,9 @@ function resetL2State(fileRel) {
     l2State.expandedModules = new Set();
     l2State.expandedSysCategories = new Set();
     l2State.externalModules = [];
+    l2State._sysMap = null;
+    l2State._unkMap = null;
+    l2State._funcs  = null;
 }
 
 function resetL2History() {
@@ -1092,6 +1105,156 @@ function toggleExternalGroup(modName) {
     renderL2Flowchart(l2State.activeFile);
 }
 
+// ─── Toggle sys_group (known system APIs + unresolved) ────────────────────────
+// Expands/collapses WITHOUT re-running dagre layout.
+// New nodes are placed near the group's former position; existing positions kept.
+function toggleSysGroup(catName) {
+    if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
+
+    const isUnk = catName === '__unk__';
+    const catSlug = isUnk ? null : _safeId(catName) + '-' + _hashId(catName);
+    const groupId = isUnk ? 'extmod-unknown' : `syscat-${catSlug}`;
+    const isExpanded = l2State.expandedSysCategories.has(catName);
+
+    const SYS_CAT_STYLE = {
+        'UEFI Boot Services':    { color: '#60a5fa', bg: '#0b1e38' },
+        'UEFI Runtime Services': { color: '#818cf8', bg: '#110e2e' },
+        'EDK2 MemoryLib':        { color: '#34d399', bg: '#0a2218' },
+        'EDK2 BaseLib':          { color: '#00d4ff', bg: '#021a22' },
+        'EDK2 DebugLib':         { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 PrintLib':         { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 MemAlloc':         { color: '#34d399', bg: '#0a2218' },
+        'PEI Services':          { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 HobLib':           { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 UefiLib':          { color: '#60a5fa', bg: '#0b1e38' },
+        'EDK2 DevicePath':       { color: '#60a5fa', bg: '#0b1e38' },
+        'C Runtime':             { color: '#fb923c', bg: '#1e0e00' },
+        'AMI SDK':               { color: '#e879f9', bg: '#1e0820' },
+        'CPU/IO Lib':            { color: '#f87171', bg: '#200808' },
+        'Status Code':           { color: '#94a3b8', bg: '#0f1520' },
+    };
+    const SYS_DEFAULT = { color: '#64748b', bg: '#101820' };
+    const style = isUnk ? { color: '#475569', bg: '#1a1218' } : (SYS_CAT_STYLE[catName] || SYS_DEFAULT);
+
+    const sysMap = l2State._sysMap || new Map();
+    const unkMap = l2State._unkMap || new Map();
+    const funcs  = l2State._funcs  || [];
+
+    if (isExpanded) {
+        // ── Collapse: remove individual func nodes, restore group node ─────────
+        l2State.expandedSysCategories.delete(catName);
+
+        // Find position centroid of expanded nodes to place group at
+        const fnPrefix = isUnk ? 'unkfn-' : `sysfn-${catSlug}-`;
+        const expandedNodes = cy.nodes().filter(n => n.id().startsWith(fnPrefix));
+        let cx = 0, cy2 = 0;
+        expandedNodes.forEach(n => { cx += n.position('x'); cy2 += n.position('y'); });
+        if (expandedNodes.length) { cx /= expandedNodes.length; cy2 /= expandedNodes.length; }
+
+        // Remove expanded nodes and their edges
+        expandedNodes.connectedEdges().remove();
+        expandedNodes.remove();
+
+        // Count for collapsed label
+        const fnMap = isUnk ? unkMap : sysMap.get(catName);
+        const funcCount = fnMap ? fnMap.size : 0;
+
+        // Add group node back at centroid
+        cy.add({
+            data: {
+                id: groupId,
+                label: isUnk ? `Unresolved\n${funcCount} funcs` : `${catName}\n${funcCount} funcs`,
+                bg: style.bg, bc: style.color,
+                w: isUnk ? 160 : 170, h: 52, sh: 'roundrectangle', lvl: 2,
+                _t: 'sys_group', syscat: catName,
+                tt: isUnk
+                    ? `Unresolved symbols (${funcCount})\nClick to expand ↕`
+                    : `${catName}\n${funcCount} funcs\n\nClick to expand ↕`,
+            },
+            position: { x: cx || 0, y: cy2 || 0 }
+        });
+
+        // Re-add edges from caller func nodes to this group
+        const callerSet = new Map();
+        if (isUnk) {
+            unkMap.forEach(callers => callers.forEach(idx => callerSet.set(idx, (callerSet.get(idx) || 0) + 1)));
+        } else {
+            (sysMap.get(catName) || new Map()).forEach(callerSetI => callerSetI.forEach(idx => callerSet.set(idx, (callerSet.get(idx) || 0) + 1)));
+        }
+        callerSet.forEach((count, callerIdx) => {
+            const edgeId = isUnk ? `unke-${callerIdx}` : `syse-${catSlug}-${callerIdx}`;
+            if (!cy.$id(edgeId).length && cy.$id(`fn-${callerIdx}`).length) {
+                cy.add({
+                    data: {
+                        id: edgeId,
+                        source: `fn-${callerIdx}`, target: groupId,
+                        w: Math.min(3, 1 + count / 3), ec: style.color,
+                        es: isUnk ? 'dotted' : 'solid', el: '',
+                        tt: isUnk ? `→ unresolved (${count})` : `→ ${catName} (${count} call${count !== 1 ? 's' : ''})`,
+                    }
+                });
+            }
+        });
+
+    } else {
+        // ── Expand: remove group node, scatter individual func nodes around it ──
+        l2State.expandedSysCategories.add(catName);
+
+        const groupNode = cy.$id(groupId);
+        const origin = groupNode.length ? { ...groupNode.position() } : { x: 0, y: 0 };
+
+        // Remove collapsed group node + its edges
+        groupNode.connectedEdges().remove();
+        groupNode.remove();
+
+        const fnMap = isUnk ? unkMap : (sysMap.get(catName) || new Map());
+        const NODE_W = 160, NODE_H = 42, GAP = 10;
+        const COLS = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(fnMap.size))));
+        let fnIdx = 0;
+
+        fnMap.forEach((callerSet, funcName) => {
+            const fnId = isUnk ? `unkfn-${_hashId(funcName)}` : `sysfn-${catSlug}-${_hashId(funcName)}`;
+            const col = fnIdx % COLS;
+            const row = Math.floor(fnIdx / COLS);
+            const nx = origin.x + (col - (COLS - 1) / 2) * (NODE_W + GAP);
+            const ny = origin.y + (row + 1) * (NODE_H + GAP + 10);
+
+            cy.add({
+                data: {
+                    id: fnId,
+                    label: `${funcName}\n(${catName})`,
+                    bg: style.bg, bc: style.color,
+                    w: NODE_W, h: NODE_H, sh: 'roundrectangle', lvl: 2,
+                    _t: 'sys_func', fn: funcName, syscat: catName,
+                    tt: isUnk
+                        ? `${funcName}\nUnresolved — not found in scanned files.`
+                        : `${funcName}\n${catName}\n\nKnown system API.`,
+                },
+                position: { x: nx, y: ny }
+            });
+
+            const callers = isUnk ? callerSet : callerSet; // both are Sets
+            callers.forEach(callerIdx => {
+                const edgeId = isUnk
+                    ? `unkfne-${_hashId(funcName)}-${callerIdx}`
+                    : `sysfne-${catSlug}-${callerIdx}-${_hashId(funcName)}`;
+                if (!cy.$id(edgeId).length && cy.$id(`fn-${callerIdx}`).length) {
+                    cy.add({
+                        data: {
+                            id: edgeId,
+                            source: `fn-${callerIdx}`, target: fnId,
+                            w: isUnk ? 1.2 : 1.5, ec: style.color,
+                            es: isUnk ? 'dotted' : 'solid', el: '',
+                            tt: `${(funcs[callerIdx] || {}).label || callerIdx} → ${funcName}`,
+                        }
+                    });
+                }
+            });
+            fnIdx++;
+        });
+    }
+}
+
 function openL2File(fileRel, opts = {}) {
     const { pushHistory = true, newSession = false, focusFunc = null } = opts;
     if (!fileRel) return;
@@ -1178,11 +1341,10 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
     // unkMap:  callee  → callers:Set                         (truly unresolvable)
     const extMap = new Map();
     const potMap = new Map();
-    const sysMap = new Map();   // NEW: categorised known-system calls
+    const sysMap = new Map();
     const unkMap = new Map();
     let internalEdgeCount = 0;
 
-    // Lookup table from DATA (built by analyze_viz.py KNOWN_SYS_FUNCS)
     const knownCats = DATA.func_known_categories || {};
 
     function addExt(modName, callee, targetFiles, callerIdx) {
@@ -1220,7 +1382,6 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 }
                 if (!l2State.showExternalFuncs) continue;
                 if (Object.prototype.hasOwnProperty.call(nameToFiles, callee)) {
-                    // Ambiguous: multiple possible files
                     const k = `pot:${callee}`;
                     if (!potMap.has(k)) potMap.set(k, { callee, files: nameToFiles[callee], callers: new Set() });
                     potMap.get(k).callers.add(i);
@@ -1228,7 +1389,6 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 }
                 const targetFile = Object.prototype.hasOwnProperty.call(nameToFile, callee) ? nameToFile[callee] : null;
                 if (!targetFile) {
-                    // Check if it's a known system/UEFI/C-runtime function
                     const knownCat = knownCats[callee];
                     if (knownCat) {
                         addSys(knownCat, callee, i);
@@ -1359,28 +1519,31 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         });
     }
 
-    // ─── Known System / UEFI / C-runtime categories (sysMap) ────────────────
-    // Colour palette per category — matches category names from KNOWN_SYS_FUNCS
-    const SYS_CAT_STYLE = {
-        'UEFI Boot Services':    { color: '#60a5fa', bg: '#0b1e38', icon: '🔵' },
-        'UEFI Runtime Services': { color: '#818cf8', bg: '#110e2e', icon: '🟣' },
-        'EDK2 MemoryLib':        { color: '#34d399', bg: '#0a2218', icon: '🟢' },
-        'EDK2 BaseLib':          { color: '#00d4ff', bg: '#021a22', icon: '🔵' },
-        'EDK2 DebugLib':         { color: '#fbbf24', bg: '#1f1500', icon: '🟡' },
-        'EDK2 PrintLib':         { color: '#fbbf24', bg: '#1f1500', icon: '🟡' },
-        'EDK2 MemAlloc':         { color: '#34d399', bg: '#0a2218', icon: '🟢' },
-        'PEI Services':          { color: '#a78bfa', bg: '#180d2e', icon: '🟣' },
-        'EDK2 HobLib':           { color: '#a78bfa', bg: '#180d2e', icon: '🟣' },
-        'EDK2 UefiLib':          { color: '#60a5fa', bg: '#0b1e38', icon: '🔵' },
-        'EDK2 DevicePath':       { color: '#60a5fa', bg: '#0b1e38', icon: '🔵' },
-        'C Runtime':             { color: '#fb923c', bg: '#1e0e00', icon: '🟠' },
-        'AMI SDK':               { color: '#e879f9', bg: '#1e0820', icon: '🟤' },
-        'CPU/IO Lib':            { color: '#f87171', bg: '#200808', icon: '🔴' },
-        'Status Code':           { color: '#94a3b8', bg: '#0f1520', icon: '⚪' },
-    };
-    const SYS_DEFAULT = { color: '#64748b', bg: '#101820', icon: '⚙️' };
+    // ─── Store sysMap on l2State so toggleSysGroup can access it ─────────────
+    l2State._sysMap = sysMap;
+    l2State._unkMap = unkMap;
+    l2State._funcs  = funcs;
 
-    // Track expanded state in l2State (like l2State.expandedModules)
+    // ─── Known System / UEFI / C-runtime category groups ─────────────────────
+    const SYS_CAT_STYLE = {
+        'UEFI Boot Services':    { color: '#60a5fa', bg: '#0b1e38' },
+        'UEFI Runtime Services': { color: '#818cf8', bg: '#110e2e' },
+        'EDK2 MemoryLib':        { color: '#34d399', bg: '#0a2218' },
+        'EDK2 BaseLib':          { color: '#00d4ff', bg: '#021a22' },
+        'EDK2 DebugLib':         { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 PrintLib':         { color: '#fbbf24', bg: '#1f1500' },
+        'EDK2 MemAlloc':         { color: '#34d399', bg: '#0a2218' },
+        'PEI Services':          { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 HobLib':           { color: '#a78bfa', bg: '#180d2e' },
+        'EDK2 UefiLib':          { color: '#60a5fa', bg: '#0b1e38' },
+        'EDK2 DevicePath':       { color: '#60a5fa', bg: '#0b1e38' },
+        'C Runtime':             { color: '#fb923c', bg: '#1e0e00' },
+        'AMI SDK':               { color: '#e879f9', bg: '#1e0820' },
+        'CPU/IO Lib':            { color: '#f87171', bg: '#200808' },
+        'Status Code':           { color: '#94a3b8', bg: '#0f1520' },
+    };
+    const SYS_DEFAULT = { color: '#64748b', bg: '#101820' };
+
     if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
 
     for (const [catName, fnMap] of sysMap.entries()) {
@@ -1390,20 +1553,18 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const funcCount = fnMap.size;
         const isExpanded = l2State.expandedSysCategories.has(catName);
 
-        // Count total callers across all funcs in this category
-        const allCallers = new Map(); // callerIdx → call count
-        fnMap.forEach((callerSet) => callerSet.forEach(idx => allCallers.set(idx, (allCallers.get(idx) || 0) + 1)));
+        const allCallers = new Map();
+        fnMap.forEach(callerSet => callerSet.forEach(idx => allCallers.set(idx, (allCallers.get(idx) || 0) + 1)));
 
         if (!isExpanded) {
-            // ── Collapsed: single group node ────────────────────────────────
             els.push({
                 data: {
                     id: groupId,
-                    label: `${catName}\n${funcCount} fn`,
+                    label: `${catName}\n${funcCount} funcs`,
                     bg: style.bg, bc: style.color,
                     w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
                     _t: 'sys_group', syscat: catName,
-                    tt: `${catName}\n${funcCount} function${funcCount !== 1 ? 's' : ''}\n\nDouble-click to expand ↕`,
+                    tt: `${catName}\n${funcCount} funcs\n\nClick to expand ↕`,
                 }
             });
             allCallers.forEach((count, callerIdx) => {
@@ -1412,14 +1573,12 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                         id: `syse-${catSlug}-${callerIdx}`,
                         source: `fn-${callerIdx}`, target: groupId,
                         w: Math.min(3, 1 + count / 3), ec: style.color,
-                        es: 'solid', el: 'sys',
-                        tt: `→ ${catName} (${count} call${count > 1 ? 's' : ''})`,
+                        es: 'solid', el: '',
+                        tt: `→ ${catName} (${count} call${count !== 1 ? 's' : ''})`,
                     }
                 });
             });
         } else {
-            // ── Expanded: individual function nodes ─────────────────────────
-            let fnIdx = 0;
             fnMap.forEach((callerSet, funcName) => {
                 const fnId = `sysfn-${catSlug}-${_hashId(funcName)}`;
                 els.push({
@@ -1429,7 +1588,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                         bg: style.bg, bc: style.color,
                         w: 160, h: 42, sh: 'roundrectangle', lvl: 2,
                         _t: 'sys_func', fn: funcName, syscat: catName,
-                        tt: `${funcName}\nCategory: ${catName}\n\nThis is a well-known system API.\nNo source in this codebase.`,
+                        tt: `${funcName}\nCategory: ${catName}\n\nKnown system API — no source in this codebase.`,
                     }
                 });
                 callerSet.forEach(callerIdx => {
@@ -1437,17 +1596,16 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                         data: {
                             id: `sysfne-${catSlug}-${callerIdx}-${_hashId(funcName)}`,
                             source: `fn-${callerIdx}`, target: fnId,
-                            w: 1.5, ec: style.color, es: 'solid', el: 'sys',
+                            w: 1.5, ec: style.color, es: 'solid', el: '',
                             tt: `${funcs[callerIdx].label} → ${funcName}`,
                         }
                     });
                 });
-                fnIdx++;
             });
         }
     }
 
-    // ─── True unknown (truly unresolvable — reduced to a last resort) ─────────
+    // ─── Unresolved symbols group ─────────────────────────────────────────────
     if (unkMap.size > 0) {
         const unkId = 'extmod-unknown';
         const isExpanded = l2State.expandedSysCategories.has('__unk__');
@@ -1456,11 +1614,11 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
             els.push({
                 data: {
                     id: unkId,
-                    label: `Unresolved\n${unkMap.size} symbol${unkMap.size !== 1 ? 's' : ''}`,
+                    label: `Unresolved\n${unkMap.size} funcs`,
                     bg: '#1a1218', bc: '#475569',
                     w: 160, h: 52, sh: 'roundrectangle', lvl: 2,
                     _t: 'sys_group', syscat: '__unk__',
-                    tt: `Unresolved symbols (${unkMap.size})\nNot found in any analysed file\nand not a known system API.\n\nDouble-click to expand ↕`,
+                    tt: `Unresolved symbols (${unkMap.size})\nNot found in any scanned file.\n\nClick to expand ↕`,
                 }
             });
             const callerSet = new Map();
@@ -1470,12 +1628,11 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                     data: {
                         id: `unke-${callerIdx}`, source: `fn-${callerIdx}`, target: unkId,
                         w: Math.min(3, 1 + count / 3), ec: '#475569', es: 'dotted', el: '',
-                        tt: `→ unresolved symbols (${count})`,
+                        tt: `→ unresolved (${count})`,
                     }
                 });
             });
         } else {
-            // Expanded: show each unresolved symbol individually
             unkMap.forEach((callers, funcName) => {
                 const fnId = `unkfn-${_hashId(funcName)}`;
                 els.push({
@@ -1485,7 +1642,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                         bg: '#1a1218', bc: '#475569',
                         w: 160, h: 42, sh: 'roundrectangle', lvl: 2,
                         _t: 'sys_func', fn: funcName, syscat: '__unk__',
-                        tt: `${funcName}\nUnresolved: no definition found.\nMay be a macro, compiler intrinsic,\nor from a non-scanned library.`,
+                        tt: `${funcName}\nUnresolved — not found in scanned files.\nMay be a macro or compiler intrinsic.`,
                     }
                 });
                 callers.forEach(callerIdx => {
@@ -1772,9 +1929,9 @@ function renderL2Legend() {
   <div class="legend-row"><span class="legend-shape" style="color:#60a5fa">▣</span><span class="legend-label" style="color:#60a5fa">Current file func</span></div>
   <div class="legend-row"><span class="legend-shape" style="color:#64748b">▣</span><span class="legend-label" style="color:#64748b">External func</span></div>
   <div class="legend-row"><span class="legend-shape" style="color:#a78bfa">▣</span><span class="legend-label" style="color:#a78bfa">Ambiguous func</span></div>
-  <div class="legend-row"><span class="legend-shape" style="color:#34d399">▣</span><span class="legend-label" style="color:#34d399">Known system API</span></div>
-  <div class="legend-row"><span class="legend-shape" style="color:#475569">▣</span><span class="legend-label" style="color:#475569">Unresolved symbol</span></div>
-  <div class="legend-row"><span style="font-size:10px;margin-right:4px">↳</span><span class="legend-label" style="color:#94a3b8">Double-click to expand</span></div>
+  <div class="legend-row"><span class="legend-shape" style="color:#34d399">▣</span><span class="legend-label" style="color:#34d399">System API group</span></div>
+  <div class="legend-row"><span class="legend-shape" style="color:#475569">▣</span><span class="legend-label" style="color:#475569">Unresolved symbols</span></div>
+  <div class="legend-row"><span style="font-size:10px;margin-right:4px">↳</span><span class="legend-label" style="color:#94a3b8">Click to expand/collapse</span></div>
 </div>`;
     wrap.appendChild(leg);
 
@@ -1875,6 +2032,7 @@ function openCodePanel() {
     panel.classList.add('open');
     document.getElementById('code-toggle-btn').classList.add('active');
     codeState.isOpen = true;
+    codeState.userClosed = false;
     const resizer = document.getElementById('resizer');
     if (resizer) resizer.style.display = 'flex';
     _startPanelResizeLoop(_PANEL_TRANSITION_MS);
@@ -1885,6 +2043,7 @@ function closeCodePanel() {
     panel.classList.remove('open');
     document.getElementById('code-toggle-btn').classList.remove('active');
     codeState.isOpen = false;
+    codeState.userClosed = true;
     const resizer = document.getElementById('resizer');
     if (resizer) resizer.style.display = 'none';
     _startPanelResizeLoop(_PANEL_TRANSITION_MS);
@@ -1893,7 +2052,7 @@ function closeCodePanel() {
 // Load a file into the code panel; optionally jump to a function
 async function loadFileInPanel(filePath, funcName) {
     if (!filePath) return;
-
+    if (codeState.userClosed && !codeState.isOpen) return; // respect user close
     openCodePanel();
     const fname = filePath.split('/').pop();
     const ext = fname.includes('.') ? '.' + fname.split('.').pop().toLowerCase() : '';
@@ -2349,17 +2508,6 @@ function initCy() {
         const d = e.target.data();
         if (d._t === 'ext_func' || d._t === 'drilled_func' || d._t === 'potential_func') {
             drillDownExtFunc(e.target);
-        }
-        // Expand/collapse known-system category groups and the unresolved group
-        if (d._t === 'sys_group') {
-            const cat = d.syscat;
-            if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
-            if (l2State.expandedSysCategories.has(cat)) {
-                l2State.expandedSysCategories.delete(cat);
-            } else {
-                l2State.expandedSysCategories.add(cat);
-            }
-            renderL2Flowchart(l2State.activeFile);
         }
     });
     document.getElementById('cy').addEventListener('contextmenu', e => e.preventDefault());
@@ -3311,6 +3459,13 @@ function drillToFile(fileRel) {
 // Dedicated code-panel sync — called only from showFuncView to avoid race conditions
 async function _syncCodePanel(fileRel, funcName, targetCallText = null) {
     if (!fileRel) return;
+    // Respect the user's explicit close — don't force panel open
+    if (codeState.userClosed && !codeState.isOpen) {
+        // Update internal state silently so panel shows correct content when user reopens
+        codeState.currentFile = fileRel;
+        codeState.currentFunc = funcName;
+        return;
+    }
     openCodePanel();
 
     const fname = fileRel.split('/').pop();
@@ -3476,6 +3631,11 @@ function onNodeTap(node) {
         }
         if (d._t === 'ext_group') {
             toggleExternalGroup(d.mod);
+            return;
+        }
+        // Single-tap: expand/collapse known system API or unresolved groups
+        if (d._t === 'sys_group') {
+            toggleSysGroup(d.syscat);
             return;
         }
         if (d._t === 'ext_func') {
