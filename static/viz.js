@@ -136,9 +136,25 @@ window.addEventListener('DOMContentLoaded', () => {
                 if (!window.DATA?.stats) { showMsg('Error: invalid data format'); return; }
 
                 const s = DATA.stats;
+                const rootOther = (DATA.other_files_by_module || {})['_root'] || [];
+                const rootFiles = (DATA.files_by_module || {})['_root'] || [];
+                if ((rootOther.length || rootFiles.length) && Array.isArray(DATA.modules)
+                    && !DATA.modules.some(m => m.id === '_root')) {
+                    const rootPath = (DATA.stats?.root || '').replace(/\\/g, '/').replace(/\/$/, '');
+                    const rootName = rootPath.split('/').filter(Boolean).pop() || '_root';
+                    const rootFuncCount = rootFiles.reduce((sum, f) => sum + (f.func_count || 0), 0);
+                    DATA.modules.push({
+                        id: '_root',
+                        label: rootName,
+                        color: '#94a3b8',
+                        file_count: rootFiles.length,
+                        func_count: rootFuncCount,
+                        other_count: rootOther.length,
+                    });
+                }
                 const totalFiles = s.files + (s.other_files || 0);
                 document.getElementById('st-files').textContent = totalFiles.toLocaleString();
-                document.getElementById('st-mods').textContent = s.modules;
+                document.getElementById('st-mods').textContent = (DATA.modules || []).length || s.modules;
                 document.getElementById('st-funcs').textContent = s.functions.toLocaleString();
 
                 buildSidebar();
@@ -3123,6 +3139,35 @@ function loadLevel0() {
     updateL1NavButtons();
 
     const els = [];
+    const hasRootModule = (DATA.modules || []).some(m => m.id === '_root');
+    const rootOther = (DATA.other_files_by_module || {})['_root'] || [];
+    const rootFiles = (DATA.files_by_module || {})['_root'] || [];
+    if (!hasRootModule && (rootOther.length || rootFiles.length)) {
+        const rootPath = (DATA.stats?.root || '').replace(/\\/g, '/').replace(/\/$/, '');
+        const rootName = rootPath.split('/').filter(Boolean).pop() || '_root';
+        const rootFuncCount = rootFiles.reduce((s, f) => s + (f.func_count || 0), 0);
+        const rootColor = '#94a3b8';
+        const totalCount = rootFiles.length + rootOther.length;
+        const ttExtra = rootOther.length ? `\nOther/binary: ${rootOther.length}` : '';
+        const rootMod = {
+            id: '_root',
+            label: rootName,
+            color: rootColor,
+            file_count: rootFiles.length,
+            func_count: rootFuncCount,
+            other_count: rootOther.length,
+        };
+        els.push({
+            data: {
+                id: rootMod.id,
+                label: `${rootName}\n${totalCount} files`,
+                bg: rootColor + '18', bc: rootColor, lvl: 0,
+                w: 190, h: 68, sh: 'roundrectangle',
+                tt: `${rootName}\nAnalysed: ${rootFiles.length} | Funcs: ${rootFuncCount}${ttExtra}`,
+                _t: 'module', _m: rootMod,
+            }
+        });
+    }
     DATA.modules.forEach(m => {
         const otherCount = m.other_count || 0;
         const totalLabel = `${m.id}\n${m.file_count} files`;
@@ -3185,6 +3230,11 @@ function drillToModule(modId, opts) {
     setL1ToolbarVisible(true);
     updateDepMapExtToggle();
     const allFiles = DATA.files_by_module[modId] || [];
+    const allOther = (DATA.other_files_by_module || {})[modId] || [];
+    if (modId === '_root' && allOther.length && allFiles.length === 0) {
+        ftActiveFilter.add('other');
+        if (allOther.some(f => f.file_type === 'binary')) ftActiveFilter.add('binary');
+    }
 
     // If a focusFile is given, zoom into its parent subfolder instead of showing all files
     if (opts?.focusFile) {
