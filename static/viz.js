@@ -2778,6 +2778,10 @@ function buildFtFilter(modId = null, subDir = null) {
     wrap.innerHTML =
         `<div class="ft-filter-title" id="ft-filter-title" style="cursor:pointer; display:flex; align-items:center; gap:6px;">
              <span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">File Types</span>
+             <span class="ft-actions">
+               <button class="ft-action" data-ft-action="all" title="Select all">All</button>
+               <button class="ft-action" data-ft-action="none" title="Select none">None</button>
+             </span>
          </div>` +
         `<div id="ft-filter-body" style="display:${bodyDisplay}; flex-direction:column;">` +
         analysed.map(chipHtml).join('') +
@@ -2788,6 +2792,15 @@ function buildFtFilter(modId = null, subDir = null) {
         `</div>`;
 
     const titleEl = wrap.querySelector('#ft-filter-title');
+    const rerender = () => {
+        if (state.level === 1 && state.activeModule) {
+            const allFiles = DATA.files_by_module[state.activeModule] || [];
+            const filtered = state.activeSubDir
+                ? allFiles.filter(f => f.path.startsWith(state.activeModule + '/' + state.activeSubDir + '/'))
+                : allFiles;
+            renderFilesFlat(state.activeModule, filtered, state.activeSubDir);
+        }
+    };
     titleEl.addEventListener('click', () => {
         ftFilterCollapsed = !ftFilterCollapsed;
         const body = document.getElementById('ft-filter-body');
@@ -2801,18 +2814,28 @@ function buildFtFilter(modId = null, subDir = null) {
         }
     });
 
+    wrap.querySelectorAll('.ft-action').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const action = btn.dataset.ftAction;
+            if (action === 'all') {
+                ftActiveFilter.clear();
+                groups.forEach(g => ftActiveFilter.add(g.key));
+                wrap.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; });
+            } else if (action === 'none') {
+                ftActiveFilter.clear();
+                wrap.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; });
+            }
+            rerender();
+        });
+    });
+
     wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
         cb.addEventListener('change', () => {
             if (cb.checked) ftActiveFilter.add(cb.dataset.ft);
             else ftActiveFilter.delete(cb.dataset.ft);
             // Re-render current view
-            if (state.level === 1 && state.activeModule) {
-                const allFiles = DATA.files_by_module[state.activeModule] || [];
-                const filtered = state.activeSubDir
-                    ? allFiles.filter(f => f.path.startsWith(state.activeModule + '/' + state.activeSubDir + '/'))
-                    : allFiles;
-                renderFilesFlat(state.activeModule, filtered, state.activeSubDir);
-            }
+            rerender();
         });
     });
 }
@@ -3282,7 +3305,7 @@ function drillToModule(modId, opts) {
 // Render flat file nodes in graph — the only graph view for L1
 function renderFilesFlat(modId, files, subPath) {
     // Apply File Type Filter (for fully-analysed files)
-    const visible = files.filter(f => ftActiveFilter.has(f.file_type || 'other') || ftActiveFilter.size === 0);
+    const visible = files.filter(f => ftActiveFilter.has(f.file_type || 'other'));
 
     // Optionally add other/binary files
     const showOther = ftActiveFilter.has('other');
