@@ -73,37 +73,29 @@ const codeState = {
     rawLines: [],      // cache raw contents for exact callsite matching
 };
 
-// ─── Register cytoscape layout extensions (fcose, elk) ───────────────────────
-// Tracks which layout names have been successfully registered with cytoscape.use()
+// ─── Layout extension availability ───────────────────────────────────────────
+// All CDN UMD bundles (fcose, elk, cola, cise) self-register by calling
+// cytoscape.use() internally when their <script> tag executes.
+// No manual cytoscape.use() or window.cytoscapeXxx lookup needed.
+// We probe after cy is initialised: cy.layout({ name }) throws synchronously
+// if the layout name is unknown, which tells us the CDN didn't load.
+
 const _registeredLayouts = new Set([
-    'dagre', 'cose', 'concentric', 'breadthfirst', 'circle', 'grid', 'random', 'preset', 'null'
+    'dagre', 'cose', 'concentric', 'breadthfirst', 'circle', 'grid', 'random', 'preset', 'null',
 ]);
 
-function _tryRegisterLayout(globalName, layoutName) {
-    try {
-        let ext = window[globalName];
-        if (!ext) {
-            console.warn('[layout]', globalName, 'not found on window — CDN may not have loaded');
-            return;
+function _probeAvailableLayouts() {
+    ['fcose', 'elk', 'cola', 'cise'].forEach(name => {
+        try {
+            const dummy = cy.layout({ name, stop: () => { } });
+            dummy.destroy();
+            _registeredLayouts.add(name);
+            console.log('[layout] available:', name);
+        } catch (_) {
+            console.warn('[layout] not available (CDN may not have loaded):', name);
         }
-        // Some CDN bundles export { default: fn } instead of a bare function
-        if (typeof ext !== 'function' && typeof ext?.default === 'function') ext = ext.default;
-        if (typeof ext !== 'function') {
-            console.warn('[layout]', globalName, 'export is not a function, got:', typeof ext);
-            return;
-        }
-        cytoscape.use(ext);
-        _registeredLayouts.add(layoutName);
-        console.log('[layout] registered:', layoutName);
-    } catch (e) {
-        console.warn('[layout] failed to register', layoutName + ':', e.message);
-    }
-}
-
-// Called inside DOMContentLoaded so all <script> tags have fully executed
-function _registerLayoutExtensions() {
-    _tryRegisterLayout('cytoscapeFcose', 'fcose');
-    _tryRegisterLayout('cytoscapeElk', 'elk');
+    });
+    refreshLayoutSwitcher();
 }
 
 function _isLayoutAvailable(name) {
@@ -196,7 +188,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 buildSidebar();
                 buildFileIdLookup();
-                _registerLayoutExtensions(); // must be before initCy so layouts are ready
                 initCy();
                 loadLevel0();
 
@@ -224,6 +215,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // Layout Switcher init
                 initLayoutSwitcher();
+                // Probe which advanced layouts actually loaded (needs cy + switcher to exist)
+                _probeAvailableLayouts();
 
                 // Ensure Canvas redraws after Google Fonts are fully loaded
                 document.fonts.ready.then(() => {
@@ -6501,69 +6494,23 @@ const LAYOUT_PRESETS = [
             gravity: 0.25,
         }),
     },
-    {
-        id: 'concentric',
-        icon: '◎',
-        label: 'Radial',
-        tip: 'Concentric / Radial — most connected node at centre',
-        levels: [0, 1, 2],
-        config: () => ({
-            name: 'concentric',
-            animate: true, animationDuration: 420,
-            concentric: n => n.connectedEdges().length,
-            levelWidth: nodes => Math.max(2, Math.ceil(nodes.length / 8)),
-            minNodeSpacing: 28,
-            padding: 50,
-            clockwise: true,
-            startAngle: Math.PI * 1.5,
-        }),
-    },
-    {
-        id: 'breadthfirst',
-        icon: '🌲',
-        label: 'Tree',
-        tip: 'Breadth-First Tree — top-down spanning tree',
-        levels: [0, 1, 2],
-        config: () => ({
-            name: 'breadthfirst',
-            animate: true, animationDuration: 420,
-            directed: true,
-            padding: 45,
-            spacingFactor: 1.6,
-            avoidOverlap: true,
-        }),
-    },
-    {
-        id: 'circle',
-        icon: '⊙',
-        label: 'Circle',
-        tip: 'Circular — all nodes evenly on a ring',
-        levels: [0, 1, 2],
-        config: () => ({
-            name: 'circle',
-            animate: true, animationDuration: 400,
-            padding: 50,
-            avoidOverlap: true,
-            startAngle: Math.PI * 3 / 2,
-        }),
-    },
 
     // ── Advanced presets ───────────────────────────────────────────────────────
 
-    // Smart Cluster — fCoSE compound-aware force layout.
-    // Best for: module-level graphs where same-folder nodes should visually cluster.
-    // Solves: hairball, overlapping modules, disconnected islands scattered across canvas.
-    // Requires: cytoscape-fcose (loaded via CDN in <head>)
+    // ── Smart Cluster (fCoSE) ──────────────────────────────────────────────────
+    // Best for: module-level graphs and hairball call graphs.
+    // Beats plain CoSE: 2× faster, includes compound-node support, and supports
+    // user-defined placement constraints (fixed position, alignment, relative placement).
+    // Requires: cytoscape-fcose
     {
         id: 'fcose',
         icon: '🧩',
         label: 'Smart Cluster',
-        tip: 'fCoSE — compound-aware clustering, best for modules & hairball graphs (requires fcose CDN)',
+        tip: 'fCoSE — fastest force-directed, compound-aware, best for modules & hairball graphs (requires fcose CDN)',
         levels: [0, 1, 2],
         requires: 'fcose',
         config: () => {
             const nodeCount = cy ? cy.nodes().length : 50;
-            // Scale repulsion with graph size — more nodes need more breathing room
             const repulsion = Math.max(6000, Math.min(18000, nodeCount * 180));
             const edgeLen = Math.max(80, Math.min(220, nodeCount * 2.5));
             return {
@@ -6571,36 +6518,56 @@ const LAYOUT_PRESETS = [
                 animate: true,
                 animationDuration: 650,
                 animationEasing: 'ease-out',
-
-                // 'default' is a good balance; use 'proof' for very dense graphs
                 quality: nodeCount > 150 ? 'default' : 'proof',
                 randomize: false,
-
-                // Pack disconnected components into tidy islands rather than
-                // letting them drift to random corners
                 packComponents: true,
-
-                // Node spacing
+                // Account for label sizes so nodes don't overlap their labels
+                nodeDimensionsIncludeLabels: true,
                 nodeRepulsion: () => repulsion,
                 idealEdgeLength: () => edgeLen,
                 edgeElasticity: () => 0.45,
-
-                // Pull connected nodes together (compound nesting factor)
                 nestingFactor: 0.1,
                 gravityRangeCompound: 1.5,
                 gravityCompound: 1.0,
                 gravity: 0.25,
-
-                // Convergence
                 numIter: nodeCount > 200 ? 3500 : 2500,
-
-                // Tile isolated nodes neatly in a corner instead of
-                // scattering them across empty space
                 tile: true,
                 tilingPaddingVertical: 12,
                 tilingPaddingHorizontal: 12,
-
                 padding: 55,
+            };
+        },
+    },
+
+    // ── Smooth Physics (Cola / WebCola) ──────────────────────────────────────────
+    // Best for: L1 dependency map and L2 call-flow when graph < ~200 nodes.
+    // Unique advantage: constraint-based (can enforce LR flow direction while still
+    // being physically simulated), smoothest animation of all force layouts,
+    // and almost no jitter in interactive dragging.
+    // Requires: webcola + cytoscape-cola
+    {
+        id: 'cola',
+        icon: '🧲',
+        label: 'Smooth Physics',
+        tip: 'Cola — constraint physics, smoothest animation, directed-flow aware, best for L1/L2 < 200 nodes (requires cola CDN)',
+        levels: [1, 2],
+        requires: 'cola',
+        config: () => {
+            const nodeCount = cy ? cy.nodes().length : 50;
+            return {
+                name: 'cola',
+                animate: true,
+                animationDuration: 500,
+                refresh: 2,
+                maxSimulationTime: Math.min(5000, nodeCount * 20),
+                // Directed left→right flow constraint — mirrors how code is read
+                flow: { axis: 'x', minSeparation: 90 },
+                avoidOverlap: true,
+                nodeDimensionsIncludeLabels: true,
+                nodeSpacing: () => 14,
+                edgeLength: () => Math.max(100, Math.min(200, nodeCount * 2)),
+                convergenceThreshold: 0.005,
+                padding: 50,
             };
         },
     },
@@ -6661,24 +6628,20 @@ const LAYOUT_PRESETS = [
         }),
     },
 
-    // ELK Stress — graph-theoretic stress minimisation for very large graphs.
-    // Best for: 300+ node graphs where force-directed and layered layouts break down.
-    // Solves: force-directed hairball AND layered "too tall/wide" problems.
-    // Core idea: nodes are placed so their canvas distance is proportional to
-    //   their graph-theoretic (hop) distance — automatically creating layers of
-    //   visual proximity without any manual rank assignment.
-    // Requires: cytoscape-elk (loaded via CDN in <head>)
+    // ── ELK Stress ────────────────────────────────────────────────────────────
+    // Best for: 300+ node graphs — prevents hairball AND avoids "too tall/wide".
+    // Nodes placed so canvas distance ∝ hop distance (MDS/stress majorization).
+    // Requires: cytoscape-elk
     {
         id: 'elk-stress',
         icon: '🌐',
         label: 'ELK Stress',
-        tip: 'ELK Stress — best for 300+ node graphs, no hairball, distance-proportional layout (requires elk CDN)',
+        tip: 'ELK Stress — best for 300+ node graphs, distance-proportional placement, no hairball (requires elk CDN)',
         levels: [0, 1, 2],
         requires: 'elk',
         config: () => {
             const nodeCount = cy ? cy.nodes().length : 100;
-            // Larger graphs need more iterations to converge
-            const iterations = Math.max(200, Math.min(600, nodeCount * 2));
+            const iterations = Math.max(200, Math.min(800, nodeCount * 2.5));
             return {
                 name: 'elk',
                 animate: true,
@@ -6686,25 +6649,80 @@ const LAYOUT_PRESETS = [
                 animationEasing: 'ease-out',
                 elk: {
                     algorithm: 'stress',
-
-                    // The "ideal" length of each edge in the final layout.
-                    // The stress algorithm will try to make every pair of nodes
-                    // sit at distance = desiredEdgeLength × (hop count between them).
-                    'elk.stress.desiredEdgeLength': 130,
-
-                    // Convergence threshold — lower = more precise but slower.
-                    // 0.00001 is a solid balance for graphs up to ~500 nodes.
+                    'elk.stress.desiredEdgeLength': 140,
                     'elk.stress.epsilon': 0.00001,
                     'elk.stress.iterationLimit': iterations,
-
-                    // Prevent nodes from overlapping after stress placement
                     'elk.nodeSize.constraints': 'MINIMUM_SIZE',
-                    'elk.spacing.nodeNode': 38,
-
-                    // Use BFS-initialisation: starts from a decent position instead
-                    // of random, dramatically speeding up convergence on large graphs.
+                    'elk.spacing.nodeNode': 40,
                     'elk.stress.fixedStartPosition': 'false',
                 },
+            };
+        },
+    },
+
+    // ── Circular Clusters (CiSE) ─────────────────────────────────────────────
+    // Best for: L0 module overview with many small clusters.
+    // Unique: auto-detects communities and places each as a circular "island".
+    // Physics simulation then spaces the islands apart — result looks like a solar
+    // system of modules, making inter-module dependencies immediately visible.
+    // Requires: cytoscape-cise
+    {
+        id: 'cise',
+        icon: '🫧',
+        label: 'Cluster Rings',
+        tip: 'CiSE — auto-groups related nodes into circular islands, best for L0 module overview (requires cise CDN)',
+        levels: [0, 1],
+        requires: 'cise',
+        config: () => {
+            // CiSE requires `clusters`: array of arrays of node ID strings.
+            // Each inner array is one circular island. Nodes not in any array
+            // are placed as free-floating singletons between the rings.
+            //
+            // Strategy: group by the node's module affiliation.
+            //   L0 view  → each node IS a module (_t === 'module'), so every
+            //               node forms its own singleton cluster — CiSE will
+            //               still space them cleanly via the physics pass.
+            //   L1 view  → nodes carry a `mod` field (their parent module ID);
+            //               group by that so same-module files ring together.
+            //   L2 view  → function nodes share a file; group by `_f` path.
+            const clusterMap = new Map(); // key → [nodeId, ...]
+            cy.nodes().forEach(n => {
+                const d = n.data();
+                let key;
+                if (d._t === 'module') {
+                    // L0: each module node is its own singleton island
+                    key = d.id;
+                } else if (d.mod) {
+                    // L1 file nodes, L2 ext_func nodes
+                    key = d.mod;
+                } else if (d._f) {
+                    // L2 internal function nodes — group by parent file path
+                    key = typeof d._f === 'object' ? (d._f.path || d._f.id || d.id) : d._f;
+                } else {
+                    // Fallback: each orphan node is its own cluster
+                    key = d.id;
+                }
+                if (!clusterMap.has(key)) clusterMap.set(key, []);
+                clusterMap.get(key).push(n.id());
+            });
+
+            const clusters = Array.from(clusterMap.values());
+
+            return {
+                name: 'cise',
+                clusters,
+                animate: true,
+                animationDuration: 600,
+                animationEasing: 'ease-out',
+                idealInterClusterEdgeLengthCoefficient: 1.6,
+                allowNodesInsideCircle: false,
+                maxRatioOfNodesInsideCircle: 0.1,
+                springCoeff: 0.45,
+                nodeRepulsion: 900,
+                gravity: 0.25,
+                gravityRange: 3.8,
+                nodeSeparation: 12.5,
+                padding: 50,
             };
         },
     },
