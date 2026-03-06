@@ -1089,7 +1089,7 @@ HTML_SKELETON = """\
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
   <button id="back-btn" onclick="goBack()">← Back</button>
   <button id="graph-toggle-btn" title="View Call Graph for Selected File">⬡ Call Graph</button>
-  <button id="code-toggle-btn" title="Toggle Code Panel (C)">&#60;&#47;&#62; Code</button>
+  <button id="code-toggle-btn" title="Toggle Code Panel (C)"><span class="code-icon">&#60;&#92;&#62;</span> Code</button>
 </div>
 
 <div id="layout">

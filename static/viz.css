@@ -115,7 +115,7 @@ body {
     padding: 6px 12px 6px 32px;
     border-radius: 6px;
     font-size: 13px;
-    width: 200px;
+    width: 240px;
     outline: none
 }
 
@@ -221,6 +221,11 @@ body {
     /* Force uniform size */
     height: 32px;
     flex-shrink: 0;
+}
+
+.code-icon {
+    font-size: 14px;
+    line-height: 1;
 }
 
 #back-btn {
@@ -473,7 +478,8 @@ body {
     flex: 1;
     position: relative;
     min-width: 0;
-    overflow: clip; /* prevent absolutely positioned children from bleeding into code panel */
+    overflow: clip;
+    /* prevent absolutely positioned children from bleeding into code panel */
 }
 
 #cy {
@@ -560,7 +566,8 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;      /* wrap onto next line — never overflow */
+    flex-wrap: wrap;
+    /* wrap onto next line — never overflow */
     min-width: 0;
     width: 100%;
 }
@@ -2101,7 +2108,7 @@ body {
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    width: 340px;
+    width: 400px;
     flex-shrink: 1;
     min-width: 0;
 }
@@ -2246,6 +2253,7 @@ body {
     flex-shrink: 0;
     min-width: 24px;
     text-align: right;
+    display: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2749,6 +2757,10 @@ body {
 .sr-ab-count {
     color: var(--text);
     font-weight: 700;
+}
+
+.sr-ab-label {
+    color: var(--muted);
 }
 
 .sr-ab-filtered {

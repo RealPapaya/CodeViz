@@ -4141,6 +4141,9 @@ const _srState = {
     _filterFuncOnly: false,    // show only lines that look like func definitions
     // Virtual scroll
     _vsEnd: 0,                 // items rendered so far (both modes)
+    // Streaming render state (code mode)
+    _streamRendered: false,
+    _streamRenderMode: '',
     // Local index
     _indexBuilt: false,
     _fileIndex: [],   // [{label,path,module,ext,file_type,func_count,size}]
@@ -4319,6 +4322,8 @@ function _srStartStream(q) {
     if (_srStream) { _srStream.close(); _srStream = null; }
     clearTimeout(_srStreamBatchTimer);
     _srStreamPending = [];
+    _srState._streamRendered = false;
+    _srState._streamRenderMode = _srState.viewMode;
 
     if (!codeState.jobId || !q) {
         _srState._contentGroups = [];
@@ -4358,7 +4363,7 @@ function _srStartStream(q) {
         _srStreamPending = [];
         _srStreamBatchTimer = null;
         if (_srState.query === capturedQ) {
-            _srRenderResults();
+            _srRenderStreamingBatch();
             _srRenderActionBar();
             // Update count badge
             const countEl = document.getElementById('sr-count');
@@ -4400,7 +4405,17 @@ function _srStartStream(q) {
             _srState._contentDone = true;
             _srState._contentIndexed = msg.indexed || false;
             es.close(); _srStream = null;
-            _srRenderResults(); _srRenderActionBar();
+            const needsFullRender = _srState.viewMode === 'tree'
+                || _srState._filterFuncOnly
+                || _srState._contentGroups.length === 0;
+            if (needsFullRender) {
+                _srRenderResults();
+            } else {
+                const resultsEl = document.getElementById('sr-results');
+                const bar = resultsEl?.querySelector('.sr-streaming-bar');
+                if (bar) bar.remove();
+            }
+            _srRenderActionBar();
         }
     };
 
@@ -4411,7 +4426,17 @@ function _srStartStream(q) {
         clearTimeout(_srStreamBatchTimer);
         _flush();
         es.close(); _srStream = null;
-        _srRenderResults(); _srRenderActionBar();
+        const needsFullRender = _srState.viewMode === 'tree'
+            || _srState._filterFuncOnly
+            || _srState._contentGroups.length === 0;
+        if (needsFullRender) {
+            _srRenderResults();
+        } else {
+            const resultsEl = document.getElementById('sr-results');
+            const bar = resultsEl?.querySelector('.sr-streaming-bar');
+            if (bar) bar.remove();
+        }
+        _srRenderActionBar();
     };
 }
 
@@ -4689,9 +4714,11 @@ function _srRenderActionBar() {
         bar.innerHTML = `
 <div class="sr-ab-top">
   <span class="sr-ab-info">
-    <span class="sr-ab-count">${_srState._contentTotal.toLocaleString()}</span>&thinsp;in&thinsp;
-    <span class="sr-ab-count">${totalShown.toLocaleString()}${filtered ? `<span class="sr-ab-filtered">/${totalAll}</span>` : ''}</span>&thinsp;files
-    ${indexed && !loading ? '<span class="sr-indexed-badge" title="In-memory index active">⚡</span>' : ''}
+    <span class="sr-ab-count">${_srState._contentTotal.toLocaleString()}</span>
+    <span class="sr-ab-label">results</span>
+    <span class="sr-ab-label">in</span>
+    <span class="sr-ab-count">${totalShown.toLocaleString()}${filtered ? `<span class="sr-ab-filtered">/${totalAll}</span>` : ''}</span>
+    <span class="sr-ab-label">files</span>
     ${loading ? '<span class="sr-ab-scanning">scanning…</span>' : ''}
   </span>
   <span class="sr-ab-spacer"></span>
@@ -5105,15 +5132,91 @@ function _srRenderCodeList(resultsEl, groups, q) {
 
     if (groups.length > end) {
         _srVsObserve(resultsEl.querySelector('.sr-vs-sentinel'), function _cvsNext() {
+            const liveGroups = _srFilteredGroups();
             const s = _srState._vsEnd;
-            const e2 = Math.min(s + _SR_VS_CHUNK, groups.length);
+            const e2 = Math.min(s + _SR_VS_CHUNK, liveGroups.length);
             const sentinel = resultsEl.querySelector('.sr-vs-sentinel');
             if (!sentinel) return;
-            sentinel.insertAdjacentHTML('beforebegin', _srBuildCodeGroupsHtml(groups, s, e2, q));
+            sentinel.insertAdjacentHTML('beforebegin', _srBuildCodeGroupsHtml(liveGroups, s, e2, q));
             _srState._vsEnd = e2;
-            _srWireCodeGroups(resultsEl, groups);
-            if (e2 >= groups.length) _srVsStop();
+            _srWireCodeGroups(resultsEl, liveGroups);
+            if (e2 >= liveGroups.length) _srVsStop();
         });
+    }
+}
+
+// ── Code mode: append streaming batches (no full re-render) ──────────────────
+function _srAppendCodeGroups(resultsEl, groups, q) {
+    if (!resultsEl) return;
+    const loading = resultsEl.querySelector('.sr-loading');
+    if (loading) loading.remove();
+    const rendered = _srState._vsEnd || 0;
+    const maxFirst = Math.min(groups.length, _SR_VS_CHUNK);
+
+    if (rendered < maxFirst) {
+        const html = _srBuildCodeGroupsHtml(groups, rendered, maxFirst, q);
+        const streamBar = resultsEl.querySelector('.sr-streaming-bar');
+        const sentinel = resultsEl.querySelector('.sr-vs-sentinel');
+        const insertBefore = sentinel || streamBar;
+        if (insertBefore) insertBefore.insertAdjacentHTML('beforebegin', html);
+        else resultsEl.insertAdjacentHTML('beforeend', html);
+        _srState._vsEnd = maxFirst;
+        _srWireCodeGroups(resultsEl, groups);
+    }
+
+    if (groups.length > _SR_VS_CHUNK) {
+        let sentinel = resultsEl.querySelector('.sr-vs-sentinel');
+        if (!sentinel) {
+            const streamBar = resultsEl.querySelector('.sr-streaming-bar');
+            if (streamBar) {
+                streamBar.insertAdjacentHTML('beforebegin', '<div class="sr-vs-sentinel"></div>');
+            } else {
+                resultsEl.insertAdjacentHTML('beforeend', '<div class="sr-vs-sentinel"></div>');
+            }
+            sentinel = resultsEl.querySelector('.sr-vs-sentinel');
+        }
+        _srVsObserve(sentinel, function _cvsNext() {
+            const liveGroups = _srFilteredGroups();
+            const s = _srState._vsEnd;
+            const e2 = Math.min(s + _SR_VS_CHUNK, liveGroups.length);
+            const sentinelEl = resultsEl.querySelector('.sr-vs-sentinel');
+            if (!sentinelEl) return;
+            sentinelEl.insertAdjacentHTML('beforebegin', _srBuildCodeGroupsHtml(liveGroups, s, e2, q));
+            _srState._vsEnd = e2;
+            _srWireCodeGroups(resultsEl, liveGroups);
+            if (e2 >= liveGroups.length) _srVsStop();
+        });
+    }
+}
+
+function _srRenderStreamingBatch() {
+    const resultsEl = document.getElementById('sr-results');
+    if (!resultsEl) return;
+    const groups = _srFilteredGroups();
+    const q = _srState.query;
+
+    if (groups.length === 0) {
+        const hasLoading = resultsEl.querySelector('.sr-loading');
+        const hasEmpty = resultsEl.querySelector('.sr-empty');
+        if (_srState._contentLoading && !hasLoading) _srRenderResults();
+        if (_srState._contentDone && !hasEmpty) _srRenderResults();
+        return;
+    }
+
+    if (_srState.viewMode === 'list' && !_srState._filterFuncOnly) {
+        if (!_srState._streamRendered || _srState._streamRenderMode !== 'list') {
+            _srRenderCodeList(resultsEl, groups, q);
+            _srState._streamRendered = true;
+            _srState._streamRenderMode = 'list';
+            return;
+        }
+        _srAppendCodeGroups(resultsEl, groups, q);
+    } else {
+        if (!_srState._streamRendered || _srState._streamRenderMode !== 'tree') {
+            _srRenderTree(resultsEl, groups, q);
+            _srState._streamRendered = true;
+            _srState._streamRenderMode = 'tree';
+        }
     }
 }
 
@@ -5362,6 +5465,8 @@ function onSearch(e) {
         _srRenderPanel();
     } else {
         _srState.results = [];
+        _srState._streamRendered = false;
+        _srState._streamRenderMode = _srState.viewMode;
         _srRenderPanel();   // show panel with loading state immediately
         _srDebounce(q);
     }
