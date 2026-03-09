@@ -212,7 +212,7 @@ body {
     font-size: 13px;
     font-weight: 600;
     margin-left: 8px;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.18s, transform 0.18s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -221,6 +221,23 @@ body {
     /* Force uniform size */
     height: 32px;
     flex-shrink: 0;
+    /* Hidden until a file with functions is selected */
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.88);
+}
+
+#graph-toggle-btn.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+}
+
+/* ── Drill-group compound box hover indicator ───────────────────────── */
+/* Cytoscape renders compound node styles internally, but we add a
+   CSS cursor hint on the canvas for when the user hovers the box label */
+#cy.l2-view {
+    cursor: default;
 }
 
 .code-icon {

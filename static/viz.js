@@ -27,6 +27,8 @@ const l2State = {
     preserveViewport: null,
     _prevNodeIds: null,
     _animGen: 0,
+    _l1Snapshot: null,          // { pan, zoom, selectedNodeId } saved when entering L2
+    fileHistorySnapshots: [],   // per-history-slot viewport+expand snapshots
 };
 
 // ─── Dependency Map (L1) external-files state ─────────────────────────────────
@@ -575,10 +577,10 @@ function initCodePanel() {
         }
     };
 
-    // Graph button: drill to caller/callee or go back to graph
+    // Graph button: enter call graph for current file, or restore L1 state
     document.getElementById('graph-toggle-btn').onclick = () => {
         if (state.level === 2) {
-            goBack();
+            restoreL1FromCallGraph();
         } else {
             drillCurrentFileToL2();
         }
@@ -868,6 +870,8 @@ function initL2Toolbar() {
     if (expandBtn) {
         expandBtn.addEventListener('click', () => {
             if (!l2State.activeFile) return;
+            l2State.preserveViewport = cy ? { pan: { ...cy.pan() }, zoom: cy.zoom() } : null;
+            l2State.expandOriginPos  = null;
             l2State.expandedModules = new Set(l2State.externalModules || []);
             if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
             (l2State.sysCategories || []).forEach(c => l2State.expandedSysCategories.add(c));
@@ -879,6 +883,8 @@ function initL2Toolbar() {
     if (collapseBtn) {
         collapseBtn.addEventListener('click', () => {
             if (!l2State.activeFile) return;
+            l2State.preserveViewport = cy ? { pan: { ...cy.pan() }, zoom: cy.zoom() } : null;
+            l2State.expandOriginPos  = null;
             l2State.expandedModules = new Set();
             if (l2State.expandedSysCategories) l2State.expandedSysCategories.clear();
             renderL2Flowchart(l2State.activeFile);
@@ -1043,7 +1049,7 @@ function showNodeModal(node) {
             });
         }
         html += `</div></div>`;
-    } else if (d._t === 'dep_ext_file' || d._t === 'dep_ext_group' || d._t === 'ext_func' || d._t === 'ext_group' || d._t === 'drilled_func') {
+    } else if (d._t === 'dep_ext_file' || d._t === 'dep_ext_group' || d._t === 'ext_func' || d._t === 'ext_group' || d._t === 'drilled_func' || d._t === 'drill_group') {
         const srcPath = state.level === 2 ? (l2State.activeFile || '') : (state.activeModule || '');
         const tgtPath = (typeof d._f === 'object' ? d._f?.path : d._f) || d.mod || '';
         const dist = _pathDist(srcPath, tgtPath);
@@ -1277,19 +1283,48 @@ function updateL2NavButtons() {
     if (nextBtn) nextBtn.disabled = !canNext;
 }
 
+function _saveL2Snapshot() {
+    if (!cy) return;
+    const idx = l2State.fileHistoryIdx;
+    if (idx < 0) return;
+    if (!l2State.fileHistorySnapshots) l2State.fileHistorySnapshots = [];
+    l2State.fileHistorySnapshots[idx] = {
+        pan:  { ...cy.pan() },
+        zoom: cy.zoom(),
+        expandedModules:       new Set(l2State.expandedModules),
+        expandedSysCategories: new Set(l2State.expandedSysCategories || []),
+        activeFuncIdx:         l2State.activeFuncIdx || 0,
+    };
+}
+
+function _applyL2Snapshot(idx) {
+    const snap = l2State.fileHistorySnapshots && l2State.fileHistorySnapshots[idx];
+    if (!snap) return;
+    l2State.expandedModules       = new Set(snap.expandedModules);
+    l2State.expandedSysCategories = new Set(snap.expandedSysCategories);
+    l2State.activeFuncIdx         = snap.activeFuncIdx;
+    // Schedule viewport restore after layout (preserveViewport, no originPos → exact restore)
+    l2State.preserveViewport      = { pan: snap.pan, zoom: snap.zoom };
+    l2State.expandOriginPos       = null;
+}
+
 function goL2Prev() {
     if (l2State.fileHistoryIdx <= 0) return;
+    _saveL2Snapshot();
     l2State.fileHistoryIdx -= 1;
     const fileRel = l2State.fileHistory[l2State.fileHistoryIdx];
     if (!fileRel) return;
+    _applyL2Snapshot(l2State.fileHistoryIdx);
     openL2File(fileRel, { pushHistory: false });
 }
 
 function goL2Next() {
     if (l2State.fileHistoryIdx < 0 || l2State.fileHistoryIdx >= l2State.fileHistory.length - 1) return;
+    _saveL2Snapshot();
     l2State.fileHistoryIdx += 1;
     const fileRel = l2State.fileHistory[l2State.fileHistoryIdx];
     if (!fileRel) return;
+    _applyL2Snapshot(l2State.fileHistoryIdx);
     openL2File(fileRel, { pushHistory: false });
 }
 
@@ -2108,6 +2143,9 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 } else {
                     cy.animate({ fit: { eles: cy.elements(), padding: 50 }, duration: 400 });
                 }
+            } else if (savedVP && !focusFuncName) {
+                // Exact restore — preserve camera for collapse / prev / next navigation
+                cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
             } else if (focusFuncName) {
                 const targetNode = cy.$id(`fn-${l2State.activeFuncIdx}`);
                 if (targetNode && targetNode.length) {
@@ -2191,64 +2229,87 @@ function drillCurrentFileToL2() {
 }
 
 // ─── Lazy drill-down on ext_func / potential_func double-click ────────────────
-// Dynamically expands the callees of the target function into the current canvas.
+// Expand → wraps callees in a compound box labeled with the source filename.
+// Collapse → removes the box + all children (double-click again or click the box).
 function drillDownExtFunc(node) {
     const d = node.data();
     const targetFile = d._f || null;
-    const funcName = d.fn || null;
+    const funcName   = d.fn || null;
     if (!targetFile || !funcName) return;
-    if (d._drilled) return;   // already expanded
 
-    // Mark as drilled so we don't double-expand
-    node.data('_drilled', true);
-    node.data('label', funcName + '\n↳');
-    node.style('border-style', 'double');
+    const nodeId  = node.id();
+    const groupId = `dgroup-${_hashId(nodeId)}`;
 
-    const funcs = DATA.funcs_by_file[targetFile] || [];
+    // ── Collapse if already drilled ──────────────────────────────────────────
+    if (d._drilled) {
+        _collapseDrillGroup(node, groupId, funcName);
+        return;
+    }
+
+    // ── Expand ───────────────────────────────────────────────────────────────
+    const funcs    = DATA.funcs_by_file[targetFile] || [];
     const callList = DATA.func_calls_by_file?.[targetFile] || null;
-    const nameToFile = DATA.func_name_to_file || {};
+    const nameToFile  = DATA.func_name_to_file  || {};
     const nameToFiles = DATA.func_name_to_files || {};
     const fileToModule = DATA.file_to_module || {};
-    const moduleColorMap = {};
-    (DATA.modules || []).forEach(m => { moduleColorMap[m.id] = m.color; });
 
-    const targetMod = fileToModule[targetFile] || '';
     const fidIdx = funcs.findIndex(f => f.label === funcName);
-    if (fidIdx < 0 || !Array.isArray(callList)) return;
+    if (fidIdx < 0 || !Array.isArray(callList)) {
+        node.data('label', funcName + '\n(leaf)');
+        return;
+    }
 
     const callees = new Set(Array.isArray(callList[fidIdx]) ? callList[fidIdx] : []);
-    const nodeId = node.id();
-    const newEls = [];
-    let added = 0;
+    if (callees.size === 0) {
+        node.data('label', funcName + '\n(leaf)');
+        return;
+    }
 
-    // Color by file-path distance from targetFile (the drilled source file)
+    // Determine group border color from the source ext_func node
+    const groupColor = node.data('bc') || '#64748b';
+    const fileLabel  = targetFile.split('/').pop();   // filename only
+
+    // Create the compound parent group node FIRST (must exist before children)
+    const groupNode = {
+        data: {
+            id: groupId,
+            label: fileLabel,
+            _t: 'drill_group',
+            _srcNodeId: nodeId,
+            bc: groupColor,
+            bg: '#0b1929',
+        }
+    };
+
+    const newEls = [groupNode];
+
     for (const callee of callees) {
         const childId = `drill-${_hashId(nodeId)}-${_hashId(callee)}`;
-        if (cy.$id(childId).length) continue;  // already in graph
+        if (cy.$id(childId).length) continue;   // guard against dupes
 
-        let tf = null, modName = '', ec = '#64748b', bc = '#64748b', dLabel = '';
+        let tf = null, modName = '', ec = '#64748b', bc = '#64748b';
         if (Object.prototype.hasOwnProperty.call(nameToFiles, callee)) {
             tf = nameToFiles[callee][0];
             modName = fileToModule[tf] || '';
-            ec = bc = '#a78bfa';   // ambiguous — purple
-            dLabel = 'ambiguous';
+            ec = bc = '#a78bfa';
         } else if (Object.prototype.hasOwnProperty.call(nameToFile, callee)) {
             tf = nameToFile[callee];
             modName = fileToModule[tf] || '';
             const dVal = _pathDist(targetFile, tf);
             ec = bc = _distColor(dVal);
-            dLabel = _distLabel(dVal);
         }
 
         newEls.push({
             data: {
                 id: childId, label: callee,
+                parent: groupId,              // ← inside compound box
                 bg: '#0d1f33', bc: bc || '#64748b',
                 w: 160, h: 30, sh: 'roundrectangle', lvl: 2,
                 _t: 'drilled_func', fn: callee, _f: tf, mod: modName, _drilled: false,
                 tt: tf ? `${callee}\n${tf}\n\nDouble-click to drill further` : `${callee}\n(no file found)`,
             }
         });
+        // Edge: from the ext_func node to each child
         newEls.push({
             data: {
                 id: `drille-${_hashId(nodeId)}-${_hashId(callee)}`,
@@ -2257,20 +2318,44 @@ function drillDownExtFunc(node) {
                 tt: `${funcName} → ${callee}`,
             }
         });
-        added++;
     }
 
-    if (!added) {
-        // No outgoing calls — mark as leaf
-        node.data('label', funcName + '\n(leaf)');
-        return;
-    }
+    // Mark source node as drilled
+    node.data('_drilled', true);
+    node.data('label', funcName + ' ↳');
+    node.style('border-style', 'double');
 
     cy.add(newEls);
-    // Re-run layout incrementally
+
+    // Re-layout keeping viewport
+    const vp = { pan: { ...cy.pan() }, zoom: cy.zoom() };
     cy.layout({
         name: 'dagre', rankDir: 'LR', animate: true, animationDuration: 300,
-        nodeSep: 26, rankSep: 80, padding: 50
+        nodeSep: 26, rankSep: 80, padding: 50,
+    }).one('layoutstop', () => {
+        cy.viewport(vp);   // stay where user was looking
+    }).run();
+}
+
+/** Remove the drill group compound node + all its children, reset the source node. */
+function _collapseDrillGroup(srcNode, groupId, funcName) {
+    const group = cy.$id(groupId);
+    if (group && group.length) {
+        // Remove children (and their edges) then the group itself
+        group.children().remove();
+        group.remove();
+    }
+    // Reset source ext_func node
+    srcNode.data('_drilled', false);
+    srcNode.data('label', funcName || srcNode.data('fn'));
+    srcNode.style('border-style', 'solid');
+
+    const vp = { pan: { ...cy.pan() }, zoom: cy.zoom() };
+    cy.layout({
+        name: 'dagre', rankDir: 'LR', animate: true, animationDuration: 250,
+        nodeSep: 26, rankSep: 80, padding: 50,
+    }).one('layoutstop', () => {
+        cy.viewport(vp);
     }).run();
 }
 
@@ -2890,9 +2975,15 @@ function initCy() {
     cy.on('mouseover', 'node', e => { showTooltip(e); highlightNode(e.target); });
     cy.on('mouseout', 'node', () => { scheduleHideTooltip(); });
     cy.on('tap', e => { if (e.target === cy) clearSelection(); });
-    // Double-tap ext/drilled/potential func nodes → lazy drill-down
+    // Double-tap ext/drilled/potential func nodes → lazy drill-down (or collapse if drilled)
     cy.on('dbltap', 'node', e => {
         const d = e.target.data();
+        if (d._t === 'drill_group') {
+            // double-tap on group = collapse
+            const srcNode = d._srcNodeId ? cy.$id(d._srcNodeId) : null;
+            _collapseDrillGroup(srcNode || e.target, e.target.id(), srcNode?.data('fn') || '');
+            return;
+        }
         if (d._t === 'ext_func' || d._t === 'drilled_func' || d._t === 'potential_func') {
             drillDownExtFunc(e.target);
         }
@@ -2993,6 +3084,29 @@ const CY_STYLE = [
     },
     { selector: '.hl-node-out', style: { 'border-width': 3, 'opacity': 1 } },
     { selector: '.hl-node-in', style: { 'border-width': 3, 'opacity': 1 } },
+    // Drill-down group compound container
+    {
+        selector: 'node[_t="drill_group"]', style: {
+            'background-color': '#0b1929',
+            'background-opacity': 0.82,
+            'border-width': 1.5,
+            'border-color': 'data(bc)',
+            'border-style': 'dashed',
+            'label': 'data(label)',
+            'text-valign': 'top',
+            'text-halign': 'center',
+            'text-margin-y': 4,
+            'color': 'data(bc)',
+            'font-size': 10,
+            'font-weight': 'bold',
+            'padding': '18px',
+            'shape': 'roundrectangle',
+            'compound-sizing-wrt-labels': 'include',
+            'min-width': 60,
+            'min-height': 40,
+            'cursor': 'pointer',
+        }
+    },
 ];
 
 // ─── File Type Filter ────────────────────────────────────────────────────────
@@ -3968,6 +4082,12 @@ function _postLayoutL1() {
         return;
     }
 
+    // ── Case 1.5: Exact viewport restore (e.g. returning from L2 call graph) ──
+    if (savedVP && !originPos && !focusPath) {
+        cy.viewport({ zoom: savedVP.zoom, pan: savedVP.pan });
+        return;
+    }
+
     // ── Case 2: Focus fly-in (Open Location was used) ─────────────────────────
     if (focusPath) {
         const target = cy.nodes().filter(n => {
@@ -4015,8 +4135,89 @@ function _postLayoutL1() {
     cy.fit(cy.elements(), 40);
 }
 
+// ─── Call Graph Button helpers ────────────────────────────────────────────────
+/**
+ * Show or hide the Call Graph button.
+ * filePath = null  → hide (no file selected, or leaving L2)
+ * filePath = path  → show only if the file has at least one function
+ * Called from: onNodeTap (file single-click), drillToFile, hideFuncView
+ */
+function updateCallGraphBtn(filePath) {
+    const btn = document.getElementById('graph-toggle-btn');
+    if (!btn) return;
+    const isL2 = state.level >= 2;
+    const hasFuncs = filePath && ((DATA.funcs_by_file?.[filePath]?.length || 0) > 0);
+    const visible = isL2 || hasFuncs;
+    btn.classList.toggle('visible', visible);
+    // Always label as "Call Graph"
+    btn.innerHTML = `⬡ ${T('graphBtnCallGraph')}`;
+    btn.title = T('graphBtnCallGraphTip');
+    btn.classList.toggle('active', isL2);
+}
+
+/**
+ * Return to L1 from the Call Graph view, restoring the exact viewport and
+ * selected node that were active before drillToFile() was called.
+ * Does NOT call drillToModule (no full re-render of L1 if cy still has L1 nodes).
+ */
+function restoreL1FromCallGraph() {
+    const snap = l2State._l1Snapshot;
+    const prevHistory = [...state.history];   // preserve nav history
+
+    // hideFuncView clears L2 DOM and cy classes, but does NOT reload L1 nodes.
+    // We then need to re-render L1 (cy was replaced during L2).
+    hideFuncView();
+    state.level = 1;
+    state.activeFile = null;
+
+    // Restore history so breadcrumb/back-btn stay correct
+    state.history = prevHistory.filter(h => h.level < 2);
+
+    setL1ToolbarVisible(true);
+    const ftWrap = document.getElementById('ft-filter');
+    if (ftWrap) ftWrap.style.display = '';
+
+    // Re-render L1 with viewport preserved
+    if (snap) {
+        depMapState.preserveViewport = { pan: snap.pan, zoom: snap.zoom };
+        depMapState.expandOriginPos  = null;
+    }
+
+    // drillToModule re-renders the L1 graph; _postLayoutL1 will restore viewport
+    if (state.activeModule) {
+        const savedH = [...state.history];
+        drillToModule(state.activeModule);
+        state.history = savedH;
+    } else {
+        loadLevel0();
+    }
+
+    // Re-select the node that was selected before entering L2
+    if (snap?.selectedNodeId) {
+        // After layout, the node IDs are preserved — re-select in the next tick
+        setTimeout(() => {
+            cy?.elements().unselect();
+            cy?.$id(snap.selectedNodeId).select();
+            updateCallGraphBtn(codeState.currentFile);
+        }, 50);
+    }
+
+    l2State._l1Snapshot = null;
+    updateBreadcrumb();
+}
+
 // ─── L2: Function View ────────────────────────────────────────────────────────
 function drillToFile(fileRel) {
+    // Save L1 viewport + selected node so we can restore exactly when toggling back
+    if (state.level < 2 && cy) {
+        const sel = cy.nodes(':selected').first();
+        l2State._l1Snapshot = {
+            pan: { ...cy.pan() },
+            zoom: cy.zoom(),
+            selectedNodeId: sel && sel.length ? sel.id() : null,
+        };
+    }
+
     state.history.push({ level: 1, activeModule: state.activeModule });
     state.level = 2; state.activeFile = fileRel;
     updateBreadcrumb();
@@ -4026,7 +4227,7 @@ function drillToFile(fileRel) {
 
     // showFuncView handles code panel sync — do NOT call loadFileInPanel separately
     openL2File(fileRel, { newSession: true, pushHistory: true });
-    document.getElementById('graph-toggle-btn')?.classList.add('active');
+    updateCallGraphBtn(fileRel);
 }
 
 // Dedicated code-panel sync — called only from showFuncView to avoid race conditions
@@ -4185,8 +4386,8 @@ function hideFuncView() {
     l2State.expandedModules = new Set();
     l2State.externalModules = [];
     l2State._expandInitialized = false;
-    // Clear graph-toggle active state when leaving L2
-    document.getElementById('graph-toggle-btn')?.classList.remove('active');
+    // Hide call-graph button when leaving L2 (updateCallGraphBtn will re-show if needed)
+    updateCallGraphBtn(null);
     updateL2NavButtons();
     updateExternalToggle();
 }
@@ -4227,6 +4428,15 @@ function onNodeTap(node) {
             syncActiveL2FuncCode(d.fn);
             return;
         }
+        // Click on a drill_group compound box → collapse it
+        if (d._t === 'drill_group') {
+            const srcNodeId = d._srcNodeId;
+            const srcNode   = srcNodeId ? cy.$id(srcNodeId) : null;
+            const fn        = srcNode?.data('fn') || '';
+            _collapseDrillGroup(srcNode || node, node.id(), fn);
+            return;
+        }
+
         if (d._t === 'ext_func') {
             const now = performance.now();
             const sameNode = extClickLastId === node.id();
@@ -4236,7 +4446,12 @@ function onNodeTap(node) {
             extClickLastTime = now;
             highlightNode(node);
             if (isDouble) {
-                focusL2External({ file: d._f || null, func: d.fn, mod: d.mod, nodeId: node.id() }, { center: true });
+                // If already drilled → collapse; otherwise focus
+                if (d._drilled) {
+                    drillDownExtFunc(node);   // toggles collapse
+                } else {
+                    focusL2External({ file: d._f || null, func: d.fn, mod: d.mod, nodeId: node.id() }, { center: true });
+                }
             } else {
                 const callerIdx = pickCallerIdxForExternal(node);
                 if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
@@ -4294,8 +4509,11 @@ function onNodeTap(node) {
         if (isDouble) {
             if (d._f?.path) drillToFile(d._f.path);
         } else {
-            // Single click → code panel preview
-            if (d._f?.path) loadFileInPanel(d._f.path);
+            // Single click → code panel preview + show call-graph button if file has funcs
+            if (d._f?.path) {
+                loadFileInPanel(d._f.path);
+                updateCallGraphBtn(d._f.path);
+            }
         }
         return;
     }
@@ -4423,21 +4641,13 @@ function updateBreadcrumb() {
 
     document.getElementById('back-btn').classList.toggle('visible', state.level > 0);
 
-    // Update graph-toggle-btn text depending on whether we are in Call Graph (level 2) or File Graph (level 1)
+    // Call-graph button: update text + active state; visibility controlled by updateCallGraphBtn()
     const graphBtn = document.getElementById('graph-toggle-btn');
     if (graphBtn) {
-        const isLevel2 = state.level >= 2;
-        const newHtml = isLevel2 ? `⬡ ${T('graphBtnDependencyMap')}` : `⬡ ${T('graphBtnCallGraph')}`;
-        const newTitle = isLevel2 ? T('graphBtnDependencyMapTip') : T('graphBtnCallGraphTip');
-
-        if (graphBtn.innerHTML !== newHtml) {
-            // Trigger flip animation
-            graphBtn.classList.remove('flip-animate');
-            void graphBtn.offsetWidth; // trigger reflow
-            graphBtn.innerHTML = newHtml;
-            graphBtn.title = newTitle;
-            graphBtn.classList.add('flip-animate');
-        }
+        const isL2 = state.level >= 2;
+        graphBtn.innerHTML = `⬡ ${T('graphBtnCallGraph')}`;
+        graphBtn.title = T('graphBtnCallGraphTip');
+        graphBtn.classList.toggle('active', isL2);
     }
 }
 
