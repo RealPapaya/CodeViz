@@ -62,6 +62,17 @@ CLEAR  = "\033[2J\033[H" if USE_COLOR else ""
 HIDE_C = "\033[?25l"     if USE_COLOR else ""
 SHOW_C = "\033[?25h"     if USE_COLOR else ""
 
+SPINNER_FRAMES = ["|", "/", "-", "\\"]
+ANALYSIS_STAGES = [
+    ('scan', 'Scan source files'),
+    ('detect', 'Detect project type'),
+    ('analysis', 'Analyze source files'),
+    ('node', 'Build nodes and indexes'),
+    ('edge', 'Resolve dependencies and calls'),
+    ('finalize', 'Finalize output'),
+]
+ANALYSIS_STAGE_INDEX = {key: idx for idx, (key, _) in enumerate(ANALYSIS_STAGES)}
+
 # ─── Cross-platform single keypress ──────────────────────────────────────────
 if IS_WIN:
     import msvcrt
@@ -209,35 +220,45 @@ def _select_port() -> int:
 def is_server_running() -> bool:
     return _probe_vizcode_server(PORT)
 
-def start_server():
+def start_server(status_cb=None):
     global _server_proc
     port = _select_port()
-    if is_server_running(): return
+    if is_server_running():
+        if status_cb:
+            status_cb(0, f"Server ready on port {port}", True)
+        return
     try:
         SERVER_LOG.write_text("", encoding="utf-8")
     except Exception:
         pass
     log_fp = open(str(SERVER_LOG), "a", encoding="utf-8", errors="replace")
+
+    def _close_log():
+        try:
+            log_fp.flush()
+            log_fp.close()
+        except Exception:
+            pass
+
     kwargs = dict(cwd=str(SCRIPT_DIR), stdout=log_fp, stderr=log_fp)
     if IS_WIN:
         create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        if create_no_window: kwargs["creationflags"] = create_no_window
+        if create_no_window:
+            kwargs["creationflags"] = create_no_window
     _server_proc = subprocess.Popen([sys.executable, str(SERVER_PY), str(port)], **kwargs)
-    for _ in range(50):
+    for attempt in range(50):
+        if status_cb:
+            status_cb(attempt, f"Starting server on port {port}...", False)
         if is_server_running():
+            _close_log()
+            if status_cb:
+                status_cb(attempt, f"Server ready on port {port}", True)
             return
         if _server_proc.poll() is not None:
-            try:
-                log_fp.flush()
-            except Exception:
-                pass
+            _close_log()
             break
         time.sleep(0.1)
-    try:
-        log_fp.flush()
-        log_fp.close()
-    except Exception:
-        pass
+    _close_log()
     if not is_server_running():
         details = ""
         try:
@@ -259,6 +280,113 @@ def stop_server():
         _server_proc = None
 
 # ─── Analysis ─────────────────────────────────────────────────────────────────
+def _fmt_count(value) -> str:
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
+def _progress_bar(pct: int, width: int = 30) -> str:
+    pct = max(0, min(100, int(pct or 0)))
+    filled_len = int(width * pct / 100)
+    filled = orange("#" * filled_len)
+    empty = dim("-" * (width - filled_len))
+    return f"[{filled}{empty}] {pct:>3}%"
+
+
+def _render_startup_status(path: str, frame_idx: int, message: str, ready: bool = False):
+    frame = green('v') if ready else cyan(SPINNER_FRAMES[frame_idx % len(SPINNER_FRAMES)])
+    print_banner()
+    badge = green('*') if ready else dim('o')
+    badge_text = 'Server running' if ready else 'Starting server'
+    print(f"  {badge} {badge_text}  {dim(BASE_URL)}\n")
+    print(f"  {frame} {bold(message)}")
+    print(f"  {dim(path)}\n")
+    sys.stdout.flush()
+
+
+def _render_analysis_progress(path: str, job: dict, frame_idx: int, stage_floor: int = 0):
+    frame = SPINNER_FRAMES[frame_idx % len(SPINNER_FRAMES)]
+    pct = max(0, min(100, int(job.get('pct', 0) or 0)))
+    raw_stage = job.get('stage') or 'scan'
+    raw_idx = ANALYSIS_STAGE_INDEX.get(raw_stage, 0)
+    current_idx = min(max(stage_floor, raw_idx), len(ANALYSIS_STAGES) - 1)
+    _, default_stage_label = ANALYSIS_STAGES[current_idx]
+    stage_label = job.get('stage_label') if raw_idx == current_idx and job.get('stage_label') else default_stage_label
+    done = bool(job.get('done')) and not job.get('error')
+    error = job.get('error')
+
+    print_banner()
+    print(f"  {green('*')} Server running  {dim(BASE_URL)}\n")
+    lead = green('v') if done else red('!') if error else cyan(frame)
+    print(f"  {lead} {bold('Analyzing Project')}")
+    print(f"  {dim(path)}\n")
+    print(f"  {_progress_bar(pct)}  {bold(stage_label)}")
+    msg = (job.get('msg') or 'Working...').strip()
+    if msg:
+        print(f"  {dim(msg)}")
+
+    project = job.get('project_type') or {}
+    if project.get('name'):
+        print(f"  Project Type: {project.get('emoji', '')} {project.get('name')}")
+    else:
+        print(f"  Project Type: {dim('Detecting...')}")
+
+    total_files = int(job.get('total_files') or 0)
+    analyzed_files = int(job.get('analyzed_files') or 0)
+    module_count = int(job.get('module_count') or 0)
+    function_count = int(job.get('function_count') or 0)
+    node_count = int(job.get('node_count') or 0)
+    other_files = int(job.get('other_files') or 0)
+    file_edge_count = int(job.get('file_edge_count') or 0)
+    func_edge_count = int(job.get('func_edge_count') or 0)
+    edge_count = int(job.get('edge_count') or 0)
+
+    summary_parts = []
+    if total_files:
+        if analyzed_files:
+            summary_parts.append(f"analysis {_fmt_count(analyzed_files)}/{_fmt_count(total_files)} files")
+        else:
+            summary_parts.append(f"scan {_fmt_count(total_files)} files")
+    if module_count:
+        summary_parts.append(f"modules {_fmt_count(module_count)}")
+    if function_count:
+        summary_parts.append(f"functions {_fmt_count(function_count)}")
+    if node_count:
+        summary_parts.append(f"nodes {_fmt_count(node_count)}")
+    if edge_count:
+        summary_parts.append(f"edges {_fmt_count(edge_count)}")
+    else:
+        if file_edge_count:
+            summary_parts.append(f"file edges {_fmt_count(file_edge_count)}")
+        if func_edge_count:
+            summary_parts.append(f"call edges {_fmt_count(func_edge_count)}")
+    if other_files:
+        summary_parts.append(f"other {_fmt_count(other_files)}")
+    if summary_parts:
+        print(f"  {dim(' | '.join(summary_parts))}")
+
+    print()
+    print(f"  {bold('Stages')}")
+    for idx, (_, label) in enumerate(ANALYSIS_STAGES):
+        if done or idx < current_idx:
+            marker = green('v')
+            stage_text = label
+        elif idx == current_idx:
+            marker = red('!') if error else cyan(frame)
+            stage_text = bold(label)
+        else:
+            marker = dim('o')
+            stage_text = dim(label)
+        print(f"  {marker} {stage_text}")
+
+    if error:
+        print(f"\n  {red('[!]')} {red(str(error))}")
+    print()
+    sys.stdout.flush()
+
+
 def trigger_analysis(path: str) -> Optional[str]:
     try:
         payload = json.dumps({"path": path}).encode()
@@ -272,59 +400,73 @@ def trigger_analysis(path: str) -> Optional[str]:
         print(red(f"\n  [!] Failed to start analysis: {e}\n"))
         return None
 
+
 def poll_job(job_id: str) -> dict:
     try:
         with urllib.request.urlopen(f"{BASE_URL}/progress?job={job_id}", timeout=5) as r:
             return json.loads(r.read())
-    except: return {}
+    except:
+        return {}
+
 
 def run_analysis_with_progress(path: str):
-    print(CLEAR, end="")
-    print_banner()
-    print(f"  {cyan('▶')} Starting server...")
+    for tick in range(2):
+        _render_startup_status(path, tick, 'Preparing analysis...', False)
+        time.sleep(0.05)
     try:
-        start_server()
+        start_server(lambda tick, message, ready=False: _render_startup_status(path, tick, message, ready))
     except Exception as e:
         print(red(f"\n  [!] {e}\n"))
         return
-    print(f"  {cyan('▶')} Analyzing: {dim(path)}\n")
 
     job_id = trigger_analysis(path)
-    if not job_id: return
+    if not job_id:
+        return
     save_history(path)
 
-    BAR = 30
-    def _bar(pct):
-        f = int(BAR * pct / 100)
-        filled = orange("█" * f)
-        empty  = dim("░" * (BAR - f))
-        return f"[{filled}{empty}] {pct:>3}%"
+    job = {
+        'pct': 0,
+        'msg': 'Queued...',
+        'done': False,
+        'error': None,
+        'stage': 'scan',
+        'stage_label': 'Scan source files',
+        'project_type': None,
+        'total_files': 0,
+        'analyzed_files': 0,
+        'module_count': 0,
+        'function_count': 0,
+        'node_count': 0,
+        'file_edge_count': 0,
+        'func_edge_count': 0,
+        'edge_count': 0,
+        'other_files': 0,
+    }
+    frame_idx = 0
+    stage_floor = 0
 
-    last_pct = -1
     while True:
-        job  = poll_job(job_id)
-        pct  = job.get("pct", 0)
-        msg  = (job.get("msg") or "")[:50]
-        if pct != last_pct:
-            sys.stdout.write(f"\r  {_bar(pct)}  {dim(msg)}   ")
-            sys.stdout.flush()
-            last_pct = pct
-        if job.get("done"):
-            sys.stdout.write(f"\r  {_bar(100)}  {green('✓ Done!')}            \n")
-            sys.stdout.flush()
-            break
-        if job.get("error"):
-            print(red(f"\n  [!] {job['error']}"))
+        polled = poll_job(job_id)
+        if polled:
+            job.update(polled)
+        stage_floor = max(stage_floor, ANALYSIS_STAGE_INDEX.get(job.get('stage') or 'scan', 0))
+        _render_analysis_progress(path, job, frame_idx, stage_floor)
+
+        if job.get('error'):
             return
-        time.sleep(0.3)
+        if job.get('done'):
+            break
+
+        frame_idx += 1
+        time.sleep(0.15)
 
     result_url = f"{BASE_URL}/result?job={job_id}"
-    print(f"\n  {green('✓')} Opening browser...")
+    print(f"  {green('OK')} Opening browser...")
     print(f"  {dim(result_url)}\n")
     time.sleep(0.4)
     webbrowser.open(result_url)
 
-# ─── Server badge ─────────────────────────────────────────────────────────────
+
 def print_server_badge():
     if is_server_running():
         print(f"  {green('●')} Server running  {dim(BASE_URL)}\n")

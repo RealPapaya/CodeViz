@@ -551,14 +551,32 @@ def get_module(rel_path: str) -> str:
 
 # ─── build_graph ─────────────────────────────────────────────────────────────
 def build_graph(root_dir: str, progress_cb=None, include_build=False, include_dirs=None) -> dict:
-    def _cb(pct, msg, **kwargs):
+    stage_flow = [
+        ('scan', 'Scan source files'),
+        ('detect', 'Detect project type'),
+        ('analysis', 'Analyze source files'),
+        ('node', 'Build nodes and indexes'),
+        ('edge', 'Resolve dependencies and calls'),
+        ('finalize', 'Finalize output'),
+    ]
+    stage_meta = {
+        key: {'stage': key, 'stage_label': label, 'stage_index': idx + 1, 'stage_total': len(stage_flow)}
+        for idx, (key, label) in enumerate(stage_flow)
+    }
+
+    def _cb(pct, msg, stage=None, **kwargs):
         _console_print(f'[{pct:3d}%] {msg}', end='\r')
-        if progress_cb: progress_cb(pct, msg, **kwargs)
+        payload = {}
+        if stage in stage_meta:
+            payload.update(stage_meta[stage])
+        payload.update(kwargs)
+        if progress_cb:
+            progress_cb(pct, msg, **payload)
 
     root = os.path.abspath(root_dir)
     all_files = []
 
-    _cb(0, 'Scanning files...')
+    _cb(0, 'Scanning files...', stage='scan')
     skip_dirs = set(SKIP_DIRS)
     if include_build:
         skip_dirs -= BUILD_DIRS
@@ -572,9 +590,10 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
                 all_files.append(os.path.join(dirpath, fname))
 
     total = len(all_files)
-    _cb(0, f'Found {total} files, analyzing...')
+    _cb(4, f'Found {total} files to inspect', stage='scan', total_files=total)
 
     # ── Project type detection ────────────────────────────────────────────────
+    _cb(8, 'Detecting project type...', stage='detect', total_files=total)
     ext_counts: dict = defaultdict(int)
     for fp in all_files:
         ext_counts[Path(fp).suffix.lower()] += 1
@@ -585,7 +604,13 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         banner = fmt_detection_banner(project_type)
         for line in banner:
             _console_print(line)
-        _cb(1, f'{project_type["emoji"]}  Detected: {project_type["name"]} project', project_type=project_type)
+        _cb(
+            12,
+            f'{project_type["emoji"]}  Detected: {project_type["name"]} project',
+            stage='detect',
+            project_type=project_type,
+            total_files=total,
+        )
 
     file_meta   = {}  # rel_path → {label, ext, size, module, file_type, bios_meta}
     file_incs   = {}  # rel_path → [ref strings]
@@ -598,9 +623,13 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     for i, fp in enumerate(all_files):
         if (i + 1) % 50 == 0 or (i + 1) == total:
             pct = int((i + 1) / total * 60) if total else 0
-            if progress_cb:
-                progress_cb(pct, f'{i + 1}/{total} files analyzed')
-            _console_print(f'[{pct:3d}%] {i + 1}/{total} files analyzed', end='\r')
+            _cb(
+                pct,
+                f'{i + 1}/{total} files analyzed',
+                stage='analysis',
+                analyzed_files=i + 1,
+                total_files=total,
+            )
         rel = os.path.relpath(fp, root).replace('\\', '/')
         inc, defs, calls, extra, func_calls_by_func = scan_file(fp, root)
         ext = Path(fp).suffix.lower()
@@ -624,7 +653,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
 
     # ── Phase X: Collect ALL other files + count skipped dirs + total dirs ───────
     # Other files are not analysed for deps but shown in UI for full codebase picture.
-    _cb(59, 'Scanning other files...')
+    _cb(59, 'Scanning other files...', stage='node', analyzed_files=total, total_files=total)
     other_files_all: dict = {}
     _oth_idx = len(file_meta)
 
@@ -675,7 +704,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
             k: _meta[k] for k in ('id','label','path','ext','size','file_type')
         })
 
-    _cb(60, 'Building module index...')
+    _cb(60, 'Building module index...', stage='node', analyzed_files=total, total_files=total)
 
     all_modules = sorted(set(m['module'] for m in file_meta.values()))
     module_color = {}
@@ -690,7 +719,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
             color_idx += 1
 
     # Build name-to-path index (basename, full rel path, and path stem)
-    _cb(65, 'Building file index...')
+    _cb(65, 'Building file index...', stage='node', analyzed_files=total, total_files=total)
     label_to_paths  = defaultdict(list)  # basename → [rel_path]
     stem_to_paths   = defaultdict(list)  # stem (no ext) → [rel_path]
     for rel in file_meta:
@@ -715,7 +744,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     # ── Phase B: Build GUID name → .dec file index ───────────────────────────
     # .dec files declare: gXxxGuid  =  { ... }   under [Guids]/[Ppis]/[Protocols]
     # We parse these names so .inf [Guids/Ppis] references can link to their .dec
-    _cb(66, 'Building GUID index...')
+    _cb(66, 'Building GUID index...', stage='node', analyzed_files=total, total_files=total)
     guid_name_to_dec = defaultdict(list)   # guid_var_name (lower) → [dec_rel_path]
 
     RE_GUID_DECL = re.compile(r'\b(g[A-Za-z_]\w+Guid|g[A-Za-z_]\w+Ppi|g[A-Za-z_]\w+Protocol)\b')
@@ -756,7 +785,15 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
             'bios_meta':  meta['bios_meta'],
         })
 
-    _cb(70, 'Resolving file edges...')
+    _cb(
+        70,
+        'Resolving file edges...',
+        stage='edge',
+        analyzed_files=total,
+        total_files=total,
+        module_count=len(all_modules),
+        other_files=len(other_files_all),
+    )
     module_edge_counts = defaultdict(int)
     seen_file_edges    = set()
 
@@ -895,7 +932,16 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
                 for tgt in resolve_ref(inc, src_dir):
                     add_edge(src_rel, tgt, 'asl_include')
 
-    _cb(80, 'Building function index...')
+    _cb(
+        80,
+        'Building function index...',
+        stage='edge',
+        analyzed_files=total,
+        total_files=total,
+        module_count=len(all_modules),
+        other_files=len(other_files_all),
+        file_edge_count=len(seen_file_edges),
+    )
     func_name_to_files = defaultdict(list)  # name → [rel_path, ...]
     for rel, defs in file_defs.items():
         for d in defs:
@@ -908,7 +954,16 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     func_edges_by_file  = {}
     func_calls_by_file  = {}
 
-    _cb(85, 'Resolving call edges...')
+    _cb(
+        85,
+        'Resolving call edges...',
+        stage='edge',
+        analyzed_files=total,
+        total_files=total,
+        module_count=len(all_modules),
+        other_files=len(other_files_all),
+        file_edge_count=len(seen_file_edges),
+    )
     for rel, defs in file_defs.items():
         if not defs:
             continue
@@ -945,7 +1000,20 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
                                   'p': int(d['is_static'])})
         func_edges_by_file[rel] = edges
 
-    _cb(95, 'Assembling output...')
+    resolved_func_edges = sum(len(v) for v in func_edges_by_file.values())
+
+    _cb(
+        95,
+        'Assembling output...',
+        stage='finalize',
+        analyzed_files=total,
+        total_files=total,
+        module_count=len(all_modules),
+        other_files=len(other_files_all),
+        file_edge_count=len(seen_file_edges),
+        func_edge_count=resolved_func_edges,
+        function_count=sum(len(v) for v in file_defs.values()),
+    )
     modules = [
         {
             'id':          mod,
@@ -981,7 +1049,22 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
 
     file_to_module = {rel: meta['module'] for rel, meta in file_meta.items()}
 
-    _cb(100, 'Done!')
+    _cb(
+        100,
+        'Done!',
+        stage='finalize',
+        analyzed_files=total,
+        total_files=total,
+        module_count=len(modules),
+        other_files=total_other,
+        node_count=total_visible_files + total_funcs,
+        file_edge_count=len(seen_file_edges),
+        func_edge_count=resolved_func_edges,
+        edge_count=len(module_edges) + len(seen_file_edges) + resolved_func_edges,
+        function_count=total_funcs,
+        call_count=total_calls,
+        project_type=project_type,
+    )
     _console_print()
     return {
         'modules':              modules,

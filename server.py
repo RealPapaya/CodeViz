@@ -612,6 +612,13 @@ class Handler(BaseHTTPRequestHandler):
                     'pct': 0, 'msg': 'Queued...', 'done': False,
                     'error': None, 'stats': None, 'data': None,
                     'root': root, 'started': time.time(),
+                    'stage': 'scan', 'stage_label': 'Scan source files',
+                    'stage_index': 1, 'stage_total': 6,
+                    'total_files': 0, 'analyzed_files': 0,
+                    'module_count': 0, 'function_count': 0,
+                    'node_count': 0, 'file_edge_count': 0,
+                    'func_edge_count': 0, 'edge_count': 0,
+                    'project_type': None,
                 }
 
             def run():
