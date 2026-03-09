@@ -12,5 +12,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Force UTF-8 for all Python subprocesses
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+
 :: Launch interactive CLI
 python vizcode.py

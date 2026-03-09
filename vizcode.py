@@ -180,7 +180,10 @@ def is_server_running() -> bool:
 def start_server():
     global _server_proc
     if is_server_running(): return
-    kwargs = dict(cwd=str(SCRIPT_DIR), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"]       = "1"        # Python 3.7+ UTF-8 mode
+    kwargs = dict(cwd=str(SCRIPT_DIR), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     if IS_WIN: kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     _server_proc = subprocess.Popen([sys.executable, str(SERVER_PY)], **kwargs)
     for _ in range(50):
