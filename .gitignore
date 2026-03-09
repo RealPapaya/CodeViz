@@ -1,0 +1,16 @@
+﻿# Local runtime data
+.local/
+.vizcode_history.json
+.vizcode_server.log
+.result_*.html
+
+# Python cache / generated files
+__pycache__/
+parsers/__pycache__/
+*.py[cod]
+
+# Local debug / temporary files
+server_import_trace.log
+server_manual.log
+_debug_*.py
+_debug_*.out

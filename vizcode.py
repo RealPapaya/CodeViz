@@ -24,9 +24,11 @@ if sys.platform == "win32":
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent
+LOCAL_DATA_DIR = SCRIPT_DIR / ".local"
+LOCAL_DATA_DIR.mkdir(exist_ok=True)
 SERVER_PY    = SCRIPT_DIR / "server.py"
-HISTORY_FILE = SCRIPT_DIR / ".vizcode_history.json"
-SERVER_LOG   = SCRIPT_DIR / ".vizcode_server.log"
+HISTORY_FILE = LOCAL_DATA_DIR / "vizcode_history.json"
+SERVER_LOG   = LOCAL_DATA_DIR / "vizcode_server.log"
 DEFAULT_PORT = 7777
 PORT         = DEFAULT_PORT
 BASE_URL     = f"http://localhost:{PORT}"
