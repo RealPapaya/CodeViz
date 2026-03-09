@@ -117,9 +117,10 @@ let _renderToken = 0;
 // ─── Preferences ──────────────────────────────────────────────────────────────
 const _PREFS = {
     KEYS:     { font: 'biosviz_code_font', lang: 'biosviz_lang',
-                extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs' },
+                extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs',
+                theme: 'biosviz_theme' },
     DEFAULTS: { font: "'JetBrains Mono', monospace", lang: 'en',
-                extFiles: false, extFuncs: false },
+                extFiles: false, extFuncs: false, theme: 'dark' },
     get(k) {
         try {
             const v = localStorage.getItem(this.KEYS[k]);
@@ -410,18 +411,53 @@ function applyFont(font) {
     applyCyFont(font);
 }
 
+// ─── Theme ────────────────────────────────────────────────────────────────────
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme || 'dark');
+}
+
+// ─── i18n live apply ─────────────────────────────────────────────────────────
+function _applyLang(lang) {
+    if (!window._i18n) return;
+    window._i18n.init(lang || _PREFS.get('lang'));
+
+    // Update every element tagged with [data-i18n]
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key  = el.getAttribute('data-i18n');
+        const attr = el.getAttribute('data-i18n-attr'); // e.g. 'placeholder'
+        const val  = window._i18n.t(key);
+        if (attr) { el.setAttribute(attr, val); }
+        else      { el.textContent = val; }
+    });
+
+    // Sync translated <option> labels inside theme/lang selects
+    document.querySelectorAll('option[data-i18n]').forEach(opt => {
+        opt.textContent = window._i18n.t(opt.getAttribute('data-i18n'));
+    });
+}
+
 function initPreferences() {
     const prefBtn   = document.getElementById('pref-btn');
     const prefModal = document.getElementById('pref-modal');
     if (!prefBtn || !prefModal) return;
 
-    // Apply saved values
-    const savedFont = getSavedFont();
+    // Apply saved values on load
+    const savedFont  = getSavedFont();
+    const savedTheme = _PREFS.get('theme');
+    const savedLang  = _PREFS.get('lang');
+
     applyFont(savedFont);
-    const fontSel = document.getElementById('font-select');
-    if (fontSel) { fontSel.value = savedFont; fontSel.style.fontFamily = savedFont; }
-    const langSel = document.getElementById('pref-lang-select');
-    if (langSel) langSel.value = _PREFS.get('lang');
+    applyTheme(savedTheme);
+    _applyLang(savedLang);
+
+    const fontSel  = document.getElementById('font-select');
+    const themeSel = document.getElementById('pref-theme-select');
+    const langSel  = document.getElementById('pref-lang-select');
+
+    if (fontSel)  { fontSel.value  = savedFont;  fontSel.style.fontFamily = savedFont; }
+    if (themeSel) { themeSel.value = savedTheme; }
+    if (langSel)  { langSel.value  = savedLang;  }
+
     _syncCheck('pref-ext-files', _PREFS.get('extFiles'));
     _syncCheck('pref-ext-funcs', _PREFS.get('extFuncs'));
 
@@ -438,8 +474,15 @@ function initPreferences() {
         fontSel.style.fontFamily = f;
     });
 
-    // Language (stub)
-    if (langSel) langSel.addEventListener('change', e => _PREFS.set('lang', e.target.value));
+    // Theme — live switch
+    if (themeSel) themeSel.addEventListener('change', e => {
+        const t = e.target.value; applyTheme(t); _PREFS.set('theme', t);
+    });
+
+    // Language — live switch (no reload needed)
+    if (langSel) langSel.addEventListener('change', e => {
+        const l = e.target.value; _PREFS.set('lang', l); _applyLang(l);
+    });
 
     // Behaviour checkboxes
     _bindCheck('pref-ext-files', 'extFiles', v => {

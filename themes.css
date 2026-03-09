@@ -1,0 +1,170 @@
+/**
+ * themes.css — VIZCODE Theme Definitions
+ *
+ * HOW IT WORKS:
+ *   applyTheme(name) in viz.js sets  data-theme="<name>"  on <html>.
+ *   Each theme block below overrides the CSS custom properties defined in viz.css.
+ *   Only variables that differ from the default dark theme need to be listed.
+ *
+ * HOW TO ADD A THEME:
+ *   1. Add a new  [data-theme="your-id"]  block.
+ *   2. Override any variables from the :root block in viz.css.
+ *   3. Add a matching <option value="your-id"> in analyze_viz.py.
+ *   4. Add  themeOptYourId  keys to both locales in i18n.js.
+ *
+ * SHIPPED THEMES
+ *   dark    — Original deep-navy dark (default, defined in viz.css :root).
+ *   claude  — Warm terracotta / parchment, inspired by Claude's brand palette.
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   DARK  (default — no overrides needed, :root in viz.css already handles it)
+   Kept here as a reference anchor so the selector always exists.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+    /* intentionally empty — viz.css :root is the source of truth */
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   CLAUDE  — Warm terracotta + parchment dark
+   Palette inspired by Anthropic / Claude's brand: terracotta coral accents,
+   warm deep-brown panels, and cream-tinted text on near-black backgrounds.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="claude"] {
+
+    /* ── Core surfaces ──────────────────────────────────────────────────────── */
+    --bg:        #1A1410;   /* very dark warm espresso                          */
+    --panel:     #211810;   /* sidebar / topbar panel                           */
+    --panel2:    #2C2018;   /* secondary panel, hover backgrounds               */
+    --border:    #3E2E1E;   /* warm amber-brown border                          */
+    --card-bg:   #251B11;   /* card / tooltip backgrounds                       */
+
+    /* ── Accent — Claude's signature terracotta / coral-orange ─────────────── */
+    --accent:    #D4704A;   /* primary accent (buttons, active tabs, links)     */
+    --accent2:   #B05538;   /* darker accent for hover states                   */
+
+    /* ── Text ────────────────────────────────────────────────────────────────── */
+    --text:      #F0E8DF;   /* warm off-white, easy on eyes                     */
+    --muted:     #8A7260;   /* warm gray-brown for secondary labels             */
+
+    /* ── Structural (unchanged, but listed for clarity) ────────────────────── */
+    --radius:    8px;
+}
+
+/* ── Accent glow adjustments for Claude theme ────────────────────────────────── */
+[data-theme="claude"] .tab.active,
+[data-theme="claude"] .tab:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] #search:focus {
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] .bc-item {
+    color: var(--accent);
+}
+
+[data-theme="claude"] .tree-row.active {
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+[data-theme="claude"] .pref-section-label {
+    color: var(--accent);
+}
+
+[data-theme="claude"] .pref-check:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] .pref-check:checked::after {
+    border-color: #fff;
+}
+
+[data-theme="claude"] .pref-done-btn {
+    background: var(--accent);
+    color: #fff;
+}
+
+[data-theme="claude"] .pref-done-btn:hover {
+    background: var(--accent2);
+}
+
+[data-theme="claude"] .pref-select:focus {
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] .logo {
+    color: var(--accent);
+}
+
+/* Active / hover states on layout switcher */
+[data-theme="claude"] .ls-header:hover {
+    background: rgba(212, 112, 74, 0.08);
+}
+
+[data-theme="claude"] .ls-btn:hover {
+    background: rgba(212, 112, 74, 0.09);
+    border-color: rgba(212, 112, 74, 0.30);
+    color: #e8c4aa;
+}
+
+[data-theme="claude"] .ls-btn.active {
+    background: rgba(212, 112, 74, 0.16);
+    border-color: rgba(212, 112, 74, 0.60);
+    color: var(--accent);
+}
+
+[data-theme="claude"] .ls-btn.active .ls-icon {
+    filter: drop-shadow(0 0 4px rgba(212, 112, 74, 0.65));
+}
+
+[data-theme="claude"] #layout-switcher:hover {
+    box-shadow: 0 6px 32px rgba(212, 112, 74, 0.14);
+}
+
+/* Code panel accent */
+[data-theme="claude"] #code-toggle-btn:hover,
+[data-theme="claude"] #code-toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+[data-theme="claude"] #code-toggle-btn.active {
+    background: rgba(212, 112, 74, 0.10);
+}
+
+/* Tooltip head */
+[data-theme="claude"] .gt-head {
+    color: var(--accent);
+}
+
+/* Global tooltip shadow hint */
+[data-theme="claude"] #g-tooltip {
+    box-shadow: 0 8px 24px rgba(0,0,0,.55), 0 0 0 1px rgba(212,112,74,.09);
+}
+
+/* Scrollbar accent */
+[data-theme="claude"] ::-webkit-scrollbar-thumb {
+    background: #3E2E1E;
+}
+
+[data-theme="claude"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+}
+
+/* Search result fuzzy highlight — stays orange, works on both themes */
+[data-theme="claude"] .sr-fuzzy-mark {
+    color: #E8894A;
+    border-bottom-color: rgba(232, 137, 74, 0.5);
+}
+
+[data-theme="claude"] .sr-fi-name .sr-fuzzy-mark,
+[data-theme="claude"] .sr-file-name .sr-fuzzy-mark {
+    color: #E8894A;
+    background: rgba(232, 137, 74, 0.14);
+}

@@ -57,16 +57,17 @@ window._I18N_STRINGS = {
         searchFuncOnly:         'Show only function-definition matches',
 
         // Settings modal
-        settingsTitle:          'Settings',
+        settingsTitle:          '⚙ Settings',
         settingsDone:           'Done',
         sectionAppearance:      'Appearance',
         sectionLanguage:        'Language',
         sectionBehaviour:       'Default Behaviour',
         fontLabel:              'Code Editor Font',
         themeLabel:             'Theme',
-        themeComingSoon:        'Coming Soon',
+        themeOptDark:           'Dark (Default)',
+        themeOptClaude:         'Claude',
         langLabel:              'Interface Language',
-        langHint:               'Translation strings are defined in i18n.js. Reload after changing.',
+        langHint:               'Applies immediately. Translation strings are defined in i18n.js.',
         extFilesAlways:         'External Files always ON',
         extFilesAlwaysDesc:     'Show external module files by default in Dependency Map (L1)',
         extFuncsAlways:         'External Functions always ON',
@@ -124,14 +125,15 @@ window._I18N_STRINGS = {
         // Settings modal
         settingsTitle:          '⚙ 設定',
         settingsDone:           '完成',
-        sectionAppearance:      'Appearance',          // TODO
-        sectionLanguage:        'Language',            // TODO
-        sectionBehaviour:       'Default Behaviour',  // TODO
+        sectionAppearance:      '外觀',
+        sectionLanguage:        '語言',
+        sectionBehaviour:       '預設行為',
         fontLabel:              '程式碼字型',
         themeLabel:             '佈景主題',
-        themeComingSoon:        '即將推出',
+        themeOptDark:           '深色（預設）',
+        themeOptClaude:         'Claude 風格',
         langLabel:              '介面語言',
-        langHint:               '翻譯字串定義於 i18n.js，更改後請重新載入頁面。',
+        langHint:               '立即套用。翻譯字串定義於 i18n.js。',
         extFilesAlways:         '預設開啟外部檔案',
         extFilesAlwaysDesc:     '在相依性地圖 (L1) 中預設顯示外部模組檔案',
         extFuncsAlways:         '預設開啟外部函式',

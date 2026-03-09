@@ -1195,15 +1195,15 @@ HTML_SKELETON = """\
 <div id="pref-modal" class="pref-backdrop">
   <div class="pref-dialog">
     <div class="pref-header">
-      <span class="pref-title">⚙ Settings</span>
+      <span class="pref-title" data-i18n="settingsTitle">⚙ Settings</span>
       <button id="pref-close-x" class="pref-close-x" data-tip="Close">✕</button>
     </div>
     <div class="pref-body">
 
       <div class="pref-section">
-        <div class="pref-section-label">Appearance</div>
+        <div class="pref-section-label" data-i18n="sectionAppearance">Appearance</div>
         <div class="pref-row">
-          <label class="pref-label" for="font-select">Code Editor Font</label>
+          <label class="pref-label" for="font-select" data-i18n="fontLabel">Code Editor Font</label>
           <select id="font-select" class="pref-select">
             <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
             <option value="'Fira Code', monospace">Fira Code</option>
@@ -1212,48 +1212,48 @@ HTML_SKELETON = """\
             <option value="'Space Mono', monospace">Space Mono</option>
           </select>
         </div>
-        <div class="pref-row pref-row-disabled">
-          <label class="pref-label" for="pref-theme-select">Theme <span class="pref-badge">Coming Soon</span></label>
-          <select id="pref-theme-select" class="pref-select" disabled>
-            <option value="dark">Dark (Default)</option>
-            <option value="light">Light</option>
+        <div class="pref-row">
+          <label class="pref-label" for="pref-theme-select" data-i18n="themeLabel">Theme</label>
+          <select id="pref-theme-select" class="pref-select">
+            <option value="dark"   data-i18n="themeOptDark">Dark (Default)</option>
+            <option value="claude" data-i18n="themeOptClaude">Claude</option>
           </select>
         </div>
       </div>
 
       <div class="pref-section">
-        <div class="pref-section-label">Language</div>
+        <div class="pref-section-label" data-i18n="sectionLanguage">Language</div>
         <div class="pref-row">
-          <label class="pref-label" for="pref-lang-select">Interface Language</label>
+          <label class="pref-label" for="pref-lang-select" data-i18n="langLabel">Interface Language</label>
           <select id="pref-lang-select" class="pref-select">
             <option value="en">English</option>
             <option value="zh-tw">繁體中文</option>
           </select>
         </div>
-        <p class="pref-hint">Translation strings are defined in <code>i18n.js</code>. Reload after changing.</p>
+        <p class="pref-hint" data-i18n="langHint">Applies immediately. Translation strings are defined in <code>i18n.js</code>.</p>
       </div>
 
       <div class="pref-section">
-        <div class="pref-section-label">Default Behaviour</div>
+        <div class="pref-section-label" data-i18n="sectionBehaviour">Default Behaviour</div>
         <label class="pref-check-row">
           <input type="checkbox" id="pref-ext-files" class="pref-check">
           <span class="pref-check-label">
-            <span class="pref-check-title">External Files always ON</span>
-            <span class="pref-check-desc">Show external module files by default in Dependency Map (L1)</span>
+            <span class="pref-check-title" data-i18n="extFilesAlways">External Files always ON</span>
+            <span class="pref-check-desc" data-i18n="extFilesAlwaysDesc">Show external module files by default in Dependency Map (L1)</span>
           </span>
         </label>
         <label class="pref-check-row">
           <input type="checkbox" id="pref-ext-funcs" class="pref-check">
           <span class="pref-check-label">
-            <span class="pref-check-title">External Functions always ON</span>
-            <span class="pref-check-desc">Show external function nodes by default in Call Flow (L2).<br>External lines follow automatically.</span>
+            <span class="pref-check-title" data-i18n="extFuncsAlways">External Functions always ON</span>
+            <span class="pref-check-desc" data-i18n="extFuncsAlwaysDesc">Show external function nodes by default in Call Flow (L2).<br>External lines follow automatically.</span>
           </span>
         </label>
       </div>
 
     </div>
     <div class="pref-footer">
-      <button id="pref-close-btn" class="pref-done-btn">Done</button>
+      <button id="pref-close-btn" class="pref-done-btn" data-i18n="settingsDone">Done</button>
     </div>
   </div>
 </div>
