@@ -120,7 +120,7 @@ def run_menu(title: str, items: List[str], hint: str = "Up/Down to move   Enter 
             if label.startswith("-"):
                 print(f"  {dim(label)}")
             elif i == sel:
-                print(f"  {orange('>')} {orange(bold(label))}")
+                print(f"  {orange('▶')} {orange(bold(label))}")
             else:
                 print(f"    {label}")
         print()
@@ -149,7 +149,7 @@ def run_menu(title: str, items: List[str], hint: str = "Up/Down to move   Enter 
 # ─── Path input ───────────────────────────────────────────────────────────────
 def prompt_path(msg: str) -> str:
     print(SHOW_C, end="", flush=True)
-    sys.stdout.write(f"\n  {cyan('?')} {bold(msg)}\n  > ")
+    sys.stdout.write(f"\n  {cyan('❯')} {bold(msg)}\n  → ")
     sys.stdout.flush()
     try:    return input().strip().strip('"\'')
     except: return ""
@@ -216,9 +216,9 @@ def poll_job(job_id: str) -> dict:
 def run_analysis_with_progress(path: str):
     print(CLEAR, end="")
     print_banner()
-    print(f"  {cyan('>')} Starting server...")
+    print(f"  {cyan('▶')} Starting server...")
     start_server()
-    print(f"  {cyan('>')} Analyzing: {dim(path)}\n")
+    print(f"  {cyan('▶')} Analyzing: {dim(path)}\n")
 
     job_id = trigger_analysis(path)
     if not job_id: return
@@ -227,8 +227,8 @@ def run_analysis_with_progress(path: str):
     BAR = 30
     def _bar(pct):
         f = int(BAR * pct / 100)
-        filled = orange("#" * f)
-        empty  = dim("." * (BAR - f))
+        filled = orange("█" * f)
+        empty  = dim("░" * (BAR - f))
         return f"[{filled}{empty}] {pct:>3}%"
 
     last_pct = -1
@@ -241,7 +241,7 @@ def run_analysis_with_progress(path: str):
             sys.stdout.flush()
             last_pct = pct
         if job.get("done"):
-            sys.stdout.write(f"\r  {_bar(100)}  {green('Done!')}            \n")
+            sys.stdout.write(f"\r  {_bar(100)}  {green('✓ Done!')}            \n")
             sys.stdout.flush()
             break
         if job.get("error"):
@@ -250,7 +250,7 @@ def run_analysis_with_progress(path: str):
         time.sleep(0.3)
 
     result_url = f"{BASE_URL}/result?job={job_id}"
-    print(f"\n  {green('>')} Opening browser...")
+    print(f"\n  {green('✓')} Opening browser...")
     print(f"  {dim(result_url)}\n")
     time.sleep(0.4)
     webbrowser.open(result_url)
@@ -258,9 +258,9 @@ def run_analysis_with_progress(path: str):
 # ─── Server badge ─────────────────────────────────────────────────────────────
 def print_server_badge():
     if is_server_running():
-        print(f"  {green('*')} Server running  {dim(BASE_URL)}\n")
+        print(f"  {green('●')} Server running  {dim(BASE_URL)}\n")
     else:
-        print(f"  {dim('o')} Server not started\n")
+        print(f"  {dim('○')} Server not started\n")
 
 # ─── Actions ──────────────────────────────────────────────────────────────────
 def action_analyze_new():
@@ -306,7 +306,7 @@ def action_help():
     print(f"  {yellow('2.')} Recent Projects     -- re-run on a previously scanned project.")
     print(f"  {yellow('3.')} Open Browser        -- jump to localhost:{PORT} (server must be running).\n")
     print(f"  {bold(cyan('Supported languages:'))}")
-    print(f"    [BIOS] UEFI / AMI BIOS    [PY] Python    [JS] JS / TS    [GO] Go\n")
+    print(f"    🔲 UEFI / AMI BIOS    🐍 Python    ⚡ JS / TS    🔵 Go\n")
     print(f"  {bold(cyan('Quick start:'))}")
     print(f"    {dim('python vizcode.py /path/to/project')}\n")
     _press_enter()
@@ -315,7 +315,7 @@ def action_exit():
     print(CLEAR, end=""); print_banner()
     print(f"  {dim('Stopping server...')}")
     stop_server()
-    print(f"  {orange('Goodbye!')}\n")
+    print(f"  {orange('Goodbye! 👋')}\n")
     sys.exit(0)
 
 def _press_enter():
@@ -325,12 +325,12 @@ def _press_enter():
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 MENU = [
-    ("[1] Analyze a Project",  action_analyze_new),
-    ("[2] Recent Projects",    action_recent),
-    ("[3] Open Browser",       action_open_browser),
+    ("📂  Analyze a Project",  action_analyze_new),
+    ("🕑  Recent Projects",    action_recent),
+    ("🌐  Open Browser",       action_open_browser),
     ("-" * 35,                 None),
-    ("[H] Help",               action_help),
-    ("[Q] Exit",               action_exit),
+    ("❓  Help",               action_help),
+    ("✖   Exit",               action_exit),
 ]
 
 def main():
