@@ -294,14 +294,14 @@ function _refreshVisualChrome() {
 
 function _layoutKeyMap(id) {
     return ({
-        'dagre-lr': ['layoutDagreLR', 'layoutDagreLRTip'],
-        'dagre-tb': ['layoutDagreTB', 'layoutDagreTBTip'],
-        'cose': ['layoutCose', 'layoutCoseTip'],
-        'fcose': ['layoutFcose', 'layoutFcoseTip'],
-        'cola': ['layoutCola', 'layoutColaTip'],
-        'elk-layered': ['layoutElkLayered', 'layoutElkLayeredTip'],
-        'elk-stress': ['layoutElkStress', 'layoutElkStressTip'],
-        'cise': ['layoutCise', 'layoutCiseTip'],
+        'dagre-lr': ['layoutDagreLR', 'layoutDagreLR_Tip'],
+        'dagre-tb': ['layoutDagreTB', 'layoutDagreTB_Tip'],
+        'cose': ['layoutCose', 'layoutCose_Tip'],
+        'fcose': ['layoutFcose', 'layoutFcose_Tip'],
+        'cola': ['layoutCola', 'layoutCola_Tip'],
+        'elk-layered': ['layoutElkLayered', 'layoutElkLayered_Tip'],
+        'elk-stress': ['layoutElkStress', 'layoutElkStress_Tip'],
+        'cise': ['layoutCise', 'layoutCise_Tip'],
     })[id] || [];
 }
 
@@ -7105,9 +7105,8 @@ function _buildLayoutSwitcherHTML() {
             ${visiblePresets.map(p => {
         // Check if required extension is loaded
         const unavailable = p.requires && !_isLayoutAvailable(p.requires);
-        const lKey = 'layout' + p.id.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
-        const lName = T(lKey) || p.label;
-        const lTip = T(lKey + '_Tip') || p.tip;
+        const lName = _layoutLabel(p);
+        const lTip = _layoutTip(p);
 
         return `
                 <button class="ls-btn${p.id === layoutSwitcherState.currentId ? ' active' : ''}${unavailable ? ' ls-unavailable' : ''}"
