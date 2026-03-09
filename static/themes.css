@@ -1,0 +1,144 @@
+/**
+ * Shared theme definitions for launcher.html and the generated visualizer page.
+ */
+
+[data-theme="dark"] {
+    /* default palette comes from each page's base CSS variables */
+}
+
+[data-theme="claude"] {
+    --bg: #1a1410;
+    --panel: #211810;
+    --panel2: #2c2018;
+    --border: #3e2e1e;
+    --card-bg: #251b11;
+    --accent: #d4704a;
+    --accent2: #b05538;
+    --text: #f0e8df;
+    --muted: #8a7260;
+}
+
+[data-theme="claude"] .tab.active,
+[data-theme="claude"] .tab:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] #search:focus,
+[data-theme="claude"] #path-input:focus {
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] .bc-item,
+[data-theme="claude"] .logo,
+[data-theme="claude"] .logo-big span,
+[data-theme="claude"] .badge,
+[data-theme="claude"] .prog-pct,
+[data-theme="claude"] .stat-box .val {
+    color: var(--accent);
+}
+
+[data-theme="claude"] .badge {
+    background: rgba(212, 112, 74, 0.12);
+    border-color: rgba(212, 112, 74, 0.28);
+}
+
+[data-theme="claude"] .tree-row.active,
+[data-theme="claude"] .subdir-row.active {
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+[data-theme="claude"] .pref-section-label {
+    color: var(--accent);
+}
+
+[data-theme="claude"] .pref-check:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] .pref-check:checked::after {
+    border-color: #fff;
+}
+
+[data-theme="claude"] .pref-done-btn,
+[data-theme="claude"] .btn-primary {
+    background: var(--accent);
+    color: #fff;
+}
+
+[data-theme="claude"] .pref-done-btn:hover,
+[data-theme="claude"] .btn-primary:hover {
+    background: var(--accent2);
+}
+
+[data-theme="claude"] .pref-select:focus,
+[data-theme="claude"] .btn-ghost:hover {
+    border-color: var(--accent);
+}
+
+[data-theme="claude"] .btn-ghost:hover {
+    color: var(--accent);
+}
+
+[data-theme="claude"] .ls-header:hover {
+    background: rgba(212, 112, 74, 0.08);
+}
+
+[data-theme="claude"] .ls-btn:hover {
+    background: rgba(212, 112, 74, 0.09);
+    border-color: rgba(212, 112, 74, 0.3);
+    color: #e8c4aa;
+}
+
+[data-theme="claude"] .ls-btn.active {
+    background: rgba(212, 112, 74, 0.16);
+    border-color: rgba(212, 112, 74, 0.6);
+    color: var(--accent);
+}
+
+[data-theme="claude"] .ls-btn.active .ls-icon {
+    filter: drop-shadow(0 0 4px rgba(212, 112, 74, 0.65));
+}
+
+[data-theme="claude"] #layout-switcher:hover {
+    box-shadow: 0 6px 32px rgba(212, 112, 74, 0.14);
+}
+
+[data-theme="claude"] #code-toggle-btn:hover,
+[data-theme="claude"] #code-toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+[data-theme="claude"] #code-toggle-btn.active {
+    background: rgba(212, 112, 74, 0.1);
+}
+
+[data-theme="claude"] .gt-head {
+    color: var(--accent);
+}
+
+[data-theme="claude"] #g-tooltip {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(212, 112, 74, 0.09);
+}
+
+[data-theme="claude"] ::-webkit-scrollbar-thumb {
+    background: #3e2e1e;
+}
+
+[data-theme="claude"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+}
+
+[data-theme="claude"] .sr-fuzzy-mark {
+    color: #e8894a;
+    border-bottom-color: rgba(232, 137, 74, 0.5);
+}
+
+[data-theme="claude"] .sr-fi-name .sr-fuzzy-mark,
+[data-theme="claude"] .sr-file-name .sr-fuzzy-mark {
+    color: #e8894a;
+    background: rgba(232, 137, 74, 0.14);
+}

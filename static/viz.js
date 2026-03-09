@@ -116,28 +116,218 @@ let _renderToken = 0;
 
 // ─── Preferences ──────────────────────────────────────────────────────────────
 const _PREFS = {
-    KEYS:     { font: 'biosviz_code_font', lang: 'biosviz_lang',
-                extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs',
-                theme: 'biosviz_theme' },
-    DEFAULTS: { font: "'JetBrains Mono', monospace", lang: 'en',
-                extFiles: false, extFuncs: false, theme: 'dark' },
+    KEYS: {
+        font: 'biosviz_code_font', lang: 'biosviz_lang',
+        extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs',
+        theme: 'biosviz_theme'
+    },
+    DEFAULTS: {
+        font: "'JetBrains Mono', monospace", lang: 'en',
+        extFiles: false, extFuncs: false, theme: 'dark'
+    },
     get(k) {
         try {
             const v = localStorage.getItem(this.KEYS[k]);
             if (v === null) return this.DEFAULTS[k];
             if (v === 'true') return true; if (v === 'false') return false;
             return v;
-        } catch(_) { return this.DEFAULTS[k]; }
+        } catch (_) { return this.DEFAULTS[k]; }
     },
-    set(k, v) { try { localStorage.setItem(this.KEYS[k], String(v)); } catch(_) {} },
+    set(k, v) { try { localStorage.setItem(this.KEYS[k], String(v)); } catch (_) { } },
     load() {
         depMapState.showExternalFiles = this.get('extFiles');
-        l2State.showExternalFuncs     = this.get('extFuncs');
-        l2State.showExternalEdges     = l2State.showExternalFuncs;
+        l2State.showExternalFuncs = this.get('extFuncs');
+        l2State.showExternalEdges = l2State.showExternalFuncs;
     },
 };
 
+function T(key, vars) {
+    return window._i18n ? window._i18n.t(key, vars) : key;
+}
+
 function getSavedFont() { return _PREFS.get('font'); }
+
+function _currentRootName() {
+    const root = (window.DATA?.stats?.root || '').replace(/\\/g, '/').replace(/\/$/, '');
+    return root.split('/').filter(Boolean).pop() || 'VIZCODE';
+}
+
+function _formatL2Stats(stats) {
+    if (!stats) return '';
+    const parts = [];
+    parts.push(T('countFuncsShort', { count: stats.funcs || 0 }));
+    parts.push(T('countEdges', { count: stats.internalEdges || 0 }));
+    if (stats.extModules) parts.push(T('countModules', { count: stats.extModules }));
+    if (stats.extFuncs) parts.push(T('countExternalFunctions', { count: stats.extFuncs }));
+    if (stats.legacy) parts.push(T('legacyEdges'));
+    return parts.join(' | ');
+}
+
+function _refreshTopbarStatsLabels() {
+    const stats = document.querySelectorAll('#topbar .stats-bar .stat');
+    const files = document.getElementById('st-files')?.textContent || '0';
+    const mods = document.getElementById('st-mods')?.textContent || '0';
+    const funcs = document.getElementById('st-funcs')?.textContent || '0';
+    if (stats[0]) stats[0].innerHTML = `${T('topbarFiles')} <strong id="st-files">${files}</strong>`;
+    if (stats[1]) stats[1].innerHTML = `${T('topbarModules')} <strong id="st-mods">${mods}</strong>`;
+    if (stats[2]) stats[2].innerHTML = `${T('topbarFunctions')} <strong id="st-funcs">${funcs}</strong>`;
+}
+
+function _refreshSearchChrome() {
+    const filesBtn = document.getElementById('srm-files');
+    const codeBtn = document.getElementById('srm-code');
+    const caseBtn = document.getElementById('srt-case');
+    const wordBtn = document.getElementById('srt-word');
+    const regexBtn = document.getElementById('srt-regex');
+    const search = document.getElementById('search');
+    const filterLabels = document.querySelectorAll('#sr-filters .sr-filter-label');
+    const include = document.getElementById('sr-include');
+    const exclude = document.getElementById('sr-exclude');
+    if (filesBtn) { filesBtn.setAttribute('data-tip', T('searchModeFilesTip')); filesBtn.setAttribute('aria-label', T('searchModeFiles')); }
+    if (codeBtn) { codeBtn.setAttribute('data-tip', T('searchModeCodeTip')); codeBtn.setAttribute('aria-label', T('searchModeCode')); }
+    if (caseBtn) caseBtn.setAttribute('data-tip', T('searchMatchCase'));
+    if (wordBtn) wordBtn.setAttribute('data-tip', T('searchMatchWord'));
+    if (regexBtn) regexBtn.setAttribute('data-tip', T('searchRegex'));
+    if (search) search.placeholder = (typeof _srState !== 'undefined' && _srState.mode === 'code') ? T('searchPlaceholderCode') : T('searchPlaceholderFiles');
+    if (filterLabels[0]) filterLabels[0].textContent = T('searchIncludeLabel');
+    if (filterLabels[1]) filterLabels[1].textContent = T('searchExcludeLabel');
+    if (include) include.placeholder = T('searchIncludePlaceholder');
+    if (exclude) exclude.placeholder = T('searchExcludePlaceholder');
+}
+
+function _refreshPreferenceCopy() {
+    const hint = document.querySelector('.pref-hint');
+    const extDesc = document.querySelectorAll('.pref-check-desc');
+    if (hint) hint.innerHTML = T('langHint');
+    if (extDesc[0]) extDesc[0].textContent = T('extFilesAlwaysDesc');
+    if (extDesc[1]) extDesc[1].innerHTML = T('extFuncsAlwaysDesc');
+}
+
+function _refreshCodePanelChrome() {
+    const loading = document.querySelector('#cp-loading span');
+    const empty = document.getElementById('cp-empty');
+    const filename = document.getElementById('cp-filename');
+    const prev = document.getElementById('cp-prev-func');
+    const next = document.getElementById('cp-next-func');
+    if (loading) loading.textContent = T('loadingSource');
+    if (filename && !codeState.currentFile) filename.textContent = T('noFileSelected');
+    if (prev) prev.setAttribute('data-tip', T('prevFunc'));
+    if (next) next.setAttribute('data-tip', T('nextFunc'));
+    if (empty && !codeState.currentFile) {
+        empty.innerHTML = `<div class="cp-empty-icon">??</div><p>${T('clickFileToView')}</p><small>${T('clickFileHint')}</small>`;
+    }
+}
+
+function _refreshContextMenuChrome() {
+    const items = {
+        'ctx-copy': 'copyPath',
+        'ctx-open-code': 'viewSource',
+        'ctx-vscode': 'openInVSCode',
+        'ctx-module-only': 'onlyThisModule',
+        'ctx-pin': 'pinNode',
+    };
+    Object.entries(items).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = T(key);
+    });
+}
+
+function _refreshVisualChrome() {
+    if (!window._i18n) return;
+    document.documentElement.lang = _PREFS.get('lang');
+    document.title = T('visualizerPageTitle', { root: _currentRootName() });
+    _refreshTopbarStatsLabels();
+    _refreshSearchChrome();
+    _refreshPreferenceCopy();
+    _refreshCodePanelChrome();
+    _refreshContextMenuChrome();
+
+    // Global pass for any data-i18n tags
+    window._i18n.apply(document);
+
+    const dashboardBtn = document.getElementById('dashboard-btn');
+    if (dashboardBtn) {
+        dashboardBtn.innerHTML = `<svg style="width:16px;height:16px;margin-right:4px;vertical-align:middle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg> ${T('dashboard')}`;
+        dashboardBtn.setAttribute('data-tip', T('analyticsDashboard'));
+    }
+    const prefBtn = document.getElementById('pref-btn');
+    if (prefBtn) prefBtn.setAttribute('data-tip', T('settingsButton'));
+    const cancelBtn = document.getElementById('loading-cancel-btn');
+    if (cancelBtn) cancelBtn.innerHTML = `✕ ${T('cancelRender')}`;
+    const backBtn = document.getElementById('back-btn');
+    if (backBtn) backBtn.innerHTML = `&#8592; ${T('back')}`;
+    const codeBtn = document.getElementById('code-toggle-btn');
+    if (codeBtn) {
+        codeBtn.innerHTML = `<span class="code-icon">&#60;&#92;&#62;</span> ${T('codePanelToggle')}`;
+        codeBtn.setAttribute('data-tip', T('codePanelToggleTip'));
+    }
+
+    const sbTitle = document.querySelector('#sidebar-title span[data-i18n="fileSystem"]');
+    if (sbTitle) sbTitle.textContent = T('sidebarFileSystem');
+
+    const l1Title = document.querySelector('#l1-toolbar .l2-title');
+    const l2Title = document.querySelector('#l2-toolbar .l2-title');
+    if (l1Title) l1Title.textContent = T('l1Title');
+    if (l2Title) l2Title.textContent = T('l2Title');
+    const l1Expand = document.getElementById('l1-expand-all-ext');
+    const l1Collapse = document.getElementById('l1-collapse-all-ext');
+    const l2Expand = document.getElementById('l2-expand-all');
+    const l2Collapse = document.getElementById('l2-collapse-all');
+    if (l1Expand) l1Expand.textContent = T('searchExpandAll');
+    if (l1Collapse) l1Collapse.textContent = T('searchCollapseAll');
+    if (l2Expand) l2Expand.textContent = T('searchExpandAll');
+    if (l2Collapse) l2Collapse.textContent = T('searchCollapseAll');
+    const extLines = document.getElementById('l2-toggle-ext-lines');
+    if (extLines) extLines.textContent = l2State.showExternalEdges ? T('extLinesOn') : T('extLinesOff');
+
+    // Update graph-toggle-btn text (Call Graph / Dependency Map)
+    const graphBtn = document.getElementById('graph-toggle-btn');
+    if (graphBtn) {
+        const isL2 = state.level === 2;
+        const icon = isL2 ? '&#9671;' : '&#11041;';
+        const txt = isL2 ? T('graphBtnDependencyMap') : T('graphBtnCallGraph');
+        const tip = isL2 ? T('graphBtnDependencyMapTip') : T('graphBtnCallGraphTip');
+        graphBtn.innerHTML = `${icon} <span>${txt}</span>`;
+        graphBtn.setAttribute('data-tip', tip);
+    }
+}
+
+function _layoutKeyMap(id) {
+    return ({
+        'dagre-lr': ['layoutDagreLR', 'layoutDagreLRTip'],
+        'dagre-tb': ['layoutDagreTB', 'layoutDagreTBTip'],
+        'cose': ['layoutCose', 'layoutCoseTip'],
+        'fcose': ['layoutFcose', 'layoutFcoseTip'],
+        'cola': ['layoutCola', 'layoutColaTip'],
+        'elk-layered': ['layoutElkLayered', 'layoutElkLayeredTip'],
+        'elk-stress': ['layoutElkStress', 'layoutElkStressTip'],
+        'cise': ['layoutCise', 'layoutCiseTip'],
+    })[id] || [];
+}
+
+function _layoutLabel(preset) {
+    const [labelKey] = _layoutKeyMap(preset.id);
+    return labelKey ? T(labelKey) : preset.label;
+}
+
+function _layoutTip(preset) {
+    const [, tipKey] = _layoutKeyMap(preset.id);
+    return tipKey ? T(tipKey) : preset.tip;
+}
+
+function _refreshDashboardLocale() {
+    const overlay = document.getElementById('dashboard-overlay');
+    if (!overlay) return;
+    const open = overlay.style.display !== 'none';
+    overlay.remove();
+    _dashBuilt = false;
+    _buildDashboardDOM();
+    if (open) {
+        document.getElementById('dashboard-overlay').style.display = 'block';
+        _renderDashboard();
+        _dashBuilt = true;
+    }
+}
 
 function withFont(styleList, font) {
     return styleList.map(s => {
@@ -183,10 +373,10 @@ function _initGlobalTooltip() {
         n.removeAttribute('title');
     });
     document.addEventListener('mouseover', _gtipOver, true);
-    document.addEventListener('mouseout',  _gtipOut,  true);
+    document.addEventListener('mouseout', _gtipOut, true);
     document.addEventListener('mousemove', _gtipMove, true);
-    document.addEventListener('scroll',    () => _gtipHide(), true);
-    document.addEventListener('keydown',   () => _gtipHide(), true);
+    document.addEventListener('scroll', () => _gtipHide(), true);
+    document.addEventListener('keydown', () => _gtipHide(), true);
 }
 function _gtipOver(e) {
     const t = e.target.closest('[data-tip]'); if (!t) return;
@@ -203,7 +393,7 @@ function _gtipMove(e) {
 function _gtipShow(target, e) {
     const raw = target.dataset.tip || ''; if (!raw) return;
     const lines = raw.split('\n');
-    _gtip.el.innerHTML = lines.map((l,i) => {
+    _gtip.el.innerHTML = lines.map((l, i) => {
         if (i === 0) return `<strong class="gt-head">${escapeHtml(l)}</strong>`;
         if (l.startsWith('⚠')) return `<span class="gt-warn">${escapeHtml(l)}</span>`;
         return `<span class="gt-line">${escapeHtml(l)}</span>`;
@@ -219,11 +409,11 @@ function _gtipHide() {
 }
 function _gtipPos(mx, my) {
     const el = _gtip.el; if (!el) return;
-    const W=window.innerWidth, H=window.innerHeight, TW=el.offsetWidth||220, TH=el.offsetHeight||40, G=14;
-    let x=mx+G, y=my+G;
-    if (x+TW>W-8) x=mx-TW-G;
-    if (y+TH>H-8) y=my-TH-G;
-    el.style.left=`${Math.max(4,x)}px`; el.style.top=`${Math.max(4,y)}px`;
+    const W = window.innerWidth, H = window.innerHeight, TW = el.offsetWidth || 220, TH = el.offsetHeight || 40, G = 14;
+    let x = mx + G, y = my + G;
+    if (x + TW > W - 8) x = mx - TW - G;
+    if (y + TH > H - 8) y = my - TH - G;
+    el.style.left = `${Math.max(4, x)}px`; el.style.top = `${Math.max(4, y)}px`;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -231,14 +421,14 @@ window.addEventListener('DOMContentLoaded', () => {
         requestAnimationFrame(() => {
             try {
                 const el = document.getElementById('viz-data');
-                if (!el) { showMsg('Error: no data element found'); return; }
+                if (!el) { showMsg(T('errorNoDataElement')); return; }
 
                 document.getElementById('loading-msg').textContent = '🔍 Parsing graph data...';
                 const t0 = performance.now();
                 window.DATA = JSON.parse(el.textContent);
                 console.log(`JSON.parse: ${(performance.now() - t0).toFixed(0)}ms`);
 
-                if (!window.DATA?.stats) { showMsg('Error: invalid data format'); return; }
+                if (!window.DATA?.stats) { showMsg(T('errorInvalidDataFormat')); return; }
 
                 const s = DATA.stats;
                 const rootOther = (DATA.other_files_by_module || {})['_root'] || [];
@@ -416,47 +606,46 @@ function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme || 'dark');
 }
 
-// ─── i18n live apply ─────────────────────────────────────────────────────────
 function _applyLang(lang) {
     if (!window._i18n) return;
-    window._i18n.init(lang || _PREFS.get('lang'));
-
-    // Update every element tagged with [data-i18n]
-    document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key  = el.getAttribute('data-i18n');
-        const attr = el.getAttribute('data-i18n-attr'); // e.g. 'placeholder'
-        const val  = window._i18n.t(key);
-        if (attr) { el.setAttribute(attr, val); }
-        else      { el.textContent = val; }
-    });
-
-    // Sync translated <option> labels inside theme/lang selects
-    document.querySelectorAll('option[data-i18n]').forEach(opt => {
-        opt.textContent = window._i18n.t(opt.getAttribute('data-i18n'));
-    });
+    const active = window._i18n.init(lang || _PREFS.get('lang'));
+    document.documentElement.lang = active;
+    if (window._i18n.apply) window._i18n.apply(document);
+    _refreshVisualChrome();
+    updateDepMapExtToggle();
+    updateExternalFuncsToggle();
+    const l1Stats = document.getElementById('l1-stats');
+    if (l1Stats && l1Stats.dataset.count) l1Stats.textContent = T('countFiles', { count: l1Stats.dataset.count });
+    const l2Stats = document.getElementById('l2-stats');
+    if (l2Stats && l2Stats.dataset.stats) l2Stats.textContent = _formatL2Stats(JSON.parse(l2Stats.dataset.stats));
+    updateBreadcrumb();
+    if (typeof _srRenderActionBar === 'function') _srRenderActionBar();
+    if (typeof _srRenderResults === 'function') _srRenderResults();
+    refreshLayoutSwitcher();
+    _refreshDashboardLocale();
 }
 
 function initPreferences() {
-    const prefBtn   = document.getElementById('pref-btn');
+    const prefBtn = document.getElementById('pref-btn');
     const prefModal = document.getElementById('pref-modal');
     if (!prefBtn || !prefModal) return;
 
     // Apply saved values on load
-    const savedFont  = getSavedFont();
+    const savedFont = getSavedFont();
     const savedTheme = _PREFS.get('theme');
-    const savedLang  = _PREFS.get('lang');
+    const savedLang = _PREFS.get('lang');
 
     applyFont(savedFont);
     applyTheme(savedTheme);
     _applyLang(savedLang);
 
-    const fontSel  = document.getElementById('font-select');
+    const fontSel = document.getElementById('font-select');
     const themeSel = document.getElementById('pref-theme-select');
-    const langSel  = document.getElementById('pref-lang-select');
+    const langSel = document.getElementById('pref-lang-select');
 
-    if (fontSel)  { fontSel.value  = savedFont;  fontSel.style.fontFamily = savedFont; }
+    if (fontSel) { fontSel.value = savedFont; fontSel.style.fontFamily = savedFont; }
     if (themeSel) { themeSel.value = savedTheme; }
-    if (langSel)  { langSel.value  = savedLang;  }
+    if (langSel) { langSel.value = savedLang; }
 
     _syncCheck('pref-ext-files', _PREFS.get('extFiles'));
     _syncCheck('pref-ext-funcs', _PREFS.get('extFuncs'));
@@ -464,7 +653,7 @@ function initPreferences() {
     // Open/close
     prefBtn.addEventListener('click', () => { prefModal.style.display = 'flex'; });
     const close = () => { prefModal.style.display = 'none'; };
-    document.getElementById('pref-close-x') ?.addEventListener('click', close);
+    document.getElementById('pref-close-x')?.addEventListener('click', close);
     document.getElementById('pref-close-btn')?.addEventListener('click', close);
     prefModal.addEventListener('click', e => { if (e.target === prefModal) close(); });
 
@@ -496,7 +685,7 @@ function initPreferences() {
     });
 }
 
-function _syncCheck(id, val) { const el=document.getElementById(id); if(el) el.checked=!!val; }
+function _syncCheck(id, val) { const el = document.getElementById(id); if (el) el.checked = !!val; }
 function _bindCheck(id, key, fn) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -548,15 +737,15 @@ function setL1ToolbarVisible(v) {
 function updateDepMapExtToggle() {
     const btn = document.getElementById('l1-toggle-ext');
     if (!btn) return;
-    btn.textContent = depMapState.showExternalFiles ? 'External Files: On' : 'External Files: Off';
+    btn.textContent = depMapState.showExternalFiles ? T('extFilesOn') : T('extFilesOff');
     btn.classList.toggle('active', depMapState.showExternalFiles);
 }
 
 function updateL1Toolbar(modId, fileCount) {
     const labelEl = document.getElementById('l1-mod-label');
-    if (labelEl) { labelEl.textContent = modId || 'No module'; labelEl.title = modId || ''; }
+    if (labelEl) { labelEl.textContent = modId || T('noModule'); labelEl.title = modId || ''; }
     const statsEl = document.getElementById('l1-stats');
-    if (statsEl) statsEl.textContent = `${fileCount} files`;
+    if (statsEl) { statsEl.dataset.count = String(fileCount || 0); statsEl.textContent = T('countFiles', { count: fileCount || 0 }); }
 }
 
 function pushL1History(modId, subDir) {
@@ -934,7 +1123,7 @@ function showNodeModal(node) {
         outEdges.forEach(edge => {
             const lbl = edge.data('el') || '';
             const col = edge.data('ec') || '#f59e0b';
-            const outTxt = OUT_MAP[lbl] || lbl || 'outgoing';
+            const outTxt = T(OUT_MAP[lbl]) || lbl || T('outgoing');
             const key = outTxt + '|' + col;
             if (!outGroups[key]) outGroups[key] = [];
             outGroups[key].push(edge.target());
@@ -944,7 +1133,7 @@ function showNodeModal(node) {
         inEdges.forEach(edge => {
             const lbl = edge.data('el') || '';
             const col = edge.data('ec') || '#10b981';
-            const inTxt = IN_MAP[lbl] || lbl || 'incoming';
+            const inTxt = T(IN_MAP[lbl]) || lbl || T('incoming');
             const key = inTxt + '|' + col;
             if (!inGroups[key]) inGroups[key] = [];
             inGroups[key].push(edge.source());
@@ -962,7 +1151,7 @@ function showNodeModal(node) {
                     let nSub = nd._f?.path || nd._f || '';
                     if (nTitle.includes('\n')) nTitle = nTitle.split('\n')[0];
                     if (nd._t === 'file') {
-                        nSub = nd._f?.ext ? nd._f.ext.toUpperCase() : 'FILE';
+                        nSub = nd._f?.ext ? nd._f.ext.toUpperCase() : T('file');
                     }
 
                     // ── Distance badge for external dep-map nodes ─────────────
@@ -972,7 +1161,7 @@ function showNodeModal(node) {
                         const tgtPath = (typeof nd._f === 'object' ? nd._f?.path : nd._f) || nd.mod || '';
                         const dist = _pathDist(state.activeModule || '', tgtPath);
                         const distColor = _distColor(dist);
-                        const distLabel = dist === 0 ? 'same' : `d=${dist}`;
+                        const distLabel = dist === 0 ? T('distSame') : `d=${dist}`;
                         distBadge = `<span style="
                             margin-left: auto;
                             font-size: 10px;
@@ -1003,6 +1192,9 @@ function showNodeModal(node) {
         renderList(inGroups);
         html += `</div>`;
     }
+
+    const modalTitle = document.getElementById('node-modal-title') || document.querySelector('.modal-header-title');
+    if (modalTitle) modalTitle.textContent = T('details');
 
     const content = document.getElementById('node-modal-content');
     content.innerHTML = html;
@@ -1065,7 +1257,7 @@ function updateExternalToggle() {
 function updateExternalFuncsToggle() {
     const btn = document.getElementById('l2-toggle-ext-funcs');
     if (!btn) return;
-    btn.textContent = l2State.showExternalFuncs ? 'External Functions: On' : 'External Functions: Off';
+    btn.textContent = l2State.showExternalFuncs ? T('extFuncsOn') : T('extFuncsOff');
     btn.classList.toggle('active', l2State.showExternalFuncs);
     setL2ToolbarVisible(state.level === 2);
 }
@@ -1113,17 +1305,12 @@ function updateL2Toolbar(fileRel, stats) {
     const label = document.getElementById('l2-file-label');
     const statsEl = document.getElementById('l2-stats');
     if (label) {
-        label.textContent = fileRel || 'No file';
+        label.textContent = fileRel || T('noFile');
         label.title = fileRel || '';
     }
     if (statsEl && stats) {
-        const parts = [];
-        parts.push(`${stats.funcs || 0} funcs`);
-        parts.push(`${stats.internalEdges || 0} edges`);
-        if (stats.extModules) parts.push(`${stats.extModules} modules`);
-        if (stats.extFuncs) parts.push(`${stats.extFuncs} external functions`);
-        if (stats.legacy) parts.push('legacy edges');
-        statsEl.textContent = parts.join(' | ');
+        statsEl.dataset.stats = JSON.stringify(stats);
+        statsEl.textContent = _formatL2Stats(stats);
     }
 }
 
@@ -1479,7 +1666,7 @@ function _hashId(s) {
 
 function renderL2Flowchart(fileRel, focusFuncName = null) {
     if (!fileRel) return;
-    showLoading(true, 'Rendering call flow...');
+    showLoading(true, T('renderingCallFlow'));
     clearFuncOverlay();
     setL2ToolbarVisible(true);
 
@@ -1522,12 +1709,12 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         const isEfi = !!f.is_efiapi;
         const bg = isEfi ? '#3d2e00' : isPublic ? '#0b2745' : '#1e2433';
         const bc = isEfi ? '#fbbf24' : isPublic ? '#60a5fa' : '#94a3b8';
-        const access = isPublic ? 'public' : 'static';
+        const access = isPublic ? T('public') : T('static');
         els.push({
             data: {
                 id: `fn-${i}`, label: f.label, bg, bc, w: 150, h: 38,
                 sh: 'roundrectangle', lvl: 2, _t: 'func', fn: f.label, _f: fileRel,
-                idx: i, access, tt: `Function: ${f.label}\n${access}${isEfi ? ' EFIAPI' : ''}`,
+                idx: i, access, tt: `${T('function')}: ${f.label}\n${access}${isEfi ? ' EFIAPI' : ''}`,
             }
         });
     });
@@ -1638,7 +1825,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                     id: modId, label: `${modName}\n${funcCount} funcs`,
                     bg: '#111827', bc: modColor, w: 170, h: 52, sh: 'roundrectangle', lvl: 2,
                     _t: 'ext_group', mod: modName,
-                    tt: `External Module: ${modName}\nFunctions: ${funcCount}\n\nClick to expand`,
+                    tt: `${T('externalModule')}: ${modName}\n${T('topbarFunctions')}: ${funcCount}\n\n${T('clickToExpand')}`,
                 }
             });
 
@@ -1670,7 +1857,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                         bg: '#0f172a', bc: modColor,
                         w: 160, h: 42, sh: 'roundrectangle', lvl: 2,
                         _t: 'ext_func', fn: funcName, _f: tf, mod: modName, _drilled: false,
-                        tt: `${funcName}\n${tf || '(file unknown)'}\nModule: ${modName}\n\nDouble-click to drill in →\nClick to collapse module`,
+                        tt: `${funcName}\n${tf || T('fileUnknown')}\n${T('modalModule')}: ${modName}\n\n${T('doubleClickDrill')}\n${T('clickToCollapse')}`,
                     }
                 });
                 info.callers.forEach(callerIdx => {
@@ -2281,13 +2468,13 @@ async function loadFileInPanel(filePath, funcName) {
         const url = `/file?job=${encodeURIComponent(codeState.jobId)}&path=${encodeURIComponent(filePath)}`;
         const res = await fetch(url);
         const data = await res.json();
-        if (data.error) { showCpError('Could not load file: ' + data.error); return; }
+        if (data.error) { showCpError(T('fileLoadError', { error: data.error })); return; }
         codeState.currentFile = filePath;
         renderFileContent(data, ext, fname);
         showCpLoading(false);
         if (funcName) setTimeout(() => jumpToFunc(funcName), 80);
     } catch (e) {
-        showCpError('Fetch error: ' + e.message);
+        showCpError(T('fetchError', { error: e.message }));
     }
 }
 
@@ -2502,8 +2689,8 @@ function renderPDF(data) {
           style="flex:1;width:100%;min-height:400px;border-radius:4px;border:1px solid var(--border);">
     <div style="padding:20px;color:var(--muted);text-align:center">
       <div style="font-size:32px;margin-bottom:12px">📄</div>
-      <div>Browser cannot display PDF inline.</div>
-      <div style="margin-top:8px"><a href="${url}" download style="color:var(--accent)">Download PDF</a></div>
+      <div>${T('browserCannotDisplayPdf')}</div>
+      <div style="margin-top:8px"><a href="${url}" download style="color:var(--accent)">${T('downloadPdf')}</a></div>
     </div>
   </object>
 </div>`;
@@ -2654,13 +2841,13 @@ function showFuncBar(fDef) {
     const badge = document.getElementById('cp-func-badge');
     if (fDef.is_efiapi) {
         badge.className = 'cp-func-badge cp-func-efiapi';
-        badge.textContent = 'EFIAPI';
+        badge.textContent = T('functionBadgeEFIAPI');
     } else if (fDef.is_public) {
         badge.className = 'cp-func-badge cp-func-public';
-        badge.textContent = 'PUBLIC';
+        badge.textContent = T('functionBadgePublic');
     } else {
         badge.className = 'cp-func-badge cp-func-private';
-        badge.textContent = 'STATIC';
+        badge.textContent = T('functionBadgeStatic');
     }
 }
 
@@ -2932,10 +3119,10 @@ function buildFtFilter(modId = null, subDir = null) {
 
     wrap.innerHTML =
         `<div class="ft-filter-title" id="ft-filter-title" style="cursor:pointer; display:flex; align-items:center; gap:6px;">
-             <span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">File Types</span>
+             <span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">${T('fileTypes')}</span>
              <span class="ft-actions">
-               <button class="ft-action" data-ft-action="all" data-tip="Select all">All</button>
-               <button class="ft-action" data-ft-action="none" data-tip="Select none">None</button>
+               <button class="ft-action" data-ft-action="all" data-tip="${T('selectAll')}">${T('selectAll')}</button>
+               <button class="ft-action" data-ft-action="none" data-tip="${T('selectNone')}">${T('selectNone')}</button>
              </span>
          </div>` +
         `<div id="ft-filter-body" style="display:${bodyDisplay}; flex-direction:column;">` +
@@ -3133,7 +3320,8 @@ function buildSidebar() {
     const sidebarTitle = document.getElementById('sidebar-title');
     if (sidebarTitle) {
         const togglerStyle = fsCollapsed ? 'transform: rotate(-90deg);' : '';
-        sidebarTitle.innerHTML = `<span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">File System</span>`;
+        const titleKey = (state.level === 0) ? 'sidebarModules' : 'sidebarFileSystem';
+        sidebarTitle.innerHTML = `<span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">${T(titleKey)}</span>`;
         sidebarTitle.style.cursor = 'pointer';
         sidebarTitle.style.display = 'flex';
         sidebarTitle.style.justifyContent = 'flex-start';
@@ -3305,7 +3493,7 @@ function filterGraphToSubPath(modId, subPath) {
 
 // ─── L0: Module View ──────────────────────────────────────────────────────────
 function loadLevel0() {
-    showLoading(true, 'Rendering modules...');
+    showLoading(true, T('renderingModules'));
     hideFuncView();
     state.level = 0; state.activeModule = null; state.activeFile = null; state.activeSubDir = null;
     buildFtFilter(null, null);
@@ -3390,7 +3578,7 @@ function drillToModule(modId, opts) {
     // opts: { focusFile?: string, closeExt?: bool }
     if (state.level === 0) state.history.push({ level: 0 });
     state.level = 1; state.activeModule = modId; state.activeSubDir = null;
-    showLoading(true, `Loading ${modId}...`);
+    showLoading(true, T('loadingModule', { module: modId }));
     hideFuncView(); setSidebarActive(modId);
     // Clear sub-dir active highlight
     document.querySelectorAll('.subdir-row').forEach(el => el.classList.remove('active'));
@@ -3883,13 +4071,13 @@ async function _syncCodePanel(fileRel, funcName, targetCallText = null) {
         const url = `/file?job=${encodeURIComponent(codeState.jobId)}&path=${encodeURIComponent(fileRel)}`;
         const res = await fetch(url);
         const data = await res.json();
-        if (data.error) { showCpError('Could not load file: ' + data.error); return; }
+        if (data.error) { showCpError(T('fileLoadError', { error: data.error })); return; }
         codeState.currentFile = fileRel;
         renderFileContent(data, ext, fname);
         showCpLoading(false);
         if (funcName) requestAnimationFrame(() => jumpToFunc(funcName, targetCallText));
     } catch (e) {
-        showCpError('Fetch error: ' + e.message);
+        showCpError(T('fetchError', { error: e.message }));
     }
 }
 
@@ -4174,7 +4362,7 @@ function updateBreadcrumb() {
     }
 
     // Level 0: always show Modules
-    addSeg('Modules', () => { state.history = []; loadLevel0(); }, state.level === 0, 'Modules');
+    addSeg(T('sidebarModules'), () => { state.history = []; loadLevel0(); }, state.level === 0, 'Modules');
 
     if (state.level >= 1 && state.activeModule) {
         const isModActive = state.level === 1 && !state.activeSubDir;
@@ -4872,10 +5060,10 @@ function _srRenderActionBar() {
 <div class="sr-ab-top">
   <span class="sr-ab-info">
     <span class="sr-ab-count">${_srState._contentTotal.toLocaleString()}</span>
-    <span class="sr-ab-label">results</span>
-    <span class="sr-ab-label">in</span>
+    <span class="sr-ab-label">${T('searchResults')}</span>
+    <span class="sr-ab-label">${T('searchIn')}</span>
     <span class="sr-ab-count">${totalShown.toLocaleString()}${filtered ? `<span class="sr-ab-filtered">/${totalAll}</span>` : ''}</span>
-    <span class="sr-ab-label">files</span>
+    <span class="sr-ab-label">${T('searchFilesWord')}</span>
     ${loading ? '<span class="sr-ab-scanning">scanning…</span>' : ''}
   </span>
   <span class="sr-ab-spacer"></span>
@@ -4888,14 +5076,14 @@ function _srRenderActionBar() {
   <button class="sr-ab-btn${isTree ? ' active' : ''}" id="sr-view-tree" data-tip="View as Tree">⬡</button>
 </div>
 <div class="sr-ab-filters">
-  <div class="sr-ab-filter-input-wrap" data-tip="Files to include (e.g. *.c, *.h)">
+  <div class="sr-ab-filter-input-wrap" data-tip="${T('searchIncludeTip')}">
     <span class="sr-ab-filter-icon">⊕</span>
-    <input class="sr-ab-filter-input" id="sr-ab-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="files to include  *.c, *.h" spellcheck="false" autocomplete="off">
+    <input class="sr-ab-filter-input" id="sr-ab-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="${T('searchIncludeLong')}" spellcheck="false" autocomplete="off">
     ${_srState.include ? `<button class="sr-ab-filter-clear" data-target="inc">✕</button>` : ''}
   </div>
-  <div class="sr-ab-filter-input-wrap" data-tip="Files to exclude (e.g. Build/*, *.obj)">
+  <div class="sr-ab-filter-input-wrap" data-tip="${T('searchExcludeTip')}">
     <span class="sr-ab-filter-icon sr-ab-filter-exc">⊖</span>
-    <input class="sr-ab-filter-input" id="sr-ab-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="files to exclude  Build/*, *.obj" spellcheck="false" autocomplete="off">
+    <input class="sr-ab-filter-input" id="sr-ab-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="${T('searchExcludeLong')}" spellcheck="false" autocomplete="off">
     ${_srState.exclude ? `<button class="sr-ab-filter-clear" data-target="exc">✕</button>` : ''}
   </div>
 </div>`;
@@ -4951,7 +5139,7 @@ function _srRenderActionBar() {
         const isFileTree = _srState.fileViewMode === 'tree';
         bar.innerHTML = `
 <div class="sr-ab-top">
-  <span class="sr-ab-info"><span class="sr-ab-count">${n.toLocaleString()}</span>&thinsp;files</span>
+  <span class="sr-ab-info"><span class="sr-ab-count">${n.toLocaleString()}</span>&thinsp;${T('searchFilesWord')}</span>
   <span class="sr-ab-spacer"></span>
   ${isFileTree ? `<button class="sr-ab-btn" id="sr-fi-collapse-all" data-tip="Collapse All">⊟</button>
   <button class="sr-ab-btn" id="sr-fi-expand-all" data-tip="Expand All">⊞</button>
@@ -4959,14 +5147,14 @@ function _srRenderActionBar() {
   <button class="sr-ab-btn${!isFileTree ? ' active' : ''}" id="sr-fi-view-list" data-tip="View as List">≡</button>
   <button class="sr-ab-btn${isFileTree ? ' active' : ''}" id="sr-fi-view-tree" data-tip="View as Tree">⬡</button>
   <div class="sr-ab-sep"></div>
-  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="Files to include">
+  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="${T('searchIncludeLabel')}">
     <span class="sr-ab-filter-icon">⊕</span>
-    <input class="sr-ab-filter-input" id="sr-ab-fi-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="*.c, *.h" spellcheck="false" autocomplete="off">
+    <input class="sr-ab-filter-input" id="sr-ab-fi-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="${T('searchIncludeShort')}" spellcheck="false" autocomplete="off">
     ${_srState.include ? `<button class="sr-ab-filter-clear" data-target="inc">✕</button>` : ''}
   </div>
-  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="Files to exclude">
+  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="${T('searchExcludeLabel')}">
     <span class="sr-ab-filter-icon sr-ab-filter-exc">⊖</span>
-    <input class="sr-ab-filter-input" id="sr-ab-fi-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="Build/*" spellcheck="false" autocomplete="off">
+    <input class="sr-ab-filter-input" id="sr-ab-fi-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="${T('searchExcludeShort')}" spellcheck="false" autocomplete="off">
     ${_srState.exclude ? `<button class="sr-ab-filter-clear" data-target="exc">✕</button>` : ''}
   </div>
 </div>`;
@@ -5068,7 +5256,7 @@ function _srRenderResults() {
         const results = _srState.results;
         if (!results.length) {
             resultsEl.innerHTML = q
-                ? `<div class="sr-empty">No files matching <strong style="color:var(--text)">"${escapeHtml(q)}"</strong></div>`
+                ? `<div class="sr-empty">${T('searchNoFilesMatching', { query: escapeHtml(q) })}</div>`
                 : '';
             return;
         }
@@ -6139,7 +6327,7 @@ function refreshLegend() {
         leg.className = 'legend-collapsed';
         leg.innerHTML = `
 <div id="legend-title" class="legend-title" onclick="this.parentElement.classList.toggle('legend-collapsed')">
-  <span>⬡</span> Legend <span class="legend-toggle">▾</span>
+  <span>⬡</span> ${T('sidebarLegend')} <span class="legend-toggle">▾</span>
 </div>
 <div class="legend-body" id="legend-body"></div>`;
         wrap.appendChild(leg);
@@ -6152,15 +6340,15 @@ function refreshLegend() {
     // 4. Render
     let html = '';
     if (activeEdges.length) {
-        html += `<div class="legend-section-label">Edge Types</div>`;
+        html += `<div class="legend-section-label">${T('edgeTypes')}</div>`;
         html += activeEdges.map(e => `
   <div class="legend-row">
     ${_edgeLine(e.color, e.style)}
-    <span class="legend-label" style="color:${e.color}">${e.label}</span>
+    <span class="legend-label" style="color:${e.color}">${T(e.type) || e.label}</span>
   </div>`).join('');
     }
     if (activeNodes.length) {
-        html += `<div class="legend-section-label" style="margin-top:8px">Node Shapes</div>`;
+        html += `<div class="legend-section-label" style="margin-top:8px">${T('nodeShapes')}</div>`;
         html += activeNodes.map(n => `
   <div class="legend-row">
     <span class="legend-shape" style="color:${n.color}">${n.shape}</span>
@@ -6210,54 +6398,54 @@ function _buildDashboardDOM() {
     <span class="dash-logo-text">VIZCODE</span>
     <span class="dash-logo-sep">|</span>
     <span class="dash-logo-sub">📊 Analytics Dashboard</span>
-    <button id="dashboard-close" data-tip="Close Dashboard (Esc)">✕</button>
+    <button id="dashboard-close" data-tip="${T('dashClose')}">✕</button>
   </div>
   <div id="dashboard-scroll">
 
     <!-- ── Stat Strip ── -->
     <div class="dash-stat-strip" id="dash-stat-strip"></div>
 
-    <!-- ── Row 1: File Types + Files per Module ── -->
-    <div class="dash-section-label">Codebase Composition</div>
+    <!-- ── Row 1: File Types + ${T('dashFilesPerModule')} ── -->
+    <div class="dash-section-label">${T('dashCodebaseComposition')}</div>
     <div class="dash-grid dash-grid-2" style="margin-bottom:16px">
       <div class="dash-card">
-        <div class="dash-card-title"><span class="dash-card-title-dot"></span>File Type Distribution</div>
+        <div class="dash-card-title"><span class="dash-card-title-dot"></span>${T('dashFileTypeDistribution')}</div>
         <div class="dash-chart-wrap" style="min-height:240px"><canvas id="chart-file-types"></canvas></div>
       </div>
       <div class="dash-card">
-        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#ffd700"></span>Files per Module</div>
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#ffd700"></span>${T('dashFilesPerModule')}</div>
         <div class="dash-chart-wrap" style="min-height:240px"><canvas id="chart-files-per-mod"></canvas></div>
       </div>
     </div>
 
     <!-- ── Row 2: Functions + Edge Types ── -->
-    <div class="dash-section-label">Structure & Connectivity</div>
+    <div class="dash-section-label">${T('dashStructureConnectivity')}</div>
     <div class="dash-grid dash-grid-2" style="margin-bottom:16px">
       <div class="dash-card">
-        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#a78bfa"></span>Functions per Module</div>
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#a78bfa"></span>${T('dashFunctionsPerModule')}</div>
         <div class="dash-chart-wrap" style="min-height:220px"><canvas id="chart-funcs-per-mod"></canvas></div>
       </div>
       <div class="dash-card">
-        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#fb923c"></span>Dependency Edge Types</div>
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#fb923c"></span>${T('dashDependencyEdgeTypes')}</div>
         <div class="dash-chart-wrap" style="min-height:220px"><canvas id="chart-edge-types"></canvas></div>
       </div>
     </div>
 
     <!-- ── Row 3: Top Lists ── -->
-    <div class="dash-section-label">Top Rankings</div>
+    <div class="dash-section-label">${T('dashTopRankings')}</div>
     <div class="dash-grid dash-grid-2" style="margin-bottom:16px">
       <div class="dash-card">
-        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#34d399"></span>Largest Files by Size</div>
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#34d399"></span>${T('dashLargestFiles')}</div>
         <div class="dash-list" id="list-largest-files"></div>
       </div>
       <div class="dash-card">
-        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#f472b6"></span>Most Functions in a File</div>
+        <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#f472b6"></span>${T('dashMostFunctions')}</div>
         <div class="dash-list" id="list-most-funcs"></div>
       </div>
     </div>
 
     <!-- ── Row 4: Module Size Treemap ── -->
-    <div class="dash-section-label">Module Size Map</div>
+    <div class="dash-section-label">${T('dashModuleSizeMap')}</div>
     <div class="dash-card" style="margin-bottom:16px">
       <div class="dash-card-title"><span class="dash-card-title-dot" style="background:#60a5fa"></span>Module Footprint — proportional to total file size</div>
       <div class="dash-treemap" id="dash-treemap" style="min-height:120px"></div>
@@ -6332,19 +6520,19 @@ function _buildStatStrip() {
 
     const cards = [
         {
-            label: 'Total Files Analysed',
+            label: T('dashStatFiles'),
             value: _fmtNum(s.files),
-            sub: `+ ${s.other_files || 0} other`,
+            sub: T('dashStatFilesSub', { count: s.other_files || 0 }),
             accent: '#00d4ff',
         },
         {
-            label: 'Total Functions',
+            label: T('dashStatFunctions'),
             value: _fmtNum(s.functions),
-            sub: `${s.calls.toLocaleString()} call sites`,
+            sub: T('dashStatFunctionsSub', { count: s.calls.toLocaleString() }),
             accent: '#a78bfa',
         },
         {
-            label: 'Total Codebase Size',
+            label: T('dashStatSize'),
             value: _fmtBytes(totalSize),
             sub: `~${_fmtNum(estLOC)} lines estimated`,
             accent: '#34d399',
@@ -6352,7 +6540,7 @@ function _buildStatStrip() {
         {
             label: 'Dependency Edges',
             value: _fmtNum(edges.length),
-            sub: `across ${s.modules} modules`,
+            sub: T('dashStatSizeSub', { count: s.modules }),
             accent: '#fb923c',
         },
     ];
@@ -6384,7 +6572,7 @@ const DASH_PALETTE = [
     '#38bdf8', '#c084fc', '#4ade80', '#facc15', '#ff6b35',
 ];
 
-// ── Chart: File Type Distribution ─────────────────────────────────────────────
+// ── Chart: ${T('dashFileTypeDistribution')} ─────────────────────────────────────────────
 function _chartFileTypes() {
     const tc = DATA.stats.type_counts || {};
     const sorted = Object.entries(tc).sort((a, b) => b[1] - a[1]);
@@ -6413,7 +6601,7 @@ function _chartFileTypes() {
     });
 }
 
-// ── Chart: Files per Module ───────────────────────────────────────────────────
+// ── Chart: ${T('dashFilesPerModule')} ───────────────────────────────────────────────────
 function _chartFilesPerMod() {
     const mods = (DATA.modules || []).slice().sort((a, b) => b.file_count - a.file_count).slice(0, 18);
     const labels = mods.map(m => m.label.length > 18 ? m.label.slice(0, 16) + '…' : m.label);
@@ -6423,7 +6611,7 @@ function _chartFilesPerMod() {
     _mkChart('chart-files-per-mod', 'bar', {
         labels,
         datasets: [{
-            label: 'Files', data: vals,
+            label: T('chartFiles'), data: vals,
             backgroundColor: colors.map(c => c + '99'),
             borderColor: colors, borderWidth: 1.5, borderRadius: 3
         }],
@@ -6438,7 +6626,7 @@ function _chartFilesPerMod() {
     });
 }
 
-// ── Chart: Functions per Module ───────────────────────────────────────────────
+// ── Chart: ${T('dashFunctionsPerModule')} ───────────────────────────────────────────────
 function _chartFuncsPerMod() {
     const mods = (DATA.modules || []).slice().sort((a, b) => b.func_count - a.func_count).slice(0, 18);
     const labels = mods.map(m => m.label.length > 18 ? m.label.slice(0, 16) + '…' : m.label);
@@ -6448,7 +6636,7 @@ function _chartFuncsPerMod() {
     _mkChart('chart-funcs-per-mod', 'bar', {
         labels,
         datasets: [{
-            label: 'Functions', data: vals,
+            label: T('chartFunctions'), data: vals,
             backgroundColor: '#a78bfa55',
             borderColor: '#a78bfa', borderWidth: 1.5, borderRadius: 3
         }],
@@ -6509,7 +6697,7 @@ function _buildLargestFiles() {
   <span class="dash-list-name">${f.label}</span>
   <div class="dash-list-bar" style="width:${Math.round(f.size / max * 60)}px;background:#34d399"></div>
   <span class="dash-list-val" style="color:#34d399">${_fmtBytes(f.size)}</span>
-</div>`).join('') || '<div class="dash-empty">No data</div>';
+</div>`).join('') || `<div class="dash-empty">${T('dashNoData')}</div>`;
 }
 
 function _buildMostFuncFiles() {
@@ -6523,8 +6711,8 @@ function _buildMostFuncFiles() {
   <span class="dash-list-rank">${i + 1}</span>
   <span class="dash-list-name">${f.label}</span>
   <div class="dash-list-bar" style="width:${Math.round(f.func_count / max * 60)}px;background:#f472b6"></div>
-  <span class="dash-list-val" style="color:#f472b6">${f.func_count} fn</span>
-</div>`).join('') || '<div class="dash-empty">No function data</div>';
+  <span class="dash-list-val" style="color:#f472b6">${T('countFunctions', { count: f.func_count })}</span>
+</div>`).join('') || `<div class="dash-empty">${T('dashNoFunctionData')}</div>`;
 }
 
 // ── Module Treemap ─────────────────────────────────────────────────────────────
@@ -6910,19 +7098,23 @@ function _buildLayoutSwitcherHTML() {
     return `
         <div class="ls-header">
             <span class="ls-header-icon">⊞</span>
-            <span class="ls-header-text">Layout</span>
+            <span class="ls-header-text">${T('layoutLabel')}</span>
             <span class="ls-chevron">▾</span>
         </div>
         <div class="ls-btns">
             ${visiblePresets.map(p => {
         // Check if required extension is loaded
         const unavailable = p.requires && !_isLayoutAvailable(p.requires);
+        const lKey = 'layout' + p.id.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
+        const lName = T(lKey) || p.label;
+        const lTip = T(lKey + '_Tip') || p.tip;
+
         return `
                 <button class="ls-btn${p.id === layoutSwitcherState.currentId ? ' active' : ''}${unavailable ? ' ls-unavailable' : ''}"
                         data-layout-id="${p.id}"
-                        data-tip="${p.tip}${unavailable ? '\n⚠ CDN 未載入' : ''}">
+                        data-tip="${lTip}${unavailable ? '\n⚠ CDN 未載入' : ''}">
                     <span class="ls-icon">${p.icon}</span>
-                    <span class="ls-name">${p.label}</span>
+                    <span class="ls-name">${lName}</span>
                     ${unavailable ? '<span class="ls-warn">!</span>' : ''}
                 </button>`;
     }).join('')}
@@ -6958,7 +7150,7 @@ function applyLayoutPreset(id) {
     });
     lay.run();
 
-    showToast(`Layout: ${preset.label}`, 'info');
+    showToast(T('layoutApplied', { label: _layoutLabel(preset) }), 'info');
 }
 
 // Called by loadLevel0 / renderFilesFlat to sync the active indicator

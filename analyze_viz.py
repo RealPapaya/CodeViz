@@ -1046,22 +1046,25 @@ HTML_SKELETON = """\
 
 <div id="topbar">
   <div class="logo">VIZCODE</div>
-  <button id="dashboard-btn" data-tip="Open Analytics Dashboard" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"><span style="font-size:14px">📊</span> Dashboard</button>
+  <button id="dashboard-btn" data-i18n-attr="data-tip" data-i18n="dashboardTip" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+    <span data-i18n="dashboard">Dashboard</span>
+  </button>
   <div id="project-type-badge" style="display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;"></div>
   <div class="stats-bar">
-    <div class="stat">Files <strong id="st-files">0</strong></div>
-    <div class="stat">Modules <strong id="st-mods">0</strong></div>
-    <div class="stat">Functions <strong id="st-funcs">0</strong></div>
+    <div class="stat"><span data-i18n="topbarFiles">Files</span> <strong id="st-files">0</strong></div>
+    <div class="stat"><span data-i18n="topbarModules">Modules</span> <strong id="st-mods">0</strong></div>
+    <div class="stat"><span data-i18n="topbarFunctions">Functions</span> <strong id="st-funcs">0</strong></div>
   </div>
   <div style="flex:1"></div>
     <div id="search-wrap">
       <div id="sr-modes">
-      <button class="sr-mode active" data-mode="files" id="srm-files" data-tip="Search file names and paths" aria-label="Files">
+      <button class="sr-mode active" data-mode="files" id="srm-files" data-i18n-attr="data-tip" data-i18n="searchModeFilesTip" aria-label="Files">
         <svg class="sr-mode-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
         </svg>
       </button>
-      <button class="sr-mode" data-mode="code" id="srm-code" data-tip="Search inside code content" aria-label="Code">
+      <button class="sr-mode" data-mode="code" id="srm-code" data-i18n-attr="data-tip" data-i18n="searchModeCodeTip" aria-label="Code">
         <svg class="sr-mode-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" d="M9.5 7.5L6 12l3.5 4.5 1.3-1L8.1 12l2.7-3.5-1.3-1zM14.5 7.5l-1.3 1L15.9 12l-2.7 3.5 1.3 1L18 12l-3.5-4.5z"/>
         </svg>
@@ -1069,78 +1072,78 @@ HTML_SKELETON = """\
       </div>
     <div id="sr-input-row">
       <span id="sr-icon">⌕</span>
-      <input id="search" type="text" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">
+      <input id="search" type="text" data-i18n-attr="placeholder" data-i18n="searchPlaceholderFiles" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">
       <div id="sr-toggles">
-        <button class="sr-toggle" id="srt-case"  data-tip="Match Case (Alt+C)">Aa</button>
-        <button class="sr-toggle" id="srt-word"  data-tip="Match Whole Word (Alt+W)">ab</button>
-        <button class="sr-toggle" id="srt-regex" data-tip="Use Regular Expression (Alt+R)">.*</button>
+        <button class="sr-toggle" id="srt-case" data-i18n-attr="data-tip" data-i18n="searchMatchCase">Aa</button>
+        <button class="sr-toggle" id="srt-word" data-i18n-attr="data-tip" data-i18n="searchMatchWord">ab</button>
+        <button class="sr-toggle" id="srt-regex" data-i18n-attr="data-tip" data-i18n="searchRegex">.*</button>
       </div>
       <span id="sr-count"></span>
     </div>
     <div id="sr-panel">
       <div id="sr-filters">
         <div class="sr-filter-row">
-          <span class="sr-filter-label">files to include</span>
-          <input class="sr-filter-input" id="sr-include" type="text" placeholder="e.g. *.c, *.h" autocomplete="off" spellcheck="false">
+          <span class="sr-filter-label" data-i18n="searchIncludeLabel">files to include</span>
+          <input class="sr-filter-input" id="sr-include" type="text" data-i18n-attr="placeholder" data-i18n="searchIncludePlaceholder" placeholder="e.g. *.c, *.h" autocomplete="off" spellcheck="false">
         </div>
         <div class="sr-filter-row">
-          <span class="sr-filter-label">files to exclude</span>
-          <input class="sr-filter-input" id="sr-exclude" type="text" placeholder="e.g. Build/*, *.obj" autocomplete="off" spellcheck="false">
+          <span class="sr-filter-label" data-i18n="searchExcludeLabel">files to exclude</span>
+          <input class="sr-filter-input" id="sr-exclude" type="text" data-i18n-attr="placeholder" data-i18n="searchExcludePlaceholder" placeholder="e.g. Build/*, *.obj" autocomplete="off" spellcheck="false">
         </div>
       </div>
       <div id="sr-results"></div>
     </div>
   </div>
-  <button id="pref-btn" data-tip="Settings" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
+  <button id="pref-btn" data-i18n-attr="data-tip" data-i18n="settingsButton" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
 </div>
 
 <div id="breadcrumb">
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
-  <button id="back-btn" onclick="goBack()">← Back</button>
-  <button id="graph-toggle-btn" data-tip="View Call Graph for Selected File">⬡ Call Graph</button>
-  <button id="code-toggle-btn" data-tip="Toggle Code Panel (C)"><span class="code-icon">&#60;&#92;&#62;</span> Code</button>
+  <button id="back-btn" onclick="goBack()" data-i18n="back">&#8592; Back</button>
+  <button id="graph-toggle-btn" data-i18n-attr="data-tip" data-i18n="graphBtnCallGraphTip">⬡ <span data-i18n="graphBtnCallGraph">Call Graph</span></button>
+  <button id="code-toggle-btn" data-i18n-attr="data-tip" data-i18n="codePanelToggleTip"><span class="code-icon">&#60;&#92;&#62;</span> <span data-i18n="codePanelToggle">Code</span></button>
 </div>
 
 <div id="layout">
   <div id="sidebar">
     <div id="ft-filter"></div>
-    <div id="sidebar-title" data-collapsible="true" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;"><span>File System</span><span class="legend-toggle" style="font-size: 13px; transition: transform 0.2s;">▾</span></div>
+    <div id="sidebar-title" data-collapsible="true" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;"><span data-i18n="fileSystem">File System</span><span class="legend-toggle" style="font-size: 13px; transition: transform 0.2s;">▾</span></div>
     <div id="module-list" style="display: block;"></div>
   </div>
   <div id="sidebar-resizer"></div>
   <div id="graph-wrap">
     <div id="l1-toolbar" class="l2-toolbar hidden">
       <div class="l2-left">
-        <div class="l2-title">Dependency Map</div>
-        <div class="l2-sub" id="l1-mod-label">No module</div>
+        <div class="l2-title" data-i18n="l1Title">Dependency Map</div>
+        <div class="l2-sub" id="l1-mod-label" data-i18n="noModule">No module</div>
       </div>
         <div class="l2-actions">
           <button id="l1-prev" class="l2-btn" disabled>&#x21A9;</button>
           <button id="l1-next" class="l2-btn" disabled>&#x21AA;</button>
-          <button id="l1-expand-all-ext" class="l2-btn" style="display:none">Expand All</button>
-          <button id="l1-collapse-all-ext" class="l2-btn" style="display:none">Collapse All</button>
-          <button id="l1-toggle-ext" class="l2-btn">External Files: On</button>
+          <button id="l1-expand-all-ext" class="l2-btn" style="display:none" data-i18n="searchExpandAll">Expand All</button>
+          <button id="l1-collapse-all-ext" class="l2-btn" style="display:none" data-i18n="searchCollapseAll">Collapse All</button>
+          <button id="l1-toggle-ext" class="l2-btn" data-i18n="extFilesOn">External Files: On</button>
           <span id="l1-stats" class="l2-stats"></span>
         </div>
     </div>
     <div id="l2-toolbar" class="l2-toolbar hidden">
       <div class="l2-left">
-        <div class="l2-title">Call Flow</div>
-        <div class="l2-sub" id="l2-file-label">No file</div>
+        <div class="l2-title" data-i18n="l2Title">Call Flow</div>
+        <div class="l2-sub" id="l2-file-label" data-i18n="noFile">No file</div>
       </div>
         <div class="l2-actions">
           <button id="l2-prev" class="l2-btn">&#x21A9;</button>
           <button id="l2-next" class="l2-btn">&#x21AA;</button>
-          <button id="l2-expand-all" class="l2-btn">Expand All</button>
-          <button id="l2-collapse-all" class="l2-btn">Collapse All</button>
-          <button id="l2-toggle-ext-funcs" class="l2-btn">External Functions: Off</button>
+          <button id="l2-expand-all" class="l2-btn" data-i18n="searchExpandAll">Expand All</button>
+          <button id="l2-collapse-all" class="l2-btn" data-i18n="searchCollapseAll">Collapse All</button>
+          <button id="l2-toggle-ext-funcs" class="l2-btn" data-i18n="extFuncsOff">External Functions: Off</button>
           <span id="l2-stats" class="l2-stats"></span>
         </div>
     </div>
-    <button id="l2-toggle-ext-lines" class="l2-btn" style="position: absolute; bottom: 16px; left: 16px; z-index: 50; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 1px solid var(--border); background: var(--panel2);">External Lines: On</button>
+    <button id="l2-toggle-ext-lines" class="l2-btn" style="position: absolute; bottom: 16px; left: 16px; z-index: 50; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 1px solid var(--border); background: var(--panel2);" data-i18n="extLinesOn">External Lines: On</button>
     <div id="cy"></div>
     <div id="func-view"></div>
-    <div id="loading"><div class="spinner"></div><span id="loading-msg">Loading...</span><button id="loading-cancel-btn" onclick="cancelRender()">✕ Cancel</button></div>
+    <div id="loading"><div class="spinner"></div><span id="loading-msg" data-i18n="loading">Loading...</span><button id="loading-cancel-btn" onclick="cancelRender()" data-i18n="cancelRender">✕ Cancel</button></div>
   </div>
   <!-- Resizer handle -->
   <div id="resizer" style="display:none"></div>
@@ -1149,27 +1152,27 @@ HTML_SKELETON = """\
     <div id="cp-header">
       <div id="cp-file-bar">
         <span id="cp-ext-badge">.C</span>
-        <span id="cp-filename">No file selected</span>
-        <button id="cp-close" data-tip="Close">✕</button>
+        <span id="cp-filename" data-i18n="noFileSelected">No file selected</span>
+        <button id="cp-close" data-i18n-attr="data-tip" data-i18n="close">✕</button>
       </div>
       <div id="cp-func-bar">
         <span id="cp-func-name"></span>
         <span id="cp-func-badge" class="cp-func-badge cp-func-public">PUBLIC</span>
         <div id="cp-func-nav">
-          <button class="cp-nav-btn" id="cp-prev-func" data-tip="Prev function (←)">‹</button>
-          <button class="cp-nav-btn" id="cp-next-func" data-tip="Next function (→)">›</button>
+          <button class="cp-nav-btn" id="cp-prev-func" data-i18n-attr="data-tip" data-i18n="prevFunc">‹</button>
+          <button class="cp-nav-btn" id="cp-next-func" data-i18n-attr="data-tip" data-i18n="nextFunc">›</button>
         </div>
       </div>
     </div>
     <div id="cp-body">
       <div id="cp-loading">
         <div class="spinner"></div>
-        <span style="font-size:12px;color:var(--muted)">Loading source...</span>
+        <span style="font-size:12px;color:var(--muted)" data-i18n="loadingSource">Loading source...</span>
       </div>
       <div id="cp-empty" style="display:none">
         <div class="cp-empty-icon">📁</div>
-        <p>Click a file node to view source</p>
-        <small>Single-click → preview · Double-click → drill in</small>
+        <p data-i18n="clickFileToView">Click a file node to view source</p>
+        <small data-i18n="clickFileHint">Single-click → preview · Double-click → drill in</small>
       </div>
       <div id="cp-code-wrap" style="display:none"></div>
     </div>
@@ -1182,12 +1185,12 @@ HTML_SKELETON = """\
 </div>
 
 <div id="ctx-menu">
-  <div class="ctx-item" id="ctx-copy">📋 Copy path</div>
-  <div class="ctx-item" id="ctx-open-code">📄 View source</div>
-  <div class="ctx-item" id="ctx-vscode">↗ Open in VS Code</div>
+  <div class="ctx-item" id="ctx-copy" data-i18n="copyPath">📋 Copy path</div>
+  <div class="ctx-item" id="ctx-open-code" data-i18n="viewSource">📄 View source</div>
+  <div class="ctx-item" id="ctx-vscode" data-i18n="openInVSCode">↗ Open in VS Code</div>
   <div class="ctx-sep"></div>
-  <div class="ctx-item" id="ctx-module-only">🔍 Only this module</div>
-  <div class="ctx-item" id="ctx-pin">📌 Pin node</div>
+  <div class="ctx-item" id="ctx-module-only" data-i18n="onlyThisModule">🔍 Only this module</div>
+  <div class="ctx-item" id="ctx-pin" data-i18n="pinNode">📌 Pin node</div>
 </div>
 <div id="tooltip"></div>
 
@@ -1291,17 +1294,18 @@ HTML_TEMPLATE = HTML_SKELETON
 
 # ─── build_html ───────────────────────────────────────────────────────────────
 def build_html(data: dict, job_id: str = None) -> str:
-    """Read static/viz.{css,js} and embed them inline into the HTML skeleton."""
-    base  = Path(__file__).parent / 'static'
-    css_p = base / 'viz.css'
-    js_p  = base / 'viz.js'
+    """Read shared static assets and embed them inline into the HTML skeleton."""
+    base = Path(__file__).parent / 'static'
+    css_assets = [base / 'viz.css', base / 'themes.css']
+    js_assets = [base / 'i18n.js', base / 'viz.js']
+    missing = [p for p in css_assets + js_assets if not p.exists()]
 
-    if not css_p.exists() or not js_p.exists():
-        raise FileNotFoundError(
-            f'Missing static files. Expected:\n  {css_p}\n  {js_p}')
+    if missing:
+        missing_str = '\n  '.join(str(p) for p in missing)
+        raise FileNotFoundError(f'Missing static files. Expected:\n  {missing_str}')
 
-    css = css_p.read_text(encoding='utf-8')
-    js  = js_p.read_text(encoding='utf-8')
+    css = '\n\n'.join(p.read_text(encoding='utf-8') for p in css_assets)
+    js = '\n\n'.join(p.read_text(encoding='utf-8') for p in js_assets)
 
     def _json_default(o):
         if isinstance(o, (set, frozenset)): return sorted(o)

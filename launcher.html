@@ -1,10 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>VIZCODE — Launch</title>
+    <title>VIZCODE - Launch</title>
+    <link rel="stylesheet" href="/static/themes.css">
+    <script src="/static/i18n.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -534,22 +536,23 @@
 
     <div class="hero">
         <div class="logo-big">VIZ<em>CODE</em></div>
-        <div class="tagline">Codebase Visualizer &mdash; module &middot; file &middot; function drill-down</div>
-        <div class="badge">⚡ Cytoscape Canvas &middot; Free &middot; Low RAM</div>
+        <div class="tagline" data-i18n="launcherTagline">Codebase Visualizer &mdash; module &middot; file &middot;
+            function drill-down</div>
+        <div class="badge" data-i18n="launcherBadge">⚡ Cytoscape Canvas &middot; Free &middot; Low RAM</div>
     </div>
 
     <div class="card">
 
-        <div class="input-label">Codebase Path</div>
+        <div class="input-label" data-i18n="launcherCodebasePath">Codebase Path</div>
         <div class="path-wrap">
             <input id="path-input" type="text" placeholder="D:\Code\ADL\B1403CTA_SMR\" value="" autocomplete="off"
                 spellcheck="false">
-            <button class="btn btn-primary" id="analyze-btn" onclick="startAnalysis()">
+            <button class="btn btn-primary" id="analyze-btn" onclick="startAnalysis()" data-i18n="launcherAnalyze">
                 ▶ Analyze
             </button>
         </div>
         <div class="recents" id="recents-wrap" style="display:none">
-            <div class="recents-label">Recent paths</div>
+            <div class="recents-label" data-i18n="launcherRecentPaths">Recent paths</div>
             <div class="recent-list" id="recent-list"></div>
         </div>
 
@@ -564,7 +567,7 @@
                 style="display:none; margin-bottom: 16px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; border: 1px solid var(--accent); padding: 10px 14px; border-radius: 8px; text-align: center; color: var(--text);">
             </div>
             <div class="prog-header">
-                <div class="prog-label" id="prog-label">Analyzing...</div>
+                <div class="prog-label" id="prog-label" data-i18n="launcherProgressLabel">Analyzing...</div>
                 <div class="prog-right">
                     <span class="prog-elapsed" id="prog-elapsed"></span>
                     <span class="prog-eta" id="prog-eta"></span>
@@ -581,21 +584,21 @@
     <div id="stats-row">
         <div class="stat-box" id="sb-files">
             <div class="val" id="s-files">—</div>
-            <div class="lbl">Files Analysed</div>
+            <div class="lbl" data-i18n="launcherFilesAnalysed">Files Analysed</div>
             <div class="sub" id="s-files-sub"></div>
         </div>
         <div class="stat-box" id="sb-mods">
             <div class="val" id="s-mods">—</div>
-            <div class="lbl">Modules</div>
+            <div class="lbl" data-i18n="launcherModules">Modules</div>
             <div class="sub" id="s-mods-sub"></div>
         </div>
         <div class="stat-box">
             <div class="val" id="s-funcs">—</div>
-            <div class="lbl">Functions</div>
+            <div class="lbl" data-i18n="launcherFunctions">Functions</div>
         </div>
         <div class="stat-box">
             <div class="val" id="s-calls">—</div>
-            <div class="lbl">Calls</div>
+            <div class="lbl" data-i18n="launcherCalls">Calls</div>
         </div>
     </div>
 
@@ -609,18 +612,18 @@
     <div id="pref-modal"
         style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999;align-items:center;justify-content:center;backdrop-filter:blur(2px);">
         <div
-            style="background:var(--panel);border:1px solid var(--border);border-radius:8px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,0.7);display:flex;flex-direction:column;overflow:hidden;animation:flip-in-x 0.2s ease-out;">
+            style="background:var(--panel);border:1px solid var(--border);border-radius:8px;width:360px;box-shadow:0 10px 30px rgba(0,0,0,0.7);display:flex;flex-direction:column;overflow:hidden;animation:flip-in-x 0.2s ease-out;">
             <div
                 style="background:var(--panel2);padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between;align-items:center;">
-                <span>Preferences</span>
+                <span data-i18n="settingsTitle">Settings</span>
                 <button id="pref-close-x"
-                    style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;">✕</button>
+                    style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;">?</button>
             </div>
-            <div style="padding:20px 16px;display:flex;flex-direction:column;gap:12px;">
+            <div style="padding:20px 16px;display:flex;flex-direction:column;gap:14px;">
                 <div style="display:flex;flex-direction:column;gap:6px;">
                     <label for="font-select"
-                        style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Code
-                        Editor Font</label>
+                        style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;"
+                        data-i18n="fontLabel">Code Editor Font</label>
                     <select id="font-select"
                         style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px;outline:none;cursor:pointer;font-family:inherit;">
                         <option value="'JetBrains Mono', monospace"
@@ -635,10 +638,31 @@
                             style="font-family:'Space Mono', monospace;font-size:14px;">Space Mono</option>
                     </select>
                 </div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                    <label for="pref-theme-select"
+                        style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;"
+                        data-i18n="themeLabel">Theme</label>
+                    <select id="pref-theme-select"
+                        style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px;outline:none;cursor:pointer;font-family:inherit;">
+                        <option value="dark" data-i18n="themeOptDark">Dark (Default)</option>
+                        <option value="claude" data-i18n="themeOptClaude">Claude</option>
+                    </select>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                    <label for="pref-lang-select"
+                        style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;"
+                        data-i18n="langLabel">Interface Language</label>
+                    <select id="pref-lang-select"
+                        style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px;outline:none;cursor:pointer;font-family:inherit;">
+                        <option value="en">English</option>
+                        <option value="zh-tw">繁體中文</option>
+                    </select>
+                </div>
             </div>
             <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
                 <button id="pref-close-btn"
-                    style="background:var(--accent);color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;">Done</button>
+                    style="background:var(--accent);color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;"
+                    data-i18n="settingsDone">Done</button>
             </div>
         </div>
     </div>
@@ -661,6 +685,17 @@
         let fakeFilesTarget = 0;
         let fakeFilesTotal = 0;
         let fakeFilesTimer = null;
+
+        const LAUNCHER_PREFS = {
+            font: 'biosviz_code_font',
+            theme: 'biosviz_theme',
+            lang: 'biosviz_lang',
+            legacyFont: 'codeviz-font',
+        };
+
+        function lt(key, vars) {
+            return window._i18n ? window._i18n.t(key, vars) : key;
+        }
 
         // Step thresholds: [pct_start, label]
         const STEPS = [
@@ -718,7 +753,8 @@
         window.onload = function () {
             document.getElementById('path-input').focus();
             renderRecents();
-            initPreferences(); // Call the new initPreferences
+            initPreferences();
+            applyLauncherLang(getSavedLang());
         };
 
         function applyFont(font) {
@@ -727,20 +763,45 @@
             document.body.style.fontFamily = font + ', Inter, sans-serif';
         }
 
-        // Initialize preferences
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme || 'dark');
+        }
+
+        function applyLauncherLang(lang) {
+            const active = window._i18n ? window._i18n.init(lang) : 'en';
+            document.documentElement.lang = active;
+            if (window._i18n && window._i18n.apply) window._i18n.apply(document);
+            document.title = lt('launcherPageTitle');
+            const btn = document.getElementById('analyze-btn');
+            if (btn && !btn.disabled) {
+                btn.innerHTML = `&#9654; <span data-i18n="launcherAnalyze">${lt('launcherAnalyze')}</span>`;
+            }
+        }
+
         function initPreferences() {
             const fontSelect = document.getElementById('font-select');
+            const themeSelect = document.getElementById('pref-theme-select');
+            const langSelect = document.getElementById('pref-lang-select');
             const savedFont = getSavedFont();
+            const savedTheme = getSavedTheme();
+            const savedLang = getSavedLang();
+
             if (fontSelect) {
                 fontSelect.value = savedFont;
-                fontSelect.style.fontFamily = savedFont; // Apply font to the select itself
-                applyFont(savedFont); // Apply font to the document
+                fontSelect.style.fontFamily = savedFont;
+                applyFont(savedFont);
+            }
+            if (themeSelect) {
+                themeSelect.value = savedTheme;
+                applyTheme(savedTheme);
+            }
+            if (langSelect) {
+                langSelect.value = savedLang;
             }
 
-            // Replaced the old pref-btn logic with global functions above for the top-right button
             const prefCloseBtn = document.getElementById('pref-close-btn');
             const prefCloseX = document.getElementById('pref-close-x');
-            const prefModal = document.getElementById('pref-modal'); // Get modal for outside click
+            const prefModal = document.getElementById('pref-modal');
 
             if (prefCloseBtn) prefCloseBtn.addEventListener('click', closePrefModal);
             if (prefCloseX) prefCloseX.addEventListener('click', closePrefModal);
@@ -749,16 +810,29 @@
             if (fontSelect) {
                 fontSelect.addEventListener('change', (e) => {
                     const val = e.target.value;
-                    localStorage.setItem('codeviz-font', val);
+                    localStorage.setItem(LAUNCHER_PREFS.font, val);
+                    localStorage.setItem(LAUNCHER_PREFS.legacyFont, val);
                     applyFont(val);
                     fontSelect.style.fontFamily = val;
+                });
+            }
+            if (themeSelect) {
+                themeSelect.addEventListener('change', (e) => {
+                    localStorage.setItem(LAUNCHER_PREFS.theme, e.target.value);
+                    applyTheme(e.target.value);
+                });
+            }
+            if (langSelect) {
+                langSelect.addEventListener('change', (e) => {
+                    localStorage.setItem(LAUNCHER_PREFS.lang, e.target.value);
+                    applyLauncherLang(e.target.value);
                 });
             }
         }
         // ─── Analysis ─────────────────────────────────────────────────────────────────
         async function startAnalysis() {
             const path = document.getElementById('path-input').value.trim();
-            if (!path) { showMsg('error', 'Please enter a path'); return; }
+            if (!path) { showMsg('error', lt('launcherPleaseEnterPath')); return; }
 
             setAnalyzing(true);
             showMsg('', '');
@@ -766,7 +840,7 @@
             startTime = Date.now();
             pctHistory = [];
             lastPct = 0;
-            setProgress(0, 'Sending request...');
+            setProgress(0, lt('launcherProgressLabel'));
             startElapsedTimer();
 
             try {
@@ -784,7 +858,7 @@
                 pollProgress();
 
             } catch (e) {
-                showMsg('error', 'Cannot connect to server. Is server.py running?');
+                showMsg('error', lt('launcherCannotConnect'));
                 setAnalyzing(false);
             }
         }
@@ -832,7 +906,7 @@
                         badge.style.color = job.project_type.accent;
                         badge.style.borderColor = job.project_type.accent;
                         badge.style.background = job.project_type.accent + '1a';
-                        badge.innerHTML = `<span style="margin-right:8px">${job.project_type.emoji}</span> PROJECT DETECTED: <span style="color:#fff">${job.project_type.name}</span>`;
+                        badge.innerHTML = `<span style="margin-right:8px">${job.project_type.emoji}</span> ${lt('launcherProjectDetected')}: <span style="color:#fff">${job.project_type.name}</span>`;
                     }
                 }
 
@@ -843,7 +917,7 @@
                     return;
                 }
                 if (job.done) {
-                    setProgress(100, 'Done!');
+                    setProgress(100, lt('launcherDoneLabel'));
                     if (job.stats) showStats(job.stats);
                     showMsg('done', `${job.size_kb || '?'}KB HTML ready`, currentJob);
                     stopTimers(); setAnalyzing(false);
@@ -866,7 +940,15 @@
         }
 
         function getSavedFont() {
-            return localStorage.getItem('codeviz-font') || "'JetBrains Mono', monospace";
+            return localStorage.getItem(LAUNCHER_PREFS.font) || localStorage.getItem(LAUNCHER_PREFS.legacyFont) || "'JetBrains Mono', monospace";
+        }
+
+        function getSavedTheme() {
+            return localStorage.getItem(LAUNCHER_PREFS.theme) || 'dark';
+        }
+
+        function getSavedLang() {
+            return localStorage.getItem(LAUNCHER_PREFS.lang) || 'en';
         }
 
         // ─── UI Helpers ───────────────────────────────────────────────────────────────
@@ -897,7 +979,7 @@
             etaTimer = setInterval(() => {
                 if (!startTime) return;
                 const sec = Math.floor((Date.now() - startTime) / 1000);
-                document.getElementById('prog-elapsed').textContent = `${fmtSec(sec)} elapsed`;
+                document.getElementById('prog-elapsed').textContent = lt('launcherElapsed', { time: fmtSec(sec) });
             }, 1000);
         }
 
@@ -927,7 +1009,7 @@
                     if (dp > 0) {
                         const remaining = (100 - pct) / dp * dt / 1000;
                         document.getElementById('prog-eta').textContent =
-                            remaining < 3600 ? `ETA ~${fmtSec(Math.ceil(remaining))}` : '';
+                            remaining < 3600 ? lt('launcherEta', { time: fmtSec(Math.ceil(remaining)) }) : '';
                     }
                 }
             } else if (pct === 0) {
@@ -939,7 +1021,7 @@
             }
 
             if (pct > 0 && pct < 100) {
-                document.getElementById('prog-label').textContent = 'Analyzing...';
+                document.getElementById('prog-label').textContent = lt('launcherProgressLabel');
             }
 
             // Update CLI area
