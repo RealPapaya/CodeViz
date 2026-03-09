@@ -1048,10 +1048,10 @@ function showNodeModal(node) {
         const tgtPath = (typeof d._f === 'object' ? d._f?.path : d._f) || d.mod || '';
         const dist = _pathDist(srcPath, tgtPath);
         const distColor = _distColor(dist);
-        const distLabel = dist === 0 ? (state.level === 2 ? 'SAME FILE' : 'SAME MODULE') : `${dist} LAYER${dist !== 1 ? 'S' : ''} AWAY`;
+        const distLabel = dist === 0 ? (state.level === 2 ? T('distSame') : T('distSame')) : T('distAway', { count: dist });
 
         let displaySubtitle = subtitle;
-        const typeStr = (d._t === 'ext_group' || d._t === 'dep_ext_group') ? 'EXTERNAL MODULE' : 'EXTERNAL FILE';
+        const typeStr = (d._t === 'ext_group' || d._t === 'dep_ext_group') ? T('externalModule') : T('externalFile');
 
         // Clean up redundant (EXTERNAL FILE) strings from subtitle across L1/L2
         displaySubtitle = displaySubtitle
@@ -1061,7 +1061,7 @@ function showNodeModal(node) {
             .replace(/<br><br>$/, '')
             .trim();
 
-        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
+        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; line-height: 1.6; color: rgba(255,255,255,0.85);">`;
         if (displaySubtitle) html += displaySubtitle + '<br>';
         html += `<span style="
             display: inline-block;
@@ -1077,7 +1077,7 @@ function showNodeModal(node) {
         ">⬡ ${typeStr} · ${distLabel}</span>`;
         html += `</div>`;
     } else if (subtitle) {
-        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; text-transform: uppercase; line-height: 1.4; color: rgba(255,255,255,0.85);">${subtitle}</div>`;
+        html += `<div class="tip-body" style="font-size: 11px; margin-top: 8px; font-family: monospace; line-height: 1.4; color: rgba(255,255,255,0.85);">${subtitle}</div>`;
     }
 
     // Actions
@@ -1098,25 +1098,25 @@ function showNodeModal(node) {
 
     if (outEdges.length > 0 || inEdges.length > 0) {
         html += `<div class="modal-deps">`;
-        html += `<div style="font-weight:bold; margin: 20px 0 12px; padding-top:16px; border-top: 1px solid var(--border); font-size: 14px;">Dependencies:</div>`;
+        html += `<div style="font-weight:bold; margin: 20px 0 12px; padding-top:16px; border-top: 1px solid var(--border); font-size: 14px;">${T('dependencies')}:</div>`;
 
         const OUT_MAP = {
-            'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
-            'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
-            'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
-            'HII-Pkg': 'hii pkg', 'Depex': 'depex',
-            'Import': 'imports',
-            'ext': 'external calls', 'group': 'group',
-            '': state.level === 2 ? 'calls' : 'includes'
+            'Inc': T('relInclude'), 'owns': T('relOwns'), 'Src': T('relSources'), 'Pkg': T('relPackage'), 'Lib': T('relLibrary'),
+            'ELINK': T('relElink'), 'Comp': T('relComponent'), 'GUID': T('relGuidRef'),
+            'Strings': T('relStrings'), 'ASL': T('relAslInclude'), 'Callback': T('relCallback'),
+            'HII-Pkg': T('relHiiPkg'), 'Depex': T('relDepex'),
+            'Import': T('relImports'),
+            'ext': T('relExternalCalls'), 'group': T('relGroup'),
+            '': state.level === 2 ? T('relCalls') : T('relIncludes')
         };
         const IN_MAP = {
-            'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
-            'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
-            'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
-            'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
-            'Import': 'imported by',
-            'ext': 'external callers', 'group': 'group',
-            '': state.level === 2 ? 'called by' : 'included by'
+            'Inc': T('relIncludedBy'), 'owns': T('relOwnedBy'), 'Src': T('relSourceOf'), 'Pkg': T('relPackagedIn'), 'Lib': T('relUsedAsLibBy'),
+            'ELINK': T('relElinkParentOf'), 'Comp': T('relUsedAsCompBy'), 'GUID': T('relReferencedGuidBy'),
+            'Strings': T('relReferencedAsStringBy'), 'ASL': T('relIncludedByAsl'), 'Callback': T('relTriggeredBy'),
+            'HII-Pkg': T('relPackagedInHii'), 'Depex': T('relDependedBy'),
+            'Import': T('relImportedBy'),
+            'ext': T('relExternalCallers'), 'group': T('relGroup'),
+            '': state.level === 2 ? T('relCalledBy') : T('relIncludedBy')
         };
 
         const outGroups = {};
@@ -2575,13 +2575,13 @@ function fileNodeData(f, modColor) {
     // Build tooltip with BIOS metadata
     const bm = f.bios_meta || {};
     let ttLines = [`${f.path}`];
-    ttLines.push(`File Type: ${f.ext.toUpperCase() || 'FILE'}`);
-    ttLines.push(`File Size: ${fmtSize(f.size)}`);
-    if (f.func_count > 0) ttLines.push(`Funcs: ${f.func_count}`);
-    if (bm.MODULE_TYPE || bm.module_type) ttLines.push(`Mod Type: ${bm.MODULE_TYPE || bm.module_type}`);
-    if (bm.BASE_NAME || bm.base_name) ttLines.push(`Module: ${bm.BASE_NAME || bm.base_name}`);
-    if (bm.ENTRY_POINT || bm.entry_point) ttLines.push(`Entry: ${bm.ENTRY_POINT || bm.entry_point}`);
-    if (bm.FILE_GUID || bm.file_guid) ttLines.push(`GUID: ${bm.FILE_GUID || bm.file_guid}`);
+    ttLines.push(`${T('fileType')}: ${f.ext.toUpperCase() || 'FILE'}`);
+    ttLines.push(`${T('fileSize')}: ${fmtSize(f.size)}`);
+    if (f.func_count > 0) ttLines.push(`${T('funcsCount')}: ${f.func_count}`);
+    if (bm.MODULE_TYPE || bm.module_type) ttLines.push(`${T('modType')}: ${bm.MODULE_TYPE || bm.module_type}`);
+    if (bm.BASE_NAME || bm.base_name) ttLines.push(`${T('module')}: ${bm.BASE_NAME || bm.base_name}`);
+    if (bm.ENTRY_POINT || bm.entry_point) ttLines.push(`${T('entryPoint')}: ${bm.ENTRY_POINT || bm.entry_point}`);
+    if (bm.FILE_GUID || bm.file_guid) ttLines.push(`${T('fileGuid')}: ${bm.FILE_GUID || bm.file_guid}`);
 
     return {
         id: `f${f.id}`, label: f.label,
@@ -3514,7 +3514,7 @@ function loadLevel0() {
         const rootFuncCount = rootFiles.reduce((s, f) => s + (f.func_count || 0), 0);
         const rootColor = '#94a3b8';
         const totalCount = rootFiles.length + rootOther.length;
-        const ttExtra = rootOther.length ? `\nOther/binary: ${rootOther.length}` : '';
+        const ttExtra = rootOther.length ? `\n${T('otherBinary', { count: rootOther.length })}` : '';
         const rootMod = {
             id: '_root',
             label: rootName,
@@ -3537,7 +3537,7 @@ function loadLevel0() {
     DATA.modules.forEach(m => {
         const otherCount = m.other_count || 0;
         const totalLabel = `${m.id}\n${m.file_count} files`;
-        const ttExtra = otherCount ? `\nOther/binary: ${otherCount}` : '';
+        const ttExtra = otherCount ? `\n${T('otherBinary', { count: otherCount })}` : '';
         els.push({
             data: {
                 id: m.id, label: totalLabel,
@@ -6103,25 +6103,25 @@ function showTooltip(e) {
         // 2. 處理 dependencies 文字和顏色
         if (outCount > 0 || inCount > 0) {
             html += `<div style="margin-top:10px; border-top:1px solid #334155; padding-top:6px;">`;
-            html += `<div style="font-weight:bold; margin-bottom:4px">Dependencies:</div>`;
+            html += `<div style="font-weight:bold; margin-bottom:4px">${T('dependencies')}:</div>`;
 
             const OUT_MAP = {
-                'Inc': 'Include', 'owns': 'owns', 'Src': 'sources', 'Pkg': 'package', 'Lib': 'library',
-                'ELINK': 'elink', 'Comp': 'component', 'GUID': 'guid ref',
-                'Strings': 'strings', 'ASL': 'asl include', 'Callback': 'callback',
-                'HII-Pkg': 'hii pkg', 'Depex': 'depex',
-                'Import': 'imports',
-                'ext': 'external calls', 'group': 'group',
-                '': state.level === 2 ? 'calls' : 'includes'
+                'Inc': T('relInclude'), 'owns': T('relOwns'), 'Src': T('relSources'), 'Pkg': T('relPackage'), 'Lib': T('relLibrary'),
+                'ELINK': T('relElink'), 'Comp': T('relComponent'), 'GUID': T('relGuidRef'),
+                'Strings': T('relStrings'), 'ASL': T('relAslInclude'), 'Callback': T('relCallback'),
+                'HII-Pkg': T('relHiiPkg'), 'Depex': T('relDepex'),
+                'Import': T('relImports'),
+                'ext': T('relExternalCalls'), 'group': T('relGroup'),
+                '': state.level === 2 ? T('relCalls') : T('relIncludes')
             };
             const IN_MAP = {
-                'Inc': 'Included by', 'owns': 'owned by', 'Src': 'source of', 'Pkg': 'packaged in', 'Lib': 'used as lib by',
-                'ELINK': 'elink parent of', 'Comp': 'used as comp by', 'GUID': 'referenced guid by',
-                'Strings': 'referenced as string by', 'ASL': 'included by asl', 'Callback': 'triggered by',
-                'HII-Pkg': 'packaged in hii', 'Depex': 'depended by',
-                'Import': 'imported by',
-                'ext': 'external callers', 'group': 'group',
-                '': state.level === 2 ? 'called by' : 'included by'
+                'Inc': T('relIncludedBy'), 'owns': T('relOwnedBy'), 'Src': T('relSourceOf'), 'Pkg': T('relPackagedIn'), 'Lib': T('relUsedAsLibBy'),
+                'ELINK': T('relElinkParentOf'), 'Comp': T('relUsedAsCompBy'), 'GUID': T('relReferencedGuidBy'),
+                'Strings': T('relReferencedAsStringBy'), 'ASL': T('relIncludedByAsl'), 'Callback': T('relTriggeredBy'),
+                'HII-Pkg': T('relPackagedInHii'), 'Depex': T('relDependedBy'),
+                'Import': T('relImportedBy'),
+                'ext': T('relExternalCallers'), 'group': T('relGroup'),
+                '': state.level === 2 ? T('relCalledBy') : T('relIncludedBy')
             };
 
             const outGroups = {};

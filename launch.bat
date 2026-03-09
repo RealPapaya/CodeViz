@@ -12,19 +12,5 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Kill any existing process on port 7777
-for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":7777 "') do (
-    taskkill /F /PID %%a >nul 2>&1
-)
-
-:: Open browser after 2 seconds (in background)
-start /B cmd /C "timeout /t 2 /nobreak >nul && start chrome http://localhost:7777 2>nul"
-
-echo.
-echo  VIZCODE V4  -  http://localhost:7777
-echo  Supports: BIOS / Python / JavaScript / TypeScript / Go
-echo  Close this window to stop the server.
-echo.
-
-:: Run server (blocking - keeps window open)
-python server.py
+:: Launch interactive CLI
+python vizcode.py
