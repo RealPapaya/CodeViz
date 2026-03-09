@@ -1018,7 +1018,7 @@ function showNodeModal(node) {
 
     if (d._t === 'ext_func') {
         title = d.fn || '';
-        subtitle = escapeHtml(d._f || 'Unknown target');
+        subtitle = escapeHtml(d._f || T('tooltipUnknownTarget'));
     } else if (d._t === 'potential_func') {
         title = d.fn ? `Ambiguous: ${d.fn}` : lines[0] || '';
     } else {
@@ -1032,7 +1032,7 @@ function showNodeModal(node) {
 
     if (d._t === 'potential_func') {
         html += `<div class="tip-body" style="font-size: 12px; margin-top: 12px; font-family: monospace;">`;
-        html += `<div style="margin-bottom: 8px; font-weight: bold; color: #a78bfa;">POSSIBLE FILES:</div>`;
+        html += `<div style="margin-bottom: 8px; font-weight: bold; color: #a78bfa;">${escapeHtml(T('tooltipPossibleFiles'))}</div>`;
         html += `<div class="ambiguous-file-list" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 4px;">`;
         if (d._files && d._files.length) {
             d._files.forEach((f) => {
@@ -1083,11 +1083,11 @@ function showNodeModal(node) {
     // Actions
     html += `<div class="tip-actions" style="margin-top: 16px;">`;
     if (d._t === 'potential_func') {
-        html += `<button class="tip-btn" data-action="open-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">Open Location</button>` +
-            `<button class="tip-btn" data-action="view-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">View File</button>`;
+        html += `<button class="tip-btn" data-action="open-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">${escapeHtml(T('tooltipOpenLocation'))}</button>` +
+            `<button class="tip-btn" data-action="view-ambiguous" data-func="${encodeURIComponent(d.fn || '')}">${escapeHtml(T('tooltipViewFile'))}</button>`;
     } else {
-        html += `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}" data-node-type="${d._t || ''}" data-mod="${encodeURIComponent(d.mod || '')}">Open Location</button>` +
-            `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">View File</button>`;
+        html += `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}" data-node-type="${d._t || ''}" data-mod="${encodeURIComponent(d.mod || '')}">${escapeHtml(T('tooltipOpenLocation'))}</button>` +
+            `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(d._f?.path || d._f || '')}" data-func="${encodeURIComponent(d.fn || '')}">${escapeHtml(T('tooltipViewFile'))}</button>`;
     }
     html += `</div>`;
     html += `</div>`;
@@ -1888,7 +1888,7 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
                 id: potId, label: `${callee}\n(${files.length} paths)`,
                 bg: '#1a1040', bc: '#a78bfa', w: 160, h: 44, sh: 'roundrectangle', lvl: 2,
                 _t: 'potential_func', fn: callee, _files: files,
-                tt: `Ambiguous: ${callee}\nPossible files:\n${files.join('\n')}`,
+                tt: `Ambiguous: ${callee}\n${T('tooltipPossibleFiles')}\n${files.join('\n')}`,
             }
         });
         callers.forEach(callerIdx => {
@@ -4427,8 +4427,8 @@ function updateBreadcrumb() {
     const graphBtn = document.getElementById('graph-toggle-btn');
     if (graphBtn) {
         const isLevel2 = state.level >= 2;
-        const newHtml = isLevel2 ? '⬡ Dependency Map' : '⬡ Call Graph';
-        const newTitle = isLevel2 ? 'Back to Dependency Map' : 'View Call Graph for Selected File';
+        const newHtml = isLevel2 ? `⬡ ${T('graphBtnDependencyMap')}` : `⬡ ${T('graphBtnCallGraph')}`;
+        const newTitle = isLevel2 ? T('graphBtnDependencyMapTip') : T('graphBtnCallGraphTip');
 
         if (graphBtn.innerHTML !== newHtml) {
             // Trigger flip animation
@@ -5690,10 +5690,10 @@ function _srRenderPanel() {
 <div id="sr-action-bar" class="sr-action-bar" style="display:none"></div>
 <div id="sr-results"></div>
 <div class="sr-footer">
-  <span class="sr-footer-hint"><kbd>↑↓</kbd> navigate</span>
-  <span class="sr-footer-hint"><kbd>↵</kbd> open</span>
-  <span class="sr-footer-hint"><kbd>Tab</kbd> switch mode</span>
-  <span class="sr-footer-hint"><kbd>Esc</kbd> close</span>
+  <span class="sr-footer-hint"><kbd>↑↓</kbd> ${T('searchHintNavigate')}</span>
+  <span class="sr-footer-hint"><kbd>↵</kbd> ${T('searchHintOpen')}</span>
+  <span class="sr-footer-hint"><kbd>Tab</kbd> ${T('searchHintSwitchMode')}</span>
+  <span class="sr-footer-hint"><kbd>Esc</kbd> ${T('searchHintClose')}</span>
 </div>`;
     }
 
@@ -5837,7 +5837,7 @@ function _srSetMode(mode) {
     });
     const input = document.getElementById('search');
     const filters = document.getElementById('sr-filters');
-    if (input) input.placeholder = mode === 'files' ? 'Search files… ( / )' : 'Search code… ( / )';
+    if (input) input.placeholder = mode === 'files' ? T('searchPlaceholderFiles') : T('searchPlaceholderCode');
     if (filters) filters.classList.toggle('visible', mode === 'code');
     // Force panel skeleton rebuild on mode switch
     const panel = document.getElementById('sr-panel');
@@ -6080,10 +6080,10 @@ function showTooltip(e) {
             html += `<div class="tip-title" title="${escapeHtml(funcName)}">${escapeHtml(funcName)}</div>`;
             html += fileRel
                 ? `<div class="tip-body">${escapeHtml(fileRel)}</div>`
-                : `<div class="tip-body">Unknown target</div>`;
+                : `<div class="tip-body">${escapeHtml(T('tooltipUnknownTarget'))}</div>`;
             html += `<div class="tip-actions">` +
-                `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">Open Location</button>` +
-                `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">View File</button>` +
+                `<button class="tip-btn" data-action="open" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">${escapeHtml(T('tooltipOpenLocation'))}</button>` +
+                `<button class="tip-btn" data-action="view" data-file="${encodeURIComponent(fileRel)}" data-func="${encodeURIComponent(funcName)}">${escapeHtml(T('tooltipViewFile'))}</button>` +
                 `</div>`;
         } else {
 
