@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 server.py — VIZCODE Local Server V4
 Serves launcher.html and runs analyze_viz.py on demand.
@@ -11,6 +11,8 @@ import sys, os, json, threading, uuid, time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from typing import Dict, Optional
+
 
 # Import sibling module — prefer analyze_viz (new), fall back to analyze_bios
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,7 +45,7 @@ _SI_MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB
 
 def _build_search_index(jid: str, root: str):
     """Background thread: read all non-binary files into memory for instant search."""
-    index: dict[str, str] = {}  # rel_path -> full content string
+    index: Dict[str, str] = {}  # rel_path -> full content string
     try:
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
             dirnames[:] = sorted(d for d in dirnames if d not in _SI_SKIP_DIRS)
@@ -70,7 +72,10 @@ def _build_search_index(jid: str, root: str):
 
 # Cleanup old .result_*.html files left from previous server design
 for _f in Path(SCRIPT_DIR).glob('.result_*.html'):
-    _f.unlink(missing_ok=True)
+    try:
+        _f.unlink()
+    except FileNotFoundError:
+        pass
 
 
 # ─── HTTP Handler ─────────────────────────────────────────────────────────────
@@ -344,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
             all_groups    = []
 
             # ── Fast path: use pre-built in-memory index ──────────────────────
-            search_index: dict | None = job.get('search_index')
+            search_index = job.get('search_index')  # type: Optional[Dict[str, str]]
             using_index = search_index is not None
 
             if using_index:
@@ -701,10 +706,10 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     server = HTTPServer(('127.0.0.1', port), Handler)
     url = f'http://localhost:{port}'
-    print(f'┌─────────────────────────────────────────┐')
-    print(f'│  VIZCODE V4   →  {url:<22} │')
-    print(f'│  BIOS · Python · JS/TS · Go             │')
-    print(f'└─────────────────────────────────────────┘')
+    print('-----------------------------------------')
+    print(f'  VIZCODE V4 -> {url}')
+    print('  BIOS / Python / JS/TS / Go')
+    print('-----------------------------------------')
     print(f'Open Chrome and go to: {url}')
     print(f'Press Ctrl+C to stop\n')
     try:
@@ -715,3 +720,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 analyze_viz.py V4 — VIZCODE Universal Code Visualizer
 Supports: UEFI/BIOS (C/H/ASM/INF/DEC/DSC/FDF/SDL/CIF/MAK/VFR/HFR/UNI/ASL)
@@ -15,7 +15,27 @@ Backward compatible: still importable as analyze_bios (server.py alias).
 import os, re, json, sys, argparse
 from pathlib import Path
 from collections import defaultdict
+from typing import Dict
 
+def _console_safe(text, stream=None):
+    stream = stream or sys.stdout
+    enc = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        return str(text).encode(enc, errors="replace").decode(enc, errors="replace")
+    except Exception:
+        return str(text)
+
+
+def _console_print(*args, **kwargs):
+    stream = kwargs.pop("file", sys.stdout)
+    sep = kwargs.pop("sep", " ")
+    end = kwargs.pop("end", "\n")
+    flush = kwargs.pop("flush", False)
+    text = sep.join(str(arg) for arg in args)
+    stream.write(_console_safe(text, stream))
+    stream.write(_console_safe(end, stream))
+    if flush:
+        stream.flush()
 # ─── Pluggable parsers ────────────────────────────────────────────────────────
 _PARSER_DIR = Path(__file__).parent / 'parsers'
 if str(_PARSER_DIR.parent) not in sys.path:
@@ -31,7 +51,7 @@ try:
 except ImportError as _pe:
     _PARSERS_LOADED = False
     _BIOS_EXTENSIONS = set()
-    print(f'[WARN] Could not load language parsers: {_pe}', file=sys.stderr)
+    _console_print(f'[WARN] Could not load language parsers: {_pe}', file=sys.stderr)
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 SKIP_DIRS  = {
@@ -133,7 +153,7 @@ MODULE_COLORS = [
 # Maps function name → display category name.
 # Used by the frontend to classify "unresolved" calls into meaningful groups
 # instead of dumping everything into a single "System/Unknown" blob.
-KNOWN_SYS_FUNCS: dict[str, str] = {
+KNOWN_SYS_FUNCS: Dict[str, str] = {
     # ── UEFI Boot Services (gBS->) ────────────────────────────────────────────
     'AllocatePool':                     'UEFI Boot Services',
     'FreePool':                         'UEFI Boot Services',
@@ -532,7 +552,7 @@ def get_module(rel_path: str) -> str:
 # ─── build_graph ─────────────────────────────────────────────────────────────
 def build_graph(root_dir: str, progress_cb=None, include_build=False, include_dirs=None) -> dict:
     def _cb(pct, msg, **kwargs):
-        print(f'[{pct:3d}%] {msg}', end='\r')
+        _console_print(f'[{pct:3d}%] {msg}', end='\r')
         if progress_cb: progress_cb(pct, msg, **kwargs)
 
     root = os.path.abspath(root_dir)
@@ -564,7 +584,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         project_type = detect_project_type(dict(ext_counts))
         banner = fmt_detection_banner(project_type)
         for line in banner:
-            print(line)
+            _console_print(line)
         _cb(1, f'{project_type["emoji"]}  Detected: {project_type["name"]} project', project_type=project_type)
 
     file_meta   = {}  # rel_path → {label, ext, size, module, file_type, bios_meta}
@@ -580,7 +600,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
             pct = int((i + 1) / total * 60) if total else 0
             if progress_cb:
                 progress_cb(pct, f'{i + 1}/{total} files analyzed')
-            print(f'[{pct:3d}%] {i + 1}/{total} files analyzed', end='\r')
+            _console_print(f'[{pct:3d}%] {i + 1}/{total} files analyzed', end='\r')
         rel = os.path.relpath(fp, root).replace('\\', '/')
         inc, defs, calls, extra, func_calls_by_func = scan_file(fp, root)
         ext = Path(fp).suffix.lower()
@@ -962,7 +982,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     file_to_module = {rel: meta['module'] for rel, meta in file_meta.items()}
 
     _cb(100, 'Done!')
-    print()
+    _console_print()
     return {
         'modules':              modules,
         'module_edges':         module_edges,
@@ -1344,28 +1364,28 @@ def main():
     args = parser.parse_args()
 
     if not os.path.isdir(args.root):
-        print(f'Error: "{args.root}" is not a directory', file=sys.stderr)
+        _console_print(f'Error: "{args.root}" is not a directory', file=sys.stderr)
         sys.exit(1)
 
-    print(f'VIZCODE V4 — analyzing: {args.root}')
+    _console_print(f'VIZCODE V4 — analyzing: {args.root}')
     data = build_graph(args.root, include_build=args.include_build, include_dirs=args.include_dir)
 
     pt = data.get('project_type', {})
     s = data['stats']
-    print(f'\nAnalysis complete ({pt.get("emoji","")}{pt.get("name",""):}):')
-    print(f'  Modules:   {s["modules"]}')
-    print(f'  Files:     {s["files"]}')
-    print(f'  Functions: {s["functions"]}')
-    print(f'  Calls:     {s["calls"]}')
+    _console_print(f'\nAnalysis complete ({pt.get("emoji","")}{pt.get("name",""):}):')
+    _console_print(f'  Modules:   {s["modules"]}')
+    _console_print(f'  Files:     {s["files"]}')
+    _console_print(f'  Functions: {s["functions"]}')
+    _console_print(f'  Calls:     {s["calls"]}')
     if s.get('type_counts'):
-        print(f'\n  File types:')
+        _console_print(f'\n  File types:')
         for ft, cnt in sorted(s['type_counts'].items(), key=lambda x: -x[1]):
-            print(f'    {ft:20s} {cnt}')
+            _console_print(f'    {ft:20s} {cnt}')
 
     try:
         html = build_html(data)
     except FileNotFoundError as e:
-        print(f'\nWarning: {e}')
+        _console_print(f'\nWarning: {e}')
         def _json_default(o):
             if isinstance(o, (set, frozenset)): return sorted(o)
             raise TypeError(f'Not serialisable: {type(o)}')
@@ -1383,9 +1403,13 @@ def main():
     out = args.output
     Path(out).write_text(html, encoding='utf-8')
     size = Path(out).stat().st_size
-    print(f'\nOutput: {out} ({size/1024:.0f} KB)')
-    print(f'Open in Chrome: file:///{Path(out).absolute().as_posix()}')
+    _console_print(f'\nOutput: {out} ({size/1024:.0f} KB)')
+    _console_print(f'Open in Chrome: file:///{Path(out).absolute().as_posix()}')
 
 
 if __name__ == '__main__':
     main()
+
+
+
+

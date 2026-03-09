@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 detector.py — VIZCODE Project Type Detector
 Fingerprints a directory's file composition to identify what kind of
@@ -148,18 +148,19 @@ def detect_project_type(ext_counts: dict) -> dict:
 
 def fmt_detection_banner(ptype: dict) -> list:
     """Return list of progress messages to display during scanning."""
-    emoji = ptype.get('emoji', '🔍')
     name  = ptype.get('name', 'Unknown')
     desc  = ptype.get('description', '')
     components = ptype.get('component_names', [])
 
     lines = [
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"  {emoji}  PROJECT DETECTED: {name.upper()}",
+        "----------------------------------------",
+        f"  PROJECT DETECTED: {name.upper()}",
     ]
     if components:
-        lines.append(f"     Primary: {components[0]}  ·  Secondary: {components[1]}")
+        lines.append(f"     Primary: {components[0]} / Secondary: {components[1]}")
     if desc:
         lines.append(f"     {desc}")
-    lines.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("----------------------------------------")
     return lines
+
+

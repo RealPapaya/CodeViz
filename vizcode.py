@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 vizcode.py — VIZCODE Interactive CLI Launcher
 Zero pip dependencies — pure Python stdlib only.
-Compatible: Python 3.8+, Windows cp950/UTF-8, Mac, Linux
+Compatible: Python 3.6+, Windows cp950/UTF-8, Mac, Linux
 
 Usage:
     python vizcode.py
@@ -26,7 +26,9 @@ if sys.platform == "win32":
 SCRIPT_DIR   = Path(__file__).resolve().parent
 SERVER_PY    = SCRIPT_DIR / "server.py"
 HISTORY_FILE = SCRIPT_DIR / ".vizcode_history.json"
-PORT         = 7777
+SERVER_LOG   = SCRIPT_DIR / ".vizcode_server.log"
+DEFAULT_PORT = 7777
+PORT         = DEFAULT_PORT
 BASE_URL     = f"http://localhost:{PORT}"
 
 # ─── ANSI colors ─────────────────────────────────────────────────────────────
@@ -170,27 +172,88 @@ def save_history(path: str):
 # ─── Server ───────────────────────────────────────────────────────────────────
 _server_proc = None
 
-def is_server_running() -> bool:
+def _probe_vizcode_server(port: int) -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", PORT), timeout=0.5):
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1.0) as r:
+            body = r.read(4096).decode("utf-8", errors="replace")
+        return "VIZCODE" in body or "launcher-app" in body or "Universal Code Visualizer" in body
+    except Exception:
+        return False
+
+def _is_port_available(port: int) -> bool:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", port))
             return True
+        finally:
+            sock.close()
     except OSError:
         return False
 
+def _select_port() -> int:
+    global PORT, BASE_URL
+    for candidate in range(DEFAULT_PORT, DEFAULT_PORT + 100):
+        if _probe_vizcode_server(candidate):
+            PORT = candidate
+            BASE_URL = f"http://localhost:{PORT}"
+            return candidate
+        if _is_port_available(candidate):
+            PORT = candidate
+            BASE_URL = f"http://localhost:{PORT}"
+            return candidate
+    raise RuntimeError(f"No available local port found in range {DEFAULT_PORT}-{DEFAULT_PORT + 99}.")
+
+def is_server_running() -> bool:
+    return _probe_vizcode_server(PORT)
+
 def start_server():
     global _server_proc
+    port = _select_port()
     if is_server_running(): return
-    kwargs = dict(cwd=str(SCRIPT_DIR), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if IS_WIN: kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    _server_proc = subprocess.Popen([sys.executable, str(SERVER_PY)], **kwargs)
+    try:
+        SERVER_LOG.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+    log_fp = open(str(SERVER_LOG), "a", encoding="utf-8", errors="replace")
+    kwargs = dict(cwd=str(SCRIPT_DIR), stdout=log_fp, stderr=log_fp)
+    if IS_WIN:
+        create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if create_no_window: kwargs["creationflags"] = create_no_window
+    _server_proc = subprocess.Popen([sys.executable, str(SERVER_PY), str(port)], **kwargs)
     for _ in range(50):
-        if is_server_running(): return
+        if is_server_running():
+            return
+        if _server_proc.poll() is not None:
+            try:
+                log_fp.flush()
+            except Exception:
+                pass
+            break
         time.sleep(0.1)
+    try:
+        log_fp.flush()
+        log_fp.close()
+    except Exception:
+        pass
+    if not is_server_running():
+        details = ""
+        try:
+            details = SERVER_LOG.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            details = ""
+        if details:
+            details = "\n" + details[-1200:]
+        raise RuntimeError(f"Server failed to start on port {PORT}.{details}")
 
 def stop_server():
     global _server_proc
     if _server_proc:
         _server_proc.terminate()
+        try:
+            _server_proc.wait(timeout=3)
+        except Exception:
+            pass
         _server_proc = None
 
 # ─── Analysis ─────────────────────────────────────────────────────────────────
@@ -217,7 +280,11 @@ def run_analysis_with_progress(path: str):
     print(CLEAR, end="")
     print_banner()
     print(f"  {cyan('▶')} Starting server...")
-    start_server()
+    try:
+        start_server()
+    except Exception as e:
+        print(red(f"\n  [!] {e}\n"))
+        return
     print(f"  {cyan('▶')} Analyzing: {dim(path)}\n")
 
     job_id = trigger_analysis(path)
@@ -355,3 +422,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         action_exit()
+
+
