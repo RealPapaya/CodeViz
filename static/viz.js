@@ -21,7 +21,7 @@ const l2State = {
     externalModules: [],
     fileHistory: [],
     fileHistoryIdx: -1,
-    showExternalEdges: true,
+    showExternalEdges: false,
     showExternalFuncs: false,
     expandOriginPos: null,
     preserveViewport: null,
@@ -85,7 +85,7 @@ const _registeredLayouts = new Set([
 ]);
 
 function _probeAvailableLayouts() {
-    ['fcose', 'elk', 'cola'].forEach(name => {
+    ['fcose', 'elk', 'cola', 'cise'].forEach(name => {
         try {
             const dummy = cy.layout({ name, stop: () => { } });
             dummy.destroy();
@@ -103,7 +103,6 @@ function _isLayoutAvailable(name) {
 }
 
 let cy = null;
-let _runningLayout = null;
 let tooltipPinned = false;
 let tooltipHideTimer = null;
 const DEFAULT_CODE_FONT = "'JetBrains Mono', monospace";
@@ -111,115 +110,33 @@ const EXT_DOUBLE_CLICK_MS = 260;
 let extClickLastId = null;
 let extClickLastTime = 0;
 
-// ─── Global themed tooltip (replaces all browser title= tooltips) ─────────────
-// Usage: add data-tip="Your text\nSecond line" to any element.
-// The system intercepts mouseover via document-level delegation — no per-element
-// wiring needed. Existing title= attrs in static HTML are migrated on init.
-const _gtip = {
-    el: null,          // the floating tooltip DOM element
-    timer: null,       // show-delay timer
-    DELAY: 380,        // ms before tooltip appears
-};
-
-function _initGlobalTooltip() {
-    // Create the single shared tooltip element
-    const el = document.createElement('div');
-    el.id = 'g-tooltip';
-    el.setAttribute('role', 'tooltip');
-    el.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(el);
-    _gtip.el = el;
-
-    // Migrate all static title= attrs → data-tip= so browser tooltip is suppressed.
-    // Dynamic elements (rendered via innerHTML) must use data-tip= directly.
-    document.querySelectorAll('[title]').forEach(node => {
-        const t = node.getAttribute('title');
-        if (!t) return;
-        node.setAttribute('data-tip', t);
-        node.removeAttribute('title');
-    });
-
-    // Delegation: single listeners on document
-    document.addEventListener('mouseover', _gtipOver, true);
-    document.addEventListener('mouseout', _gtipOut, true);
-    document.addEventListener('mousemove', _gtipMove, true);
-    document.addEventListener('scroll', () => _gtipHide(), true);
-    document.addEventListener('keydown', () => _gtipHide(), true);
-}
-
-function _gtipOver(e) {
-    const target = e.target.closest('[data-tip]');
-    if (!target) return;
-    clearTimeout(_gtip.timer);
-    _gtip.timer = setTimeout(() => _gtipShow(target, e), _gtip.DELAY);
-}
-
-function _gtipOut(e) {
-    const target = e.target.closest('[data-tip]');
-    if (!target) return;
-    clearTimeout(_gtip.timer);
-    _gtipHide();
-}
-
-function _gtipMove(e) {
-    if (!_gtip.el || _gtip.el.style.display === 'none') return;
-    _gtipPosition(e.clientX, e.clientY);
-}
-
-function _gtipShow(target, e) {
-    const raw = target.dataset.tip || '';
-    if (!raw) return;
-    const el = _gtip.el;
-
-    // First line = bold title, remaining lines = description
-    const lines = raw.split('\n');
-    el.innerHTML = lines.map((l, i) => {
-        if (i === 0) return `<strong class="gt-head">${escapeHtml(l)}</strong>`;
-        if (l.startsWith('⚠')) return `<span class="gt-warn">${escapeHtml(l)}</span>`;
-        return `<span class="gt-line">${escapeHtml(l)}</span>`;
-    }).join('');
-
-    el.style.display = 'block';
-    _gtipPosition(e.clientX, e.clientY);
-    requestAnimationFrame(() => el.classList.add('g-tip-visible'));
-}
-
-function _gtipHide() {
-    clearTimeout(_gtip.timer);
-    if (!_gtip.el) return;
-    _gtip.el.classList.remove('g-tip-visible');
-    _gtip.el.style.display = 'none';
-}
-
-function _gtipPosition(mx, my) {
-    const el = _gtip.el;
-    if (!el) return;
-    const W = window.innerWidth, H = window.innerHeight;
-    const TW = el.offsetWidth || 220;
-    const TH = el.offsetHeight || 40;
-    const GAP = 14;
-    let x = mx + GAP;
-    let y = my + GAP;
-    if (x + TW > W - 8) x = mx - TW - GAP;
-    if (y + TH > H - 8) y = my - TH - GAP;
-    el.style.left = `${Math.max(4, x)}px`;
-    el.style.top = `${Math.max(4, y)}px`;
-}
-
-
-
 // ─── Render cancel token ──────────────────────────────────────────────────────
 // Incremented every time a render starts; async callbacks check staleness.
 let _renderToken = 0;
 
-function getSavedFont() {
-    try {
-        const saved = localStorage.getItem('biosviz_code_font');
-        return (saved && saved.trim()) ? saved : DEFAULT_CODE_FONT;
-    } catch (_) {
-        return DEFAULT_CODE_FONT;
-    }
-}
+// ─── Preferences ──────────────────────────────────────────────────────────────
+const _PREFS = {
+    KEYS:     { font: 'biosviz_code_font', lang: 'biosviz_lang',
+                extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs' },
+    DEFAULTS: { font: "'JetBrains Mono', monospace", lang: 'en',
+                extFiles: false, extFuncs: false },
+    get(k) {
+        try {
+            const v = localStorage.getItem(this.KEYS[k]);
+            if (v === null) return this.DEFAULTS[k];
+            if (v === 'true') return true; if (v === 'false') return false;
+            return v;
+        } catch(_) { return this.DEFAULTS[k]; }
+    },
+    set(k, v) { try { localStorage.setItem(this.KEYS[k], String(v)); } catch(_) {} },
+    load() {
+        depMapState.showExternalFiles = this.get('extFiles');
+        l2State.showExternalFuncs     = this.get('extFuncs');
+        l2State.showExternalEdges     = l2State.showExternalFuncs;
+    },
+};
+
+function getSavedFont() { return _PREFS.get('font'); }
 
 function withFont(styleList, font) {
     return styleList.map(s => {
@@ -248,6 +165,66 @@ function applyCyFont(font) {
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+
+// ─── Global themed tooltip ────────────────────────────────────────────────────
+const _gtip = { el: null, timer: null, DELAY: 380 };
+
+function _initGlobalTooltip() {
+    const el = document.createElement('div');
+    el.id = 'g-tooltip';
+    document.body.appendChild(el);
+    _gtip.el = el;
+    // Migrate static title= → data-tip= to suppress browser tooltip
+    document.querySelectorAll('[title]').forEach(n => {
+        const t = n.getAttribute('title');
+        if (!t) return;
+        n.setAttribute('data-tip', t);
+        n.removeAttribute('title');
+    });
+    document.addEventListener('mouseover', _gtipOver, true);
+    document.addEventListener('mouseout',  _gtipOut,  true);
+    document.addEventListener('mousemove', _gtipMove, true);
+    document.addEventListener('scroll',    () => _gtipHide(), true);
+    document.addEventListener('keydown',   () => _gtipHide(), true);
+}
+function _gtipOver(e) {
+    const t = e.target.closest('[data-tip]'); if (!t) return;
+    clearTimeout(_gtip.timer);
+    _gtip.timer = setTimeout(() => _gtipShow(t, e), _gtip.DELAY);
+}
+function _gtipOut(e) {
+    if (!e.target.closest('[data-tip]')) return;
+    clearTimeout(_gtip.timer); _gtipHide();
+}
+function _gtipMove(e) {
+    if (_gtip.el && _gtip.el.style.display !== 'none') _gtipPos(e.clientX, e.clientY);
+}
+function _gtipShow(target, e) {
+    const raw = target.dataset.tip || ''; if (!raw) return;
+    const lines = raw.split('\n');
+    _gtip.el.innerHTML = lines.map((l,i) => {
+        if (i === 0) return `<strong class="gt-head">${escapeHtml(l)}</strong>`;
+        if (l.startsWith('⚠')) return `<span class="gt-warn">${escapeHtml(l)}</span>`;
+        return `<span class="gt-line">${escapeHtml(l)}</span>`;
+    }).join('');
+    _gtip.el.style.display = 'block';
+    requestAnimationFrame(() => { _gtipPos(e.clientX, e.clientY); _gtip.el.classList.add('g-tip-visible'); });
+}
+function _gtipHide() {
+    clearTimeout(_gtip.timer);
+    if (!_gtip.el) return;
+    _gtip.el.classList.remove('g-tip-visible');
+    _gtip.el.style.display = 'none';
+}
+function _gtipPos(mx, my) {
+    const el = _gtip.el; if (!el) return;
+    const W=window.innerWidth, H=window.innerHeight, TW=el.offsetWidth||220, TH=el.offsetHeight||40, G=14;
+    let x=mx+G, y=my+G;
+    if (x+TW>W-8) x=mx-TW-G;
+    if (y+TH>H-8) y=my-TH-G;
+    el.style.left=`${Math.max(4,x)}px`; el.style.top=`${Math.max(4,y)}px`;
+}
+
 window.addEventListener('DOMContentLoaded', () => {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -286,6 +263,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 buildSidebar();
                 buildFileIdLookup();
+                _PREFS.load();
                 initCy();
                 loadLevel0();
 
@@ -313,10 +291,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // Layout Switcher init
                 initLayoutSwitcher();
-                _probeAvailableLayouts();
-
-                // Global themed tooltip — must run last so all static DOM exists
                 _initGlobalTooltip();
+                // Probe which advanced layouts actually loaded (needs cy + switcher to exist)
+                _probeAvailableLayouts();
 
                 // Ensure Canvas redraws after Google Fonts are fully loaded
                 document.fonts.ready.then(() => {
@@ -434,49 +411,53 @@ function applyFont(font) {
 }
 
 function initPreferences() {
-    const prefBtn = document.getElementById('pref-btn');
+    const prefBtn   = document.getElementById('pref-btn');
     const prefModal = document.getElementById('pref-modal');
-    const closeX = document.getElementById('pref-close-x');
-    const closeBtn = document.getElementById('pref-close-btn');
-    const fontSelect = document.getElementById('font-select');
-
     if (!prefBtn || !prefModal) return;
 
-    // Load saved font from localStorage or use default
+    // Apply saved values
     const savedFont = getSavedFont();
     applyFont(savedFont);
-    if (fontSelect) {
-        fontSelect.value = savedFont;
-        fontSelect.style.fontFamily = savedFont;
-    }
+    const fontSel = document.getElementById('font-select');
+    if (fontSel) { fontSel.value = savedFont; fontSel.style.fontFamily = savedFont; }
+    const langSel = document.getElementById('pref-lang-select');
+    if (langSel) langSel.value = _PREFS.get('lang');
+    _syncCheck('pref-ext-files', _PREFS.get('extFiles'));
+    _syncCheck('pref-ext-funcs', _PREFS.get('extFuncs'));
 
-    prefBtn.addEventListener('click', () => {
-        prefModal.style.display = 'flex';
-    });
-    prefBtn.addEventListener('mouseenter', () => { prefBtn.style.color = 'var(--accent)'; });
-    prefBtn.addEventListener('mouseleave', () => { prefBtn.style.color = 'var(--muted)'; });
+    // Open/close
+    prefBtn.addEventListener('click', () => { prefModal.style.display = 'flex'; });
+    const close = () => { prefModal.style.display = 'none'; };
+    document.getElementById('pref-close-x') ?.addEventListener('click', close);
+    document.getElementById('pref-close-btn')?.addEventListener('click', close);
+    prefModal.addEventListener('click', e => { if (e.target === prefModal) close(); });
 
-    const closeModal = () => {
-        prefModal.style.display = 'none';
-    };
-
-    if (closeX) closeX.addEventListener('click', closeModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-
-    // Close on outside click
-    prefModal.addEventListener('click', (e) => {
-        if (e.target === prefModal) closeModal();
+    // Font
+    if (fontSel) fontSel.addEventListener('change', e => {
+        const f = e.target.value; applyFont(f); _PREFS.set('font', f);
+        fontSel.style.fontFamily = f;
     });
 
-    // Handle font change
-    if (fontSelect) {
-        fontSelect.addEventListener('change', (e) => {
-            const font = e.target.value;
-            applyFont(font);
-            localStorage.setItem('biosviz_code_font', font);
-            fontSelect.style.fontFamily = font;
-        });
-    }
+    // Language (stub)
+    if (langSel) langSel.addEventListener('change', e => _PREFS.set('lang', e.target.value));
+
+    // Behaviour checkboxes
+    _bindCheck('pref-ext-files', 'extFiles', v => {
+        depMapState.showExternalFiles = v; updateDepMapExtToggle();
+    });
+    _bindCheck('pref-ext-funcs', 'extFuncs', v => {
+        l2State.showExternalFuncs = v;
+        l2State.showExternalEdges = v;          // lines always follow funcs
+        updateExternalFuncsToggle?.();
+        applyExternalEdgeVisibility?.();
+    });
+}
+
+function _syncCheck(id, val) { const el=document.getElementById(id); if(el) el.checked=!!val; }
+function _bindCheck(id, key, fn) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => { _PREFS.set(key, el.checked); fn(el.checked); });
 }
 
 // ─── L1 Toolbar (Dependency Map) ─────────────────────────────────────────────
@@ -1033,10 +1014,9 @@ function onL2MouseNav(e) {
 }
 
 function updateExternalToggle() {
-    const btn = document.getElementById('l2-toggle-ext-lines');
-    if (!btn) return;
-    btn.textContent = l2State.showExternalEdges ? 'External Lines: On' : 'External Lines: Off';
-    btn.classList.toggle('active', l2State.showExternalEdges);
+    // External lines always follow external funcs — no separate toggle
+    l2State.showExternalEdges = l2State.showExternalFuncs;
+    applyExternalEdgeVisibility();
 }
 
 function updateExternalFuncsToggle() {
@@ -2911,14 +2891,14 @@ function buildFtFilter(modId = null, subDir = null) {
         `<div class="ft-filter-title" id="ft-filter-title" style="cursor:pointer; display:flex; align-items:center; gap:6px;">
              <span class="legend-toggle" style="font-size:15px; transition:transform 0.2s; ${togglerStyle}">▾</span><span class="sidebar-title-text">File Types</span>
              <span class="ft-actions">
-               <button class="ft-action" data-ft-action="all" data-tip="全選">All</button>
-               <button class="ft-action" data-ft-action="none" data-tip="取消全選">None</button>
+               <button class="ft-action" data-ft-action="all" data-tip="Select all">All</button>
+               <button class="ft-action" data-ft-action="none" data-tip="Select none">None</button>
              </span>
          </div>` +
         `<div id="ft-filter-body" style="display:${bodyDisplay}; flex-direction:column;">` +
         analysed.map(chipHtml).join('') +
         (extra.length
-            ? '<div class="ft-separator" data-tip="這些檔案在圖中可見但未深度分析依賴關係">— unanalysed —</div>' +
+            ? '<div class="ft-separator" data-tip="Visible in graph but not deeply analysed for dependencies">— unanalysed —</div>' +
             extra.map(chipHtml).join('')
             : '') +
         `</div>`;
@@ -3040,7 +3020,7 @@ function buildFullTreeRows(container, node, depth) {
                 `<span class="tree-arrow ${hasKids ? '' : 'leaf'}">▶</span>` +
                 `<span class="mod-dot" style="background:${mc}"></span>` +
                 `<span class="mod-name" data-tip="${child.path}">${child.name}</span>` +
-                `<span class="mod-count" data-tip="${count} 個檔案">${count}</span>`;
+                `<span class="mod-count" data-tip="${count} files">${count}</span>`;
         } else {
             const indent = 20 + depth * 14;
             row.innerHTML =
@@ -4700,7 +4680,7 @@ function _srMatchLinesHtml(g) {
         const isFn = _srLineIsFunc(snip, g.ext);
         html += `<div class="sr-line-row${isFn ? ' sr-line-func' : ''}" data-gpath="${escapeHtml(g.path)}" data-line="${m.line}">
     <span class="sr-line-num">${m.line}</span>
-    ${isFn ? '<span class="sr-fn-tag" data-tip="函式定義">ƒ</span>' : ''}
+    ${isFn ? '<span class="sr-fn-tag" data-tip="Function definition">ƒ</span>' : ''}
     <span class="sr-line-text">${snipHl}</span>
   </div>`;
     });
@@ -4856,21 +4836,21 @@ function _srRenderActionBar() {
     ${loading ? '<span class="sr-ab-scanning">scanning…</span>' : ''}
   </span>
   <span class="sr-ab-spacer"></span>
-  <button class="sr-ab-btn${_srState._filterFuncOnly ? ' active' : ''}" id="sr-ab-func" data-tip="只顯示函式定義的匹配行">ƒ</button>
+  <button class="sr-ab-btn${_srState._filterFuncOnly ? ' active' : ''}" id="sr-ab-func" data-tip="Show only function-definition matches">ƒ</button>
   <div class="sr-ab-sep"></div>
-  <button class="sr-ab-btn" id="sr-collapse-all" data-tip="全部收合">⊟</button>
-  <button class="sr-ab-btn" id="sr-expand-all"   data-tip="全部展開">⊞</button>
+  <button class="sr-ab-btn" id="sr-collapse-all" data-tip="Collapse All">⊟</button>
+  <button class="sr-ab-btn" id="sr-expand-all"   data-tip="Expand All">⊞</button>
   <div class="sr-ab-sep"></div>
-  <button class="sr-ab-btn${!isTree ? ' active' : ''}" id="sr-view-list" data-tip="清單檢視">≡</button>
-  <button class="sr-ab-btn${isTree ? ' active' : ''}" id="sr-view-tree" data-tip="樹狀檢視">⬡</button>
+  <button class="sr-ab-btn${!isTree ? ' active' : ''}" id="sr-view-list" data-tip="View as List">≡</button>
+  <button class="sr-ab-btn${isTree ? ' active' : ''}" id="sr-view-tree" data-tip="View as Tree">⬡</button>
 </div>
 <div class="sr-ab-filters">
-  <div class="sr-ab-filter-input-wrap" data-tip="要包含的檔案 (例：*.c, *.h, Module/*)">
+  <div class="sr-ab-filter-input-wrap" data-tip="Files to include (e.g. *.c, *.h)">
     <span class="sr-ab-filter-icon">⊕</span>
     <input class="sr-ab-filter-input" id="sr-ab-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="files to include  *.c, *.h" spellcheck="false" autocomplete="off">
     ${_srState.include ? `<button class="sr-ab-filter-clear" data-target="inc">✕</button>` : ''}
   </div>
-  <div class="sr-ab-filter-input-wrap" data-tip="要排除的檔案 (例：Build/*, *.obj)">
+  <div class="sr-ab-filter-input-wrap" data-tip="Files to exclude (e.g. Build/*, *.obj)">
     <span class="sr-ab-filter-icon sr-ab-filter-exc">⊖</span>
     <input class="sr-ab-filter-input" id="sr-ab-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="files to exclude  Build/*, *.obj" spellcheck="false" autocomplete="off">
     ${_srState.exclude ? `<button class="sr-ab-filter-clear" data-target="exc">✕</button>` : ''}
@@ -4930,18 +4910,18 @@ function _srRenderActionBar() {
 <div class="sr-ab-top">
   <span class="sr-ab-info"><span class="sr-ab-count">${n.toLocaleString()}</span>&thinsp;files</span>
   <span class="sr-ab-spacer"></span>
-  ${isFileTree ? `<button class="sr-ab-btn" id="sr-fi-collapse-all" data-tip="全部收合">⊟</button>
-  <button class="sr-ab-btn" id="sr-fi-expand-all" data-tip="全部展開">⊞</button>
+  ${isFileTree ? `<button class="sr-ab-btn" id="sr-fi-collapse-all" data-tip="Collapse All">⊟</button>
+  <button class="sr-ab-btn" id="sr-fi-expand-all" data-tip="Expand All">⊞</button>
   <div class="sr-ab-sep"></div>` : ''}
-  <button class="sr-ab-btn${!isFileTree ? ' active' : ''}" id="sr-fi-view-list" data-tip="清單檢視">≡</button>
-  <button class="sr-ab-btn${isFileTree ? ' active' : ''}" id="sr-fi-view-tree" data-tip="樹狀檢視">⬡</button>
+  <button class="sr-ab-btn${!isFileTree ? ' active' : ''}" id="sr-fi-view-list" data-tip="View as List">≡</button>
+  <button class="sr-ab-btn${isFileTree ? ' active' : ''}" id="sr-fi-view-tree" data-tip="View as Tree">⬡</button>
   <div class="sr-ab-sep"></div>
-  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="要包含的檔案">
+  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="Files to include">
     <span class="sr-ab-filter-icon">⊕</span>
     <input class="sr-ab-filter-input" id="sr-ab-fi-inc" type="text" value="${escapeHtml(_srState.include)}" placeholder="*.c, *.h" spellcheck="false" autocomplete="off">
     ${_srState.include ? `<button class="sr-ab-filter-clear" data-target="inc">✕</button>` : ''}
   </div>
-  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="要排除的檔案">
+  <div class="sr-ab-filter-input-wrap sr-ab-filter-inline" data-tip="Files to exclude">
     <span class="sr-ab-filter-icon sr-ab-filter-exc">⊖</span>
     <input class="sr-ab-filter-input" id="sr-ab-fi-exc" type="text" value="${escapeHtml(_srState.exclude)}" placeholder="Build/*" spellcheck="false" autocomplete="off">
     ${_srState.exclude ? `<button class="sr-ab-filter-clear" data-target="exc">✕</button>` : ''}
@@ -5118,7 +5098,7 @@ function _srBuildFileRowsHtml(results, start, end, q) {
             : _srHighlight(dir, q)}</span>` : '';
         const ac = i === _srState.activeIdx ? ' sr-active' : '';
         const fcBadge = r.func_count > 0
-            ? `<span class="sr-fi-fc" data-tip="${r.func_count} 個函式">ƒ ${r.func_count}</span>` : '';
+            ? `<span class="sr-fi-fc" data-tip="${r.func_count} functions">ƒ ${r.func_count}</span>` : '';
         const szBadge = r.size > 0
             ? `<span class="sr-fi-sz">${_fmtBytes(r.size)}</span>` : '';
         html += `<div class="sr-fi-row${ac}" data-idx="${i}">
@@ -5199,7 +5179,7 @@ function _srRenderFileTreeNode(node, q, depth) {
         const mc = _srModuleColor(r.module);
         const ic = _extIcon(r.ext);
         const nm = r._fuzzyLabelPos ? _srFuzzyHighlight(r.label, r._fuzzyLabelPos) : _srHighlight(r.label, q);
-        const fcBadge = r.func_count > 0 ? `<span class="sr-fi-fc" data-tip="${r.func_count} 個函式">ƒ ${r.func_count}</span>` : '';
+        const fcBadge = r.func_count > 0 ? `<span class="sr-fi-fc" data-tip="${r.func_count} functions">ƒ ${r.func_count}</span>` : '';
         html += `<div class="sr-fi-row sr-fi-tree-file" data-path="${escapeHtml(r.path)}" style="padding-left:${indent + 24}px">
   <div class="sr-fi-left" style="border-left-color:${mc}"><span class="sr-fi-icon">${ic}</span></div>
   <div class="sr-fi-body">
@@ -5980,11 +5960,9 @@ function showLoading(v, msg) {
 }
 
 function cancelRender() {
-    _renderToken++;
-    if (_runningLayout) { try { _runningLayout.stop(); } catch (_) { } _runningLayout = null; }
-    _setLayoutRunning(false);
+    _renderToken++; // invalidate any in-flight render
     showLoading(false);
-    showToast('已取消', 'info');
+    showToast('已取消渲染 (Render cancelled)', 'info');
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -6189,7 +6167,7 @@ function _buildDashboardDOM() {
     <span class="dash-logo-text">VIZCODE</span>
     <span class="dash-logo-sep">|</span>
     <span class="dash-logo-sub">📊 Analytics Dashboard</span>
-    <button id="dashboard-close" data-tip="關閉儀表板 (Esc)">✕</button>
+    <button id="dashboard-close" data-tip="Close Dashboard (Esc)">✕</button>
   </div>
   <div id="dashboard-scroll">
 
@@ -6528,7 +6506,7 @@ function _buildTreemap() {
         return `
 <div class="dash-tm-cell" data-tip="${m.label}
 ${_fmtBytes(m.totalSz)}
-${m.file_count} 個檔案"
+${m.file_count} files"
      style="background:${color}22;border:1px solid ${color}55;flex:${flex};height:${h}px;min-width:${Math.round(flex * 10)}px;max-width:260px">
   <div>
     <div class="dash-tm-label" style="font-size:10px;font-weight:700;color:${color}">${label}</div>
@@ -6764,6 +6742,72 @@ const LAYOUT_PRESETS = [
         },
     },
 
+    // ── Circular Clusters (CiSE) ─────────────────────────────────────────────
+    // Best for: L0 module overview with many small clusters.
+    // Unique: auto-detects communities and places each as a circular "island".
+    // Physics simulation then spaces the islands apart — result looks like a solar
+    // system of modules, making inter-module dependencies immediately visible.
+    // Requires: cytoscape-cise
+    {
+        id: 'cise',
+        icon: '🫧',
+        label: 'Cluster Rings',
+        tip: 'CiSE — auto-groups related nodes into circular islands, best for L0 module overview (requires cise CDN)',
+        levels: [0, 1],
+        requires: 'cise',
+        config: () => {
+            // CiSE requires `clusters`: array of arrays of node ID strings.
+            // Each inner array is one circular island. Nodes not in any array
+            // are placed as free-floating singletons between the rings.
+            //
+            // Strategy: group by the node's module affiliation.
+            //   L0 view  → each node IS a module (_t === 'module'), so every
+            //               node forms its own singleton cluster — CiSE will
+            //               still space them cleanly via the physics pass.
+            //   L1 view  → nodes carry a `mod` field (their parent module ID);
+            //               group by that so same-module files ring together.
+            //   L2 view  → function nodes share a file; group by `_f` path.
+            const clusterMap = new Map(); // key → [nodeId, ...]
+            cy.nodes().forEach(n => {
+                const d = n.data();
+                let key;
+                if (d._t === 'module') {
+                    // L0: each module node is its own singleton island
+                    key = d.id;
+                } else if (d.mod) {
+                    // L1 file nodes, L2 ext_func nodes
+                    key = d.mod;
+                } else if (d._f) {
+                    // L2 internal function nodes — group by parent file path
+                    key = typeof d._f === 'object' ? (d._f.path || d._f.id || d.id) : d._f;
+                } else {
+                    // Fallback: each orphan node is its own cluster
+                    key = d.id;
+                }
+                if (!clusterMap.has(key)) clusterMap.set(key, []);
+                clusterMap.get(key).push(n.id());
+            });
+
+            const clusters = Array.from(clusterMap.values());
+
+            return {
+                name: 'cise',
+                clusters,
+                animate: true,
+                animationDuration: 600,
+                animationEasing: 'ease-out',
+                idealInterClusterEdgeLengthCoefficient: 1.6,
+                allowNodesInsideCircle: false,
+                maxRatioOfNodesInsideCircle: 0.1,
+                springCoeff: 0.45,
+                nodeRepulsion: 900,
+                gravity: 0.25,
+                gravityRange: 3.8,
+                nodeSeparation: 12.5,
+                padding: 50,
+            };
+        },
+    },
 ];
 
 const layoutSwitcherState = {
@@ -6817,7 +6861,9 @@ function refreshLayoutSwitcher() {
 }
 
 function _buildLayoutSwitcherHTML() {
+    // Filter presets to those valid for the current level
     const visiblePresets = LAYOUT_PRESETS.filter(p => !p.levels || p.levels.includes(state.level));
+
     return `
         <div class="ls-header">
             <span class="ls-header-icon">⊞</span>
@@ -6826,12 +6872,12 @@ function _buildLayoutSwitcherHTML() {
         </div>
         <div class="ls-btns">
             ${visiblePresets.map(p => {
+        // Check if required extension is loaded
         const unavailable = p.requires && !_isLayoutAvailable(p.requires);
-        const tip = unavailable ? p.tip + '\n⚠ CDN 未載入' : p.tip;
         return `
                 <button class="ls-btn${p.id === layoutSwitcherState.currentId ? ' active' : ''}${unavailable ? ' ls-unavailable' : ''}"
                         data-layout-id="${p.id}"
-                        data-tip="${tip.replace(/"/g, '&quot;')}">
+                        data-tip="${p.tip}${unavailable ? '\n⚠ CDN 未載入' : ''}">
                     <span class="ls-icon">${p.icon}</span>
                     <span class="ls-name">${p.label}</span>
                     ${unavailable ? '<span class="ls-warn">!</span>' : ''}
@@ -6841,43 +6887,29 @@ function _buildLayoutSwitcherHTML() {
     `;
 }
 
-function _setLayoutRunning(running) {
-    document.querySelectorAll('#layout-switcher .ls-btn').forEach(b => {
-        b.disabled = running;
-        b.style.pointerEvents = running ? 'none' : '';
-    });
-}
 
 function applyLayoutPreset(id) {
     const preset = LAYOUT_PRESETS.find(p => p.id === id);
     if (!preset || !cy) return;
 
+    // Guard: if this preset requires an extension that wasn't loaded, warn and bail
     if (preset.requires && !_isLayoutAvailable(preset.requires)) {
-        showToast(`⚠ Layout "${preset.label}" 需要 cytoscape-${preset.requires} — CDN 未載入`, 'error');
+        showToast(`⚠ Layout "${preset.label}" requires cytoscape-${preset.requires} — CDN script may not have loaded`, 'error');
+        console.warn(`[layout] "${preset.requires}" extension not registered. Add the CDN script to analyze_viz.py <head>.`);
         return;
     }
 
-    // Stop any currently running layout
-    if (_runningLayout) {
-        try { _runningLayout.stop(); } catch (_) { }
-        _runningLayout = null;
-    }
-
     layoutSwitcherState.currentId = id;
+
+    // Update active button visuals
     document.querySelectorAll('#layout-switcher .ls-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.layoutId === id);
     });
 
-    _setLayoutRunning(true);
-    showLoading(true, `套用佈局：${preset.label}…`);
-
+    showLoading(true, 'Applying layout…');
     const config = preset.config();
     const lay = cy.layout(config);
-    _runningLayout = lay;
-
     lay.one('layoutstop', () => {
-        _runningLayout = null;
-        _setLayoutRunning(false);
         showLoading(false);
         cy.animate({ fit: { eles: cy.elements(), padding: 40 }, duration: 300 });
     });

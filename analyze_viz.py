@@ -1046,7 +1046,7 @@ HTML_SKELETON = """\
 
 <div id="topbar">
   <div class="logo">VIZCODE</div>
-  <button id="dashboard-btn" data-tip="開啟分析儀表板" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"><span style="font-size:14px">📊</span> Dashboard</button>
+  <button id="dashboard-btn" data-tip="Open Analytics Dashboard" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"><span style="font-size:14px">📊</span> Dashboard</button>
   <div id="project-type-badge" style="display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;"></div>
   <div class="stats-bar">
     <div class="stat">Files <strong id="st-files">0</strong></div>
@@ -1056,12 +1056,12 @@ HTML_SKELETON = """\
   <div style="flex:1"></div>
     <div id="search-wrap">
       <div id="sr-modes">
-      <button class="sr-mode active" data-mode="files" id="srm-files" data-tip="搜尋檔案名稱與路徑" aria-label="Files">
+      <button class="sr-mode active" data-mode="files" id="srm-files" data-tip="Search file names and paths" aria-label="Files">
         <svg class="sr-mode-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
         </svg>
       </button>
-      <button class="sr-mode" data-mode="code" id="srm-code" data-tip="搜尋程式碼內容" aria-label="Code">
+      <button class="sr-mode" data-mode="code" id="srm-code" data-tip="Search inside code content" aria-label="Code">
         <svg class="sr-mode-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" d="M9.5 7.5L6 12l3.5 4.5 1.3-1L8.1 12l2.7-3.5-1.3-1zM14.5 7.5l-1.3 1L15.9 12l-2.7 3.5 1.3 1L18 12l-3.5-4.5z"/>
         </svg>
@@ -1071,9 +1071,9 @@ HTML_SKELETON = """\
       <span id="sr-icon">⌕</span>
       <input id="search" type="text" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">
       <div id="sr-toggles">
-        <button class="sr-toggle" id="srt-case"  data-tip="區分大小寫 (Alt+C)">Aa</button>
-        <button class="sr-toggle" id="srt-word"  data-tip="全字匹配 (Alt+W)">ab</button>
-        <button class="sr-toggle" id="srt-regex" data-tip="使用正則表達式 (Alt+R)">.*</button>
+        <button class="sr-toggle" id="srt-case"  data-tip="Match Case (Alt+C)">Aa</button>
+        <button class="sr-toggle" id="srt-word"  data-tip="Match Whole Word (Alt+W)">ab</button>
+        <button class="sr-toggle" id="srt-regex" data-tip="Use Regular Expression (Alt+R)">.*</button>
       </div>
       <span id="sr-count"></span>
     </div>
@@ -1091,14 +1091,14 @@ HTML_SKELETON = """\
       <div id="sr-results"></div>
     </div>
   </div>
-  <button id="pref-btn" data-tip="偏好設定" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
+  <button id="pref-btn" data-tip="Settings" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
 </div>
 
 <div id="breadcrumb">
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
   <button id="back-btn" onclick="goBack()">← Back</button>
-  <button id="graph-toggle-btn" data-tip="查看選中檔案的呼叫圖">⬡ Call Graph</button>
-  <button id="code-toggle-btn" data-tip="切換程式碼面板 (C)"><span class="code-icon">&#60;&#92;&#62;</span> Code</button>
+  <button id="graph-toggle-btn" data-tip="View Call Graph for Selected File">⬡ Call Graph</button>
+  <button id="code-toggle-btn" data-tip="Toggle Code Panel (C)"><span class="code-icon">&#60;&#92;&#62;</span> Code</button>
 </div>
 
 <div id="layout">
@@ -1150,14 +1150,14 @@ HTML_SKELETON = """\
       <div id="cp-file-bar">
         <span id="cp-ext-badge">.C</span>
         <span id="cp-filename">No file selected</span>
-        <button id="cp-close" data-tip="關閉">✕</button>
+        <button id="cp-close" data-tip="Close">✕</button>
       </div>
       <div id="cp-func-bar">
         <span id="cp-func-name"></span>
         <span id="cp-func-badge" class="cp-func-badge cp-func-public">PUBLIC</span>
         <div id="cp-func-nav">
-          <button class="cp-nav-btn" id="cp-prev-func" data-tip="上一個函式 (←)">‹</button>
-          <button class="cp-nav-btn" id="cp-next-func" data-tip="下一個函式 (→)">›</button>
+          <button class="cp-nav-btn" id="cp-prev-func" data-tip="Prev function (←)">‹</button>
+          <button class="cp-nav-btn" id="cp-next-func" data-tip="Next function (→)">›</button>
         </div>
       </div>
     </div>
@@ -1192,26 +1192,68 @@ HTML_SKELETON = """\
 <div id="tooltip"></div>
 
 <!-- Preferences Modal -->
-<div id="pref-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999;align-items:center;justify-content:center;backdrop-filter:blur(2px);">
-  <div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,0.7);display:flex;flex-direction:column;overflow:hidden;animation:flip-in-x 0.2s ease-out;">
-    <div style="background:var(--panel2);padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between;align-items:center;">
-      <span>Preferences</span>
-      <button id="pref-close-x" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;">✕</button>
+<div id="pref-modal" class="pref-backdrop">
+  <div class="pref-dialog">
+    <div class="pref-header">
+      <span class="pref-title">⚙ Settings</span>
+      <button id="pref-close-x" class="pref-close-x" data-tip="Close">✕</button>
     </div>
-    <div style="padding:20px 16px;display:flex;flex-direction:column;gap:12px;">
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <label for="font-select" style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Code Editor Font</label>
-        <select id="font-select" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px;outline:none;cursor:pointer;font-family:inherit;">
-          <option value="'JetBrains Mono', monospace" style="font-family:'JetBrains Mono', monospace;font-size:14px;">JetBrains Mono</option>
-          <option value="'Fira Code', monospace" style="font-family:'Fira Code', monospace;font-size:14px;">Fira Code</option>
-          <option value="'Cascadia Code', monospace" style="font-family:'Cascadia Code', monospace;font-size:14px;">Cascadia Code</option>
-          <option value="Consolas, monospace" style="font-family:Consolas, monospace;font-size:14px;">Consolas</option>
-          <option value="'Space Mono', monospace" style="font-family:'Space Mono', monospace;font-size:14px;">Space Mono</option>
-        </select>
+    <div class="pref-body">
+
+      <div class="pref-section">
+        <div class="pref-section-label">Appearance</div>
+        <div class="pref-row">
+          <label class="pref-label" for="font-select">Code Editor Font</label>
+          <select id="font-select" class="pref-select">
+            <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+            <option value="'Fira Code', monospace">Fira Code</option>
+            <option value="'Cascadia Code', monospace">Cascadia Code</option>
+            <option value="Consolas, monospace">Consolas</option>
+            <option value="'Space Mono', monospace">Space Mono</option>
+          </select>
+        </div>
+        <div class="pref-row pref-row-disabled">
+          <label class="pref-label" for="pref-theme-select">Theme <span class="pref-badge">Coming Soon</span></label>
+          <select id="pref-theme-select" class="pref-select" disabled>
+            <option value="dark">Dark (Default)</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
       </div>
+
+      <div class="pref-section">
+        <div class="pref-section-label">Language</div>
+        <div class="pref-row">
+          <label class="pref-label" for="pref-lang-select">Interface Language</label>
+          <select id="pref-lang-select" class="pref-select">
+            <option value="en">English</option>
+            <option value="zh-tw">繁體中文</option>
+          </select>
+        </div>
+        <p class="pref-hint">Translation strings are defined in <code>i18n.js</code>. Reload after changing.</p>
+      </div>
+
+      <div class="pref-section">
+        <div class="pref-section-label">Default Behaviour</div>
+        <label class="pref-check-row">
+          <input type="checkbox" id="pref-ext-files" class="pref-check">
+          <span class="pref-check-label">
+            <span class="pref-check-title">External Files always ON</span>
+            <span class="pref-check-desc">Show external module files by default in Dependency Map (L1)</span>
+          </span>
+        </label>
+        <label class="pref-check-row">
+          <input type="checkbox" id="pref-ext-funcs" class="pref-check">
+          <span class="pref-check-label">
+            <span class="pref-check-title">External Functions always ON</span>
+            <span class="pref-check-desc">Show external function nodes by default in Call Flow (L2).<br>External lines follow automatically.</span>
+          </span>
+        </label>
+      </div>
+
     </div>
-    <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
-      <button id="pref-close-btn" style="background:var(--accent);color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;">Done</button>
+    <div class="pref-footer">
+      <button id="pref-close-btn" class="pref-done-btn">Done</button>
     </div>
   </div>
 </div>
