@@ -2,6 +2,7 @@
 """
 vizcode.py — VIZCODE Interactive CLI Launcher
 Zero pip dependencies — pure Python stdlib only.
+Compatible: Python 3.8+, Windows cp950/UTF-8, Mac, Linux
 
 Usage:
     python vizcode.py
@@ -11,6 +12,15 @@ Usage:
 import sys, os, json, time, socket, subprocess, webbrowser
 import urllib.request, urllib.error
 from pathlib import Path
+from typing import Optional, List
+
+# ─── Force UTF-8 output on Windows ───────────────────────────────────────────
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    # Also set console code page to UTF-8
+    os.system("chcp 65001 >nul 2>&1")
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent
@@ -22,7 +32,7 @@ BASE_URL     = f"http://localhost:{PORT}"
 # ─── ANSI colors ─────────────────────────────────────────────────────────────
 IS_WIN = sys.platform == "win32"
 
-def _enable_win_ansi():
+def _enable_win_ansi() -> bool:
     try:
         import ctypes
         ctypes.windll.kernel32.SetConsoleMode(
@@ -51,7 +61,7 @@ SHOW_C = "\033[?25h"     if USE_COLOR else ""
 # ─── Cross-platform single keypress ──────────────────────────────────────────
 if IS_WIN:
     import msvcrt
-    def _getch():
+    def _getch() -> str:
         ch = msvcrt.getwch()
         if ch in ('\x00', '\xe0'):
             return {'H':'UP','P':'DOWN','M':'RIGHT','K':'LEFT'}.get(msvcrt.getwch(),'OTHER')
@@ -61,7 +71,7 @@ if IS_WIN:
         return ch
 else:
     import tty, termios
-    def _getch():
+    def _getch() -> str:
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
@@ -91,15 +101,14 @@ def print_banner():
     print()
     for line in BANNER_LINES:
         print(orange(line))
-    print(dim(f"  Universal Code Visualizer  ·  v4.0  ·  {BASE_URL}"))
+    print(dim(f"  Universal Code Visualizer  v4.0  |  {BASE_URL}"))
     print()
 
 # ─── Interactive arrow-key menu ───────────────────────────────────────────────
-def run_menu(title: str, items: list, hint: str = "↑↓ to move   Enter to select   Esc to quit") -> int | None:
+def run_menu(title: str, items: List[str], hint: str = "Up/Down to move   Enter to select   Esc to quit") -> Optional[int]:
     sel = 0
     n   = len(items)
-    # skip separators on first position
-    while items[sel].startswith("─"): sel = (sel + 1) % n
+    while items[sel].startswith("-"): sel = (sel + 1) % n
 
     def _render():
         print(CLEAR, end="")
@@ -108,10 +117,10 @@ def run_menu(title: str, items: list, hint: str = "↑↓ to move   Enter to sel
         print(f"  {bold(title)}")
         print(f"  {dim(hint)}\n")
         for i, label in enumerate(items):
-            if label.startswith("─"):
+            if label.startswith("-"):
                 print(f"  {dim(label)}")
             elif i == sel:
-                print(f"  {orange('▶')} {orange(bold(label))}")
+                print(f"  {orange('>')} {orange(bold(label))}")
             else:
                 print(f"    {label}")
         print()
@@ -124,10 +133,10 @@ def run_menu(title: str, items: list, hint: str = "↑↓ to move   Enter to sel
             key = _getch()
             if key == 'UP':
                 sel = (sel - 1) % n
-                while items[sel].startswith("─"): sel = (sel - 1) % n
+                while items[sel].startswith("-"): sel = (sel - 1) % n
             elif key == 'DOWN':
                 sel = (sel + 1) % n
-                while items[sel].startswith("─"): sel = (sel + 1) % n
+                while items[sel].startswith("-"): sel = (sel + 1) % n
             elif key == 'ENTER':
                 return sel
             elif key in ('ESC', 'q', 'Q'):
@@ -140,14 +149,14 @@ def run_menu(title: str, items: list, hint: str = "↑↓ to move   Enter to sel
 # ─── Path input ───────────────────────────────────────────────────────────────
 def prompt_path(msg: str) -> str:
     print(SHOW_C, end="", flush=True)
-    sys.stdout.write(f"\n  {cyan('?')} {bold(msg)}\n  {dim('→')} ")
+    sys.stdout.write(f"\n  {cyan('?')} {bold(msg)}\n  > ")
     sys.stdout.flush()
     try:    return input().strip().strip('"\'')
     except: return ""
 
 # ─── History ─────────────────────────────────────────────────────────────────
-def load_history() -> list:
-    try:    return json.loads(HISTORY_FILE.read_text())[:8]
+def load_history() -> List[str]:
+    try:    return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))[:8]
     except: return []
 
 def save_history(path: str):
@@ -155,7 +164,7 @@ def save_history(path: str):
     path = str(Path(path).resolve())
     if path in hist: hist.remove(path)
     hist.insert(0, path)
-    try: HISTORY_FILE.write_text(json.dumps(hist[:8]))
+    try: HISTORY_FILE.write_text(json.dumps(hist[:8]), encoding="utf-8")
     except: pass
 
 # ─── Server ───────────────────────────────────────────────────────────────────
@@ -185,7 +194,7 @@ def stop_server():
         _server_proc = None
 
 # ─── Analysis ─────────────────────────────────────────────────────────────────
-def trigger_analysis(path: str) -> str | None:
+def trigger_analysis(path: str) -> Optional[str]:
     try:
         payload = json.dumps({"path": path}).encode()
         req = urllib.request.Request(
@@ -207,9 +216,9 @@ def poll_job(job_id: str) -> dict:
 def run_analysis_with_progress(path: str):
     print(CLEAR, end="")
     print_banner()
-    print(f"  {cyan('▶')} Starting server…")
+    print(f"  {cyan('>')} Starting server...")
     start_server()
-    print(f"  {cyan('▶')} Analyzing: {dim(path)}\n")
+    print(f"  {cyan('>')} Analyzing: {dim(path)}\n")
 
     job_id = trigger_analysis(path)
     if not job_id: return
@@ -218,7 +227,9 @@ def run_analysis_with_progress(path: str):
     BAR = 30
     def _bar(pct):
         f = int(BAR * pct / 100)
-        return f"[{orange('█'*f + dim('░'*(BAR-f)))}] {pct:>3}%"
+        filled = orange("#" * f)
+        empty  = dim("." * (BAR - f))
+        return f"[{filled}{empty}] {pct:>3}%"
 
     last_pct = -1
     while True:
@@ -230,7 +241,7 @@ def run_analysis_with_progress(path: str):
             sys.stdout.flush()
             last_pct = pct
         if job.get("done"):
-            sys.stdout.write(f"\r  {_bar(100)}  {green('Done! ✓')}            \n")
+            sys.stdout.write(f"\r  {_bar(100)}  {green('Done!')}            \n")
             sys.stdout.flush()
             break
         if job.get("error"):
@@ -239,17 +250,17 @@ def run_analysis_with_progress(path: str):
         time.sleep(0.3)
 
     result_url = f"{BASE_URL}/result?job={job_id}"
-    print(f"\n  {green('✓')} Opening browser…")
+    print(f"\n  {green('>')} Opening browser...")
     print(f"  {dim(result_url)}\n")
     time.sleep(0.4)
     webbrowser.open(result_url)
 
-# ─── Server badge (shown in menu) ─────────────────────────────────────────────
+# ─── Server badge ─────────────────────────────────────────────────────────────
 def print_server_badge():
     if is_server_running():
-        print(f"  {green('●')} Server running  {dim(BASE_URL)}\n")
+        print(f"  {green('*')} Server running  {dim(BASE_URL)}\n")
     else:
-        print(f"  {dim('○')} Server not started\n")
+        print(f"  {dim('o')} Server not started\n")
 
 # ─── Actions ──────────────────────────────────────────────────────────────────
 def action_analyze_new():
@@ -270,9 +281,9 @@ def action_recent():
         print(CLEAR, end=""); print_banner()
         print(f"\n  {dim('No recent projects yet.')}\n")
         time.sleep(1.5); return
-    items = hist + ["─" * 40, "← Back"]
-    idx   = run_menu("Recent Projects", items, "↑↓ to move   Enter to select")
-    if idx is None or items[idx].startswith("─") or items[idx] == "← Back": return
+    items = hist + ["-" * 40, "<- Back"]
+    idx   = run_menu("Recent Projects", items, "Up/Down to move   Enter to select")
+    if idx is None or items[idx].startswith("-") or items[idx] == "<- Back": return
     path = items[idx]
     if not Path(path).is_dir():
         print(red(f"\n  [!] Directory no longer exists.\n"))
@@ -283,43 +294,43 @@ def action_recent():
 def action_open_browser():
     if not is_server_running():
         print(CLEAR, end=""); print_banner()
-        print(yellow(f"\n  [!] Server not running — analyze a project first.\n"))
+        print(yellow(f"\n  [!] Server not running - analyze a project first.\n"))
         time.sleep(1.8); return
     webbrowser.open(BASE_URL)
 
 def action_help():
     print(CLEAR, end=""); print_banner()
     print(f"  {bold(cyan('How to use VIZCODE'))}\n")
-    print(f"  {yellow('1.')} Analyze a Project  — pick a folder, VIZCODE scans all code,")
+    print(f"  {yellow('1.')} Analyze a Project  -- pick a folder, VIZCODE scans all code,")
     print(f"                         then auto-opens the visualizer in your browser.")
-    print(f"  {yellow('2.')} Recent Projects     — re-run on a previously scanned project.")
-    print(f"  {yellow('3.')} Open Browser        — jump to localhost:{PORT} (server must be running).\n")
+    print(f"  {yellow('2.')} Recent Projects     -- re-run on a previously scanned project.")
+    print(f"  {yellow('3.')} Open Browser        -- jump to localhost:{PORT} (server must be running).\n")
     print(f"  {bold(cyan('Supported languages:'))}")
-    print(f"    🔲  UEFI / AMI BIOS    🐍  Python    ⚡  JS / TS    🔵  Go\n")
+    print(f"    [BIOS] UEFI / AMI BIOS    [PY] Python    [JS] JS / TS    [GO] Go\n")
     print(f"  {bold(cyan('Quick start:'))}")
     print(f"    {dim('python vizcode.py /path/to/project')}\n")
     _press_enter()
 
 def action_exit():
     print(CLEAR, end=""); print_banner()
-    print(f"  {dim('Stopping server…')}")
+    print(f"  {dim('Stopping server...')}")
     stop_server()
-    print(f"  {orange('Goodbye! 👋')}\n")
+    print(f"  {orange('Goodbye!')}\n")
     sys.exit(0)
 
 def _press_enter():
-    print(f"\n  {dim('Press Enter to return to menu…')}", end="", flush=True)
+    print(f"\n  {dim('Press Enter to return to menu...')}", end="", flush=True)
     try: input()
     except: pass
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 MENU = [
-    ("📂  Analyze a Project",  action_analyze_new),
-    ("🕑  Recent Projects",    action_recent),
-    ("🌐  Open Browser",       action_open_browser),
-    ("─" * 35,                 None),
-    ("❓  Help",               action_help),
-    ("✖   Exit",               action_exit),
+    ("[1] Analyze a Project",  action_analyze_new),
+    ("[2] Recent Projects",    action_recent),
+    ("[3] Open Browser",       action_open_browser),
+    ("-" * 35,                 None),
+    ("[H] Help",               action_help),
+    ("[Q] Exit",               action_exit),
 ]
 
 def main():
