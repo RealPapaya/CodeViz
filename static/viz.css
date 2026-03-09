@@ -1354,7 +1354,9 @@ body {
 }
 
 #loading.show {
-    display: flex
+    display: flex;
+    position: fixed;
+    z-index: 2000;
 }
 
 .spinner {
@@ -3314,3 +3316,61 @@ body {
     line-height: 1;
     pointer-events: none;
 }
+
+/* ─── Global themed tooltip ─────────────────────────────────────────────────── */
+#g-tooltip {
+    display: none;
+    position: fixed;
+    z-index: 9999;
+    max-width: 260px;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,212,255,0.07);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.13s ease, transform 0.13s ease;
+}
+#g-tooltip.g-tip-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+.gt-head {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.45;
+    white-space: normal;
+    word-break: break-word;
+    margin-bottom: 3px;
+}
+/* When the tip has only one line (no description), no bottom margin needed */
+.gt-head:only-child { margin-bottom: 0; }
+.gt-line {
+    display: block;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+    white-space: normal;
+    word-break: break-word;
+    margin-top: 1px;
+}
+.gt-warn {
+    display: block;
+    font-size: 11px;
+    color: #f59e0b;
+    margin-top: 5px;
+    line-height: 1.4;
+}
+
+/* ── Layout buttons disabled while layout is running ────────────────────────── */
+.ls-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+

@@ -1046,7 +1046,7 @@ HTML_SKELETON = """\
 
 <div id="topbar">
   <div class="logo">VIZCODE</div>
-  <button id="dashboard-btn" title="Open Analytics Dashboard" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"><span style="font-size:14px">📊</span> Dashboard</button>
+  <button id="dashboard-btn" data-tip="開啟分析儀表板" onclick="openDashboard()" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:0.05em;padding:5px 10px;border-radius:6px;transition:all 0.2s;white-space:nowrap;" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--muted)'"><span style="font-size:14px">📊</span> Dashboard</button>
   <div id="project-type-badge" style="display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;"></div>
   <div class="stats-bar">
     <div class="stat">Files <strong id="st-files">0</strong></div>
@@ -1056,12 +1056,12 @@ HTML_SKELETON = """\
   <div style="flex:1"></div>
     <div id="search-wrap">
       <div id="sr-modes">
-      <button class="sr-mode active" data-mode="files" id="srm-files" title="Search file names and paths" aria-label="Files">
+      <button class="sr-mode active" data-mode="files" id="srm-files" data-tip="搜尋檔案名稱與路徑" aria-label="Files">
         <svg class="sr-mode-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
         </svg>
       </button>
-      <button class="sr-mode" data-mode="code" id="srm-code" title="Search inside code content" aria-label="Code">
+      <button class="sr-mode" data-mode="code" id="srm-code" data-tip="搜尋程式碼內容" aria-label="Code">
         <svg class="sr-mode-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <path fill="currentColor" d="M9.5 7.5L6 12l3.5 4.5 1.3-1L8.1 12l2.7-3.5-1.3-1zM14.5 7.5l-1.3 1L15.9 12l-2.7 3.5 1.3 1L18 12l-3.5-4.5z"/>
         </svg>
@@ -1071,9 +1071,9 @@ HTML_SKELETON = """\
       <span id="sr-icon">⌕</span>
       <input id="search" type="text" placeholder="Search files… ( / )" autocomplete="off" spellcheck="false">
       <div id="sr-toggles">
-        <button class="sr-toggle" id="srt-case"  title="Match Case (Alt+C)">Aa</button>
-        <button class="sr-toggle" id="srt-word"  title="Match Whole Word (Alt+W)">ab</button>
-        <button class="sr-toggle" id="srt-regex" title="Use Regular Expression (Alt+R)">.*</button>
+        <button class="sr-toggle" id="srt-case"  data-tip="區分大小寫 (Alt+C)">Aa</button>
+        <button class="sr-toggle" id="srt-word"  data-tip="全字匹配 (Alt+W)">ab</button>
+        <button class="sr-toggle" id="srt-regex" data-tip="使用正則表達式 (Alt+R)">.*</button>
       </div>
       <span id="sr-count"></span>
     </div>
@@ -1091,14 +1091,14 @@ HTML_SKELETON = """\
       <div id="sr-results"></div>
     </div>
   </div>
-  <button id="pref-btn" title="Preferences" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
+  <button id="pref-btn" data-tip="偏好設定" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:18px;margin-left:4px;padding:4px;transition:color 0.2s;flex-shrink:0;">⚙</button>
 </div>
 
 <div id="breadcrumb">
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
   <button id="back-btn" onclick="goBack()">← Back</button>
-  <button id="graph-toggle-btn" title="View Call Graph for Selected File">⬡ Call Graph</button>
-  <button id="code-toggle-btn" title="Toggle Code Panel (C)"><span class="code-icon">&#60;&#92;&#62;</span> Code</button>
+  <button id="graph-toggle-btn" data-tip="查看選中檔案的呼叫圖">⬡ Call Graph</button>
+  <button id="code-toggle-btn" data-tip="切換程式碼面板 (C)"><span class="code-icon">&#60;&#92;&#62;</span> Code</button>
 </div>
 
 <div id="layout">
@@ -1150,14 +1150,14 @@ HTML_SKELETON = """\
       <div id="cp-file-bar">
         <span id="cp-ext-badge">.C</span>
         <span id="cp-filename">No file selected</span>
-        <button id="cp-close" title="Close">✕</button>
+        <button id="cp-close" data-tip="關閉">✕</button>
       </div>
       <div id="cp-func-bar">
         <span id="cp-func-name"></span>
         <span id="cp-func-badge" class="cp-func-badge cp-func-public">PUBLIC</span>
         <div id="cp-func-nav">
-          <button class="cp-nav-btn" id="cp-prev-func" title="Prev function (←)">‹</button>
-          <button class="cp-nav-btn" id="cp-next-func" title="Next function (→)">›</button>
+          <button class="cp-nav-btn" id="cp-prev-func" data-tip="上一個函式 (←)">‹</button>
+          <button class="cp-nav-btn" id="cp-next-func" data-tip="下一個函式 (→)">›</button>
         </div>
       </div>
     </div>
