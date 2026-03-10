@@ -584,6 +584,16 @@ function initCodePanel() {
 
     // Graph button: enter call graph for current file, or restore L1 state
     document.getElementById('graph-toggle-btn').onclick = () => {
+        // Mutually exclusive: If Structure view is active, switch to Call Graph view
+        if (window._sv && window._sv.active) {
+            if (window.svHideSvView) window.svHideSvView();
+            // If we weren't already in Call Graph, jump into it
+            if (state.level < 2 && typeof drillCurrentFileToL2 === 'function') {
+                drillCurrentFileToL2();
+            }
+            return; // Switched to Call Graph, done
+        }
+
         if (state.level === 2) {
             restoreL1FromCallGraph();
         } else {
@@ -3937,6 +3947,9 @@ function loadLevel0() {
 // ─── L1: Module → show ALL files flat (no folder nodes ever) ─────────────────
 function drillToModule(modId, opts) {
     // opts: { focusFile?: string, closeExt?: bool }
+    if (window._sv && window._sv.active && window.svHideSvView) window.svHideSvView();
+    if (window.svHideStructureBtn) svHideStructureBtn();
+
     if (state.level === 0) state.history.push({ level: 0 });
     state.level = 1; state.activeModule = modId; state.activeSubDir = null;
     showLoading(true, T('loadingModule', { module: modId }));
@@ -4419,7 +4432,10 @@ function updateCallGraphBtn(filePath) {
 
     // Always label as "Call Graph"
     btn.innerHTML = `⬡ ${T('graphBtnCallGraph')}`;
-    btn.classList.toggle('active', isL2);
+
+    // Don't mark Call Graph as active if Structure view is currently showing
+    const structActive = window._sv && window._sv.active;
+    btn.classList.toggle('active', isL2 && !structActive);
 }
 
 /**
@@ -4434,7 +4450,7 @@ function restoreL1FromCallGraph() {
     // hideFuncView clears L2 DOM and cy classes, but does NOT reload L1 nodes.
     // We then need to re-render L1 (cy was replaced during L2).
     hideFuncView();
-    if (window.svHideStructureBtn) svHideStructureBtn();
+    if (window._sv && window._sv.active && window.svHideSvView) window.svHideSvView();
     state.level = 1;
     state.activeFile = null;
 
@@ -4466,9 +4482,17 @@ function restoreL1FromCallGraph() {
         setTimeout(() => {
             cy?.elements().unselect();
             cy?.$id(snap.selectedNodeId).select();
-            updateCallGraphBtn(codeState.currentFile);
         }, 50);
     }
+
+    setTimeout(() => {
+        updateCallGraphBtn(codeState.currentFile);
+        if (codeState.currentFile && window.svUpdateStructureBtn) {
+            const fName = codeState.currentFile.split('/').pop();
+            const ex = fName.includes('.') ? '.' + fName.split('.').pop().toLowerCase() : '';
+            svUpdateStructureBtn(codeState.currentFile, ex);
+        }
+    }, 50);
 
     l2State._l1Snapshot = null;
     updateBreadcrumb();

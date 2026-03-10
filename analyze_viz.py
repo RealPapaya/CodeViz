@@ -1202,7 +1202,7 @@ HTML_SKELETON = """\
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
   <button id="back-btn" onclick="goBack()" data-i18n="back" disabled>&#8592; Back</button>
   <button id="graph-toggle-btn" data-i18n-attr="data-tip" data-i18n="graphBtnCallGraphTip" disabled>⬡ <span data-i18n="graphBtnCallGraph">Call Graph</span></button>
-  <button id="struct-toggle-btn" disabled>⬛ Structure</button>
+  <button id="struct-toggle-btn" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-2px"><rect x="8" y="3" width="8" height="6" rx="1"></rect><path d="M12 9v4"></path><path d="M5 13h14"></path><path d="M5 13v3"></path><rect x="2" y="16" width="6" height="5" rx="1"></rect><path d="M19 13v3"></path><rect x="16" y="16" width="6" height="5" rx="1"></rect></svg>Structure</button>
   <button id="code-toggle-btn" data-i18n-attr="data-tip" data-i18n="codePanelToggleTip"><span class="code-icon">&#60;&#92;&#62;</span> <span data-i18n="codePanelToggle">Code</span></button>
 </div>
 

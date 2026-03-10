@@ -378,7 +378,7 @@ function _svRender(src, ext, fname) {
     const header = document.createElement('div');
     header.className = 'sv-header';
     header.innerHTML = `
-        <span class="sv-header-title">⬛ Structure · <code>${_svEsc(fname)}</code></span>
+        <span class="sv-header-title" style="display:flex;align-items:center;gap:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="8" height="6" rx="1"></rect><path d="M12 9v4"></path><path d="M5 13h14"></path><path d="M5 13v3"></path><rect x="2" y="16" width="6" height="5" rx="1"></rect><path d="M19 13v3"></path><rect x="16" y="16" width="6" height="5" rx="1"></rect></svg>Structure<span style="color:var(--muted)">·</span><code>${_svEsc(fname)}</code></span>
         <span class="sv-header-count">${classes.length} class${classes.length !== 1 ? 'es' : ''}</span>
         <button class="sv-close-btn" onclick="svToggleStructView()" title="Close Structure View">✕</button>`;
     view.appendChild(header);

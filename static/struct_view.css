@@ -353,10 +353,10 @@
 
 #struct-toggle-btn:hover,
 #struct-toggle-btn.active {
-    border-color: var(--accent, #fbbf24);
-    color: var(--accent, #fbbf24);
+    border-color: #f59e0b;
+    color: #f59e0b;
 }
 
 #struct-toggle-btn.active {
-    background: rgba(251, 191, 36, .08);
+    background: rgba(245, 158, 11, .08);
 }
