@@ -871,7 +871,7 @@ function initL2Toolbar() {
         expandBtn.addEventListener('click', () => {
             if (!l2State.activeFile) return;
             l2State.preserveViewport = cy ? { pan: { ...cy.pan() }, zoom: cy.zoom() } : null;
-            l2State.expandOriginPos  = null;
+            l2State.expandOriginPos = null;
             l2State.expandedModules = new Set(l2State.externalModules || []);
             if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
             (l2State.sysCategories || []).forEach(c => l2State.expandedSysCategories.add(c));
@@ -884,7 +884,7 @@ function initL2Toolbar() {
         collapseBtn.addEventListener('click', () => {
             if (!l2State.activeFile) return;
             l2State.preserveViewport = cy ? { pan: { ...cy.pan() }, zoom: cy.zoom() } : null;
-            l2State.expandOriginPos  = null;
+            l2State.expandOriginPos = null;
             l2State.expandedModules = new Set();
             if (l2State.expandedSysCategories) l2State.expandedSysCategories.clear();
             renderL2Flowchart(l2State.activeFile);
@@ -1289,23 +1289,23 @@ function _saveL2Snapshot() {
     if (idx < 0) return;
     if (!l2State.fileHistorySnapshots) l2State.fileHistorySnapshots = [];
     l2State.fileHistorySnapshots[idx] = {
-        pan:  { ...cy.pan() },
+        pan: { ...cy.pan() },
         zoom: cy.zoom(),
-        expandedModules:       new Set(l2State.expandedModules),
+        expandedModules: new Set(l2State.expandedModules),
         expandedSysCategories: new Set(l2State.expandedSysCategories || []),
-        activeFuncIdx:         l2State.activeFuncIdx || 0,
+        activeFuncIdx: l2State.activeFuncIdx || 0,
     };
 }
 
 function _applyL2Snapshot(idx) {
     const snap = l2State.fileHistorySnapshots && l2State.fileHistorySnapshots[idx];
     if (!snap) return;
-    l2State.expandedModules       = new Set(snap.expandedModules);
+    l2State.expandedModules = new Set(snap.expandedModules);
     l2State.expandedSysCategories = new Set(snap.expandedSysCategories);
-    l2State.activeFuncIdx         = snap.activeFuncIdx;
+    l2State.activeFuncIdx = snap.activeFuncIdx;
     // Schedule viewport restore after layout (preserveViewport, no originPos → exact restore)
-    l2State.preserveViewport      = { pan: snap.pan, zoom: snap.zoom };
-    l2State.expandOriginPos       = null;
+    l2State.preserveViewport = { pan: snap.pan, zoom: snap.zoom };
+    l2State.expandOriginPos = null;
 }
 
 function goL2Prev() {
@@ -2234,10 +2234,10 @@ function drillCurrentFileToL2() {
 function drillDownExtFunc(node) {
     const d = node.data();
     const targetFile = d._f || null;
-    const funcName   = d.fn || null;
+    const funcName = d.fn || null;
     if (!targetFile || !funcName) return;
 
-    const nodeId  = node.id();
+    const nodeId = node.id();
     const groupId = `dgroup-${_hashId(nodeId)}`;
 
     // ── Collapse if already drilled ──────────────────────────────────────────
@@ -2247,9 +2247,9 @@ function drillDownExtFunc(node) {
     }
 
     // ── Expand ───────────────────────────────────────────────────────────────
-    const funcs    = DATA.funcs_by_file[targetFile] || [];
+    const funcs = DATA.funcs_by_file[targetFile] || [];
     const callList = DATA.func_calls_by_file?.[targetFile] || null;
-    const nameToFile  = DATA.func_name_to_file  || {};
+    const nameToFile = DATA.func_name_to_file || {};
     const nameToFiles = DATA.func_name_to_files || {};
     const fileToModule = DATA.file_to_module || {};
 
@@ -2267,7 +2267,7 @@ function drillDownExtFunc(node) {
 
     // Determine group border color from the source ext_func node
     const groupColor = node.data('bc') || '#64748b';
-    const fileLabel  = targetFile.split('/').pop();   // filename only
+    const fileLabel = targetFile.split('/').pop();   // filename only
 
     // Create the compound parent group node FIRST (must exist before children)
     const groupNode = {
@@ -4378,7 +4378,7 @@ function restoreL1FromCallGraph() {
     // Re-render L1 with viewport preserved
     if (snap) {
         depMapState.preserveViewport = { pan: snap.pan, zoom: snap.zoom };
-        depMapState.expandOriginPos  = null;
+        depMapState.expandOriginPos = null;
     }
 
     // drillToModule re-renders the L1 graph; _postLayoutL1 will restore viewport
@@ -4629,8 +4629,8 @@ function onNodeTap(node) {
         // Click on a drill_group compound box → collapse it
         if (d._t === 'drill_group') {
             const srcNodeId = d._srcNodeId;
-            const srcNode   = srcNodeId ? cy.$id(srcNodeId) : null;
-            const fn        = srcNode?.data('fn') || '';
+            const srcNode = srcNodeId ? cy.$id(srcNodeId) : null;
+            const fn = srcNode?.data('fn') || '';
             _collapseDrillGroup(srcNode || node, node.id(), fn);
             return;
         }
@@ -4651,9 +4651,13 @@ function onNodeTap(node) {
                     focusL2External({ file: d._f || null, func: d.fn, mod: d.mod, nodeId: node.id() }, { center: true });
                 }
             } else {
-                const callerIdx = pickCallerIdxForExternal(node);
-                if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
-                syncActiveL2FuncCode(d.fn);
+                if (d._f) {
+                    _syncCodePanel(d._f, d.fn);
+                } else {
+                    const callerIdx = pickCallerIdxForExternal(node);
+                    if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
+                    syncActiveL2FuncCode(d.fn);
+                }
             }
             return;
         }
@@ -4668,9 +4672,13 @@ function onNodeTap(node) {
             if (isDouble) {
                 drillDownExtFunc(node);
             } else {
-                const callerIdx = pickCallerIdxForExternal(node);
-                if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
-                syncActiveL2FuncCode(d.fn);
+                if (d._f) {
+                    _syncCodePanel(d._f, d.fn);
+                } else {
+                    const callerIdx = pickCallerIdxForExternal(node);
+                    if (callerIdx != null) l2State.activeFuncIdx = callerIdx;
+                    syncActiveL2FuncCode(d.fn);
+                }
             }
             return;
         }

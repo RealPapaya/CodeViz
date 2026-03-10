@@ -1,0 +1,59 @@
+app:
+  name: testproject
+  version: "1.0.0"
+  debug: false
+
+server:
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+database:
+  host: localhost
+  port: 5432
+  name: testproject_dev
+  user: appuser
+  password: ""  # set via env: DATABASE_PASSWORD
+  max_connections: 20
+  min_connections: 2
+  connect_timeout: 5s
+  sslmode: disable
+
+redis:
+  addr: "localhost:6379"
+  db: 0
+  max_retries: 3
+  dial_timeout: 2s
+
+worker:
+  concurrency: 4
+  queue_capacity: 512
+  job_timeout: 60s
+  retry_delay: 5s
+
+log:
+  level: info
+  format: json
+  output: stdout
+
+cors:
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+  allowed_headers:
+    - Content-Type
+    - Authorization
+    - X-Request-ID
+  max_age: 3600
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 100
+  burst: 20

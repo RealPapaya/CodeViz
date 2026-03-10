@@ -1,0 +1,44 @@
+# Go
+/bin/
+*.exe
+*.so
+*.a
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+.venv/
+
+# Rust
+target/
+Cargo.lock
+
+# Node
+node_modules/
+dist/
+.parcel-cache/
+
+# Config / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Build
+coverage.out
+coverage.html
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars

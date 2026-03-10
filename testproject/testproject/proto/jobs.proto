@@ -1,0 +1,103 @@
+// proto/jobs.proto — Job service gRPC definitions
+syntax = "proto3";
+
+package jobs.v1;
+
+option go_package = "github.com/testproject/proto/jobs/v1;jobsv1";
+option java_package = "com.testproject.jobs.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_PENDING     = 1;
+  JOB_STATUS_RUNNING     = 2;
+  JOB_STATUS_COMPLETED   = 3;
+  JOB_STATUS_FAILED      = 4;
+  JOB_STATUS_CANCELLED   = 5;
+}
+
+enum Priority {
+  PRIORITY_NORMAL = 0;
+  PRIORITY_HIGH   = 1;
+  PRIORITY_LOW    = 2;
+}
+
+// ── Messages ─────────────────────────────────────────────────────────────────
+
+message Job {
+  string                    id          = 1;
+  string                    type        = 2;
+  JobStatus                 status      = 3;
+  Priority                  priority    = 4;
+  google.protobuf.Struct    payload     = 5;
+  google.protobuf.Struct    result      = 6;
+  string                    error_msg   = 7;
+  uint32                    retry_count = 8;
+  google.protobuf.Timestamp created_at  = 9;
+  google.protobuf.Timestamp updated_at  = 10;
+  google.protobuf.Timestamp started_at  = 11;
+  google.protobuf.Timestamp finished_at = 12;
+}
+
+message CreateJobRequest {
+  string                 type     = 1;
+  Priority               priority = 2;
+  google.protobuf.Struct payload  = 3;
+}
+
+message CreateJobResponse {
+  Job job = 1;
+}
+
+message GetJobRequest {
+  string id = 1;
+}
+
+message GetJobResponse {
+  Job job = 1;
+}
+
+message ListJobsRequest {
+  JobStatus status = 1;  // filter; unspecified = all
+  int32     limit  = 2;
+  int32     offset = 3;
+}
+
+message ListJobsResponse {
+  repeated Job jobs  = 1;
+  int32        total = 2;
+}
+
+message CancelJobRequest {
+  string id = 1;
+}
+
+message CancelJobResponse {
+  Job job = 1;
+}
+
+message StreamJobEventsRequest {
+  string job_id = 1;
+}
+
+message JobEvent {
+  string    job_id    = 1;
+  JobStatus old_status = 2;
+  JobStatus new_status = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+// ── Service ──────────────────────────────────────────────────────────────────
+
+service JobService {
+  rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc StreamJobEvents(StreamJobEventsRequest) returns (stream JobEvent);
+}
