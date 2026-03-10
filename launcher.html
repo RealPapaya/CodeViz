@@ -659,6 +659,41 @@
                     </select>
                 </div>
             </div>
+            <div
+                style="padding:12px 16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px;">
+                <div style="font-size:12px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;"
+                    data-i18n="sectionBehaviour">Default Behaviour</div>
+                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                    <input type="checkbox" id="pref-ext-files" style="margin-top:2px;">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        <span style="font-size:13px;font-weight:500;color:var(--text);"
+                            data-i18n="extFilesAlways">External Files always ON</span>
+                        <span style="font-size:11px;color:var(--muted);line-height:1.4;"
+                            data-i18n="extFilesAlwaysDesc">Show external module files by default in Dependency Map
+                            (L1)</span>
+                    </div>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                    <input type="checkbox" id="pref-ext-funcs" style="margin-top:2px;">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        <span style="font-size:13px;font-weight:500;color:var(--text);"
+                            data-i18n="extFuncsAlways">External Functions always ON</span>
+                        <span style="font-size:11px;color:var(--muted);line-height:1.4;"
+                            data-i18n="extFuncsAlwaysDesc">Show external function nodes by default in Call Flow
+                            (L2).<br>External lines follow automatically.</span>
+                    </div>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                    <input type="checkbox" id="pref-ext-expand" style="margin-top:2px;">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        <span style="font-size:13px;font-weight:500;color:var(--text);"
+                            data-i18n="extExpandDefault">Expand external groups by default</span>
+                        <span style="font-size:11px;color:var(--muted);line-height:1.4;"
+                            data-i18n="extExpandDefaultDesc">Automatically expand external modules when entering a Call
+                            Flow.</span>
+                    </div>
+                </label>
+            </div>
             <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;">
                 <button id="pref-close-btn"
                     style="background:var(--accent);color:#000;border:none;padding:6px 16px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;"
@@ -828,6 +863,37 @@
                     applyLauncherLang(e.target.value);
                 });
             }
+
+            // Sync boolean preferences with codeviz_prefs
+            try {
+                const prefsObj = JSON.parse(localStorage.getItem('codeviz_prefs') || '{}');
+                const pFiles = document.getElementById('pref-ext-files');
+                const pFuncs = document.getElementById('pref-ext-funcs');
+                const pExpand = document.getElementById('pref-ext-expand');
+
+                if (pFiles) {
+                    pFiles.checked = prefsObj.extFiles === true;
+                    pFiles.addEventListener('change', (e) => updateCodevizPref('extFiles', e.target.checked));
+                }
+                if (pFuncs) {
+                    pFuncs.checked = prefsObj.extFuncs === true;
+                    pFuncs.addEventListener('change', (e) => updateCodevizPref('extFuncs', e.target.checked));
+                }
+                if (pExpand) {
+                    pExpand.checked = prefsObj.extExpand !== false; // defaults to true
+                    pExpand.addEventListener('change', (e) => updateCodevizPref('extExpand', e.target.checked));
+                }
+            } catch (e) {
+                console.warn('Could not load codeviz_prefs in launcher', e);
+            }
+        }
+
+        function updateCodevizPref(key, value) {
+            try {
+                const prefsObj = JSON.parse(localStorage.getItem('codeviz_prefs') || '{}');
+                prefsObj[key] = value;
+                localStorage.setItem('codeviz_prefs', JSON.stringify(prefsObj));
+            } catch (e) { }
         }
         // ─── Analysis ─────────────────────────────────────────────────────────────────
         async function startAnalysis() {

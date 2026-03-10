@@ -461,7 +461,11 @@ def run_analysis_with_progress(path: str):
         start_server(tui)
     except Exception as e:
         tui.upd_error(str(e)); tui.restore()
-        print(red(f"\n  ✗ {e}\n")); return
+        r = tui._bottom + 1
+        tui._at(r, red(f"  ✗ {e}"))
+        tui._bottom = r
+        tui.flush()
+        return
 
     tui.upd_title(0, "Analyzing Project"); tui.flush()
 
@@ -581,8 +585,11 @@ def run_analysis_with_progress(path: str):
 
     if not job.get('error'):
         result_url = f"{BASE_URL}/result?job={job_id}"
-        print(f"\n  {green('✓')} Done!  Opening browser…")
-        print(f"  {dim(result_url)}\n")
+        r = tui._bottom + 1
+        tui._at(r, f"  {green('✓')} Done!  Opening browser…"); r += 1
+        tui._at(r, f"  {dim(result_url)}"); r += 1
+        tui._bottom = r
+        tui.flush()
         time.sleep(0.4)
         webbrowser.open(result_url)
 
@@ -628,8 +635,12 @@ def run_menu(title: str, items: List[str],
         return None
 
 def prompt_path(msg: str) -> str:
-    _tui.restore()
-    sys.stdout.write(f"\n  {cyan('❯')} {bold(msg)}\n  → ")
+    r = _tui._bottom + 1
+    _tui._at(r, f"  {cyan('❯')} {bold(msg)}")
+    r += 1
+    _tui._at(r, "  → ")
+    _tui._bottom = r
+    _tui._w(_goto(r, 6), SHOW_C)
     sys.stdout.flush()
     try:    return input().strip().strip('"\'')
     except: return ""
@@ -686,21 +697,33 @@ def action_help():
         "",
         f"  {dim('Press Enter to return to menu…')}",
     ])
-    try: input()
-    except: pass
+    while True:
+        try:
+            if _getch() == 'ENTER': break
+        except: break
 
 def action_exit():
-    _tui.show_text(["", f"  {dim('Stopping server…')}"])
+    r = _tui._bottom + 1
+    _tui._at(r, f"  {dim('Stopping server…')}"); _tui.flush()
     stop_server()
-    _tui.show_text(["", f"  {dim('Server stopped.')}","", f"  {orange('Goodbye! 👋')}"])
-    _tui.restore(); print(); sys.exit(0)
+    _tui._at(r, f"  {dim('Server stopped.')}"); r += 1
+    _tui._at(r, ""); r += 1
+    _tui._at(r, f"  {orange('Goodbye! 👋')}"); r += 1
+    _tui._bottom = r
+    _tui.restore()
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    sys.exit(0)
 
 def _press_enter():
-    _tui.restore()
-    sys.stdout.write(f"\n  {dim('Press Enter to return to menu…')}")
-    sys.stdout.flush()
-    try: input()
-    except: pass
+    r = _tui._bottom + 2
+    _tui._at(r, f"  {dim('Press Enter to return to menu…')}")
+    _tui._bottom = r
+    _tui.flush()
+    while True:
+        try:
+            if _getch() == 'ENTER': break
+        except: break
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 MENU = [
