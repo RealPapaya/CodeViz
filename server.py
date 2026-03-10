@@ -122,6 +122,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.html_error('Result not ready — analysis may still be running')
                 return
             try:
+                import importlib
+                importlib.reload(analyze_bios)
                 html = analyze_bios.build_html(data, job_id=jid)
                 body = html.encode('utf-8')
                 self.send_response(200)
@@ -785,6 +787,8 @@ class Handler(BaseHTTPRequestHandler):
                             if kwargs:
                                 JOBS[jid].update(kwargs)
 
+                    import importlib
+                    importlib.reload(analyze_bios)
                     graph_data = analyze_bios.build_graph(root, progress_cb=cb)
 
                     s = graph_data['stats']
