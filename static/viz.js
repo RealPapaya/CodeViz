@@ -4407,11 +4407,18 @@ function updateCallGraphBtn(filePath) {
     if (!btn) return;
     const isL2 = state.level >= 2;
     const hasFuncs = filePath && ((DATA.funcs_by_file?.[filePath]?.length || 0) > 0);
-    const visible = isL2 || hasFuncs;
-    btn.classList.toggle('visible', visible);
+    const available = isL2 || hasFuncs;
+
+    if (available) {
+        btn.disabled = false;
+        btn.title = T('graphBtnCallGraphTip');
+    } else {
+        btn.disabled = true;
+        btn.title = T('graphBtnCallGraphTip') + ' (Not available for this file)';
+    }
+
     // Always label as "Call Graph"
     btn.innerHTML = `⬡ ${T('graphBtnCallGraph')}`;
-    btn.title = T('graphBtnCallGraphTip');
     btn.classList.toggle('active', isL2);
 }
 
@@ -4889,7 +4896,15 @@ function updateBreadcrumb() {
         });
     }
 
-    document.getElementById('back-btn').classList.toggle('visible', state.level > 0);
+    // Update Back button visibility (now managed via disabled attribute)
+    const backBtn = document.getElementById('back-btn');
+    if (backBtn) {
+        if (state.history.length > 0) {
+            backBtn.disabled = false;
+        } else {
+            backBtn.disabled = true;
+        }
+    }
 
     // Call-graph button: update text + active state; visibility controlled by updateCallGraphBtn()
     const graphBtn = document.getElementById('graph-toggle-btn');

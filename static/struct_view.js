@@ -29,14 +29,25 @@ window.svUpdateStructureBtn = function (fileRel, ext) {
     const extLower = (ext || '').toLowerCase();
     const supported = ['.py', '.cpp', '.c', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh',
         '.js', '.jsx', '.ts', '.tsx', '.go'].includes(extLower);
-    btn.style.display = (supported && fileRel) ? '' : 'none';
+
+    if (supported && fileRel) {
+        btn.disabled = false;
+        btn.title = 'Structure View';
+    } else {
+        btn.disabled = true;
+        btn.title = 'Structure View (Not supported for this file)';
+    }
     btn.classList.remove('active');
 };
 
 // Called by viz.js when user dismisses a file / goes back to L0/L1
 window.svHideStructureBtn = function () {
     const btn = document.getElementById('struct-toggle-btn');
-    if (btn) { btn.style.display = 'none'; btn.classList.remove('active'); }
+    if (btn) {
+        btn.disabled = true;
+        btn.title = 'Structure View (No file selected)';
+        btn.classList.remove('active');
+    }
     svHideSvView();
 };
 
@@ -47,6 +58,16 @@ window.svShowSvView = function () {
     document.getElementById('cy').style.display = 'none';
     const fv = document.getElementById('func-view');
     if (fv) fv.classList.remove('active');
+
+    // Hide irrelevant panels
+    ['l1-toolbar', 'l2-toolbar', 'layout-selector', 'legend'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.opacity = '0';
+    });
+    // Turn off Call Graph button active state
+    const cgBtn = document.getElementById('graph-toggle-btn');
+    if (cgBtn) cgBtn.classList.remove('active');
+
     const sv = document.getElementById('sv-view');
     if (sv) sv.classList.add('active');
     const btn = document.getElementById('struct-toggle-btn');
@@ -62,6 +83,18 @@ window.svHideSvView = function () {
     const btn = document.getElementById('struct-toggle-btn');
     if (btn) btn.classList.remove('active');
     document.getElementById('cy').style.display = '';
+
+    // Restore irrelevant panels (viz.js will handle display block/none logic, we just restore opacity)
+    ['l1-toolbar', 'l2-toolbar', 'layout-selector', 'legend'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.opacity = '';
+    });
+
+    // Restore Call Graph button active state if we are in L2
+    if (typeof state !== 'undefined' && state.level >= 2) {
+        const cgBtn = document.getElementById('graph-toggle-btn');
+        if (cgBtn) cgBtn.classList.add('active');
+    }
 };
 
 // Toggle from button click

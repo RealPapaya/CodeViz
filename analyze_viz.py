@@ -1200,9 +1200,9 @@ HTML_SKELETON = """\
 
 <div id="breadcrumb">
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
-  <button id="back-btn" onclick="goBack()" data-i18n="back">&#8592; Back</button>
-  <button id="graph-toggle-btn" data-i18n-attr="data-tip" data-i18n="graphBtnCallGraphTip">⬡ <span data-i18n="graphBtnCallGraph">Call Graph</span></button>
-  <button id="struct-toggle-btn" style="display:none">⬛ Structure</button>
+  <button id="back-btn" onclick="goBack()" data-i18n="back" disabled>&#8592; Back</button>
+  <button id="graph-toggle-btn" data-i18n-attr="data-tip" data-i18n="graphBtnCallGraphTip" disabled>⬡ <span data-i18n="graphBtnCallGraph">Call Graph</span></button>
+  <button id="struct-toggle-btn" disabled>⬛ Structure</button>
   <button id="code-toggle-btn" data-i18n-attr="data-tip" data-i18n="codePanelToggleTip"><span class="code-icon">&#60;&#92;&#62;</span> <span data-i18n="codePanelToggle">Code</span></button>
 </div>
 

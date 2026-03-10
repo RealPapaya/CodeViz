@@ -207,7 +207,7 @@ body {
     border-width: 1px;
 }
 
-/* Common breadcrumb buttons */
+/* Common breadcrumb buttons - always visible */
 #back-btn,
 #code-toggle-btn,
 #graph-toggle-btn,
@@ -221,48 +221,56 @@ body {
     font-size: 13px;
     font-weight: 600;
     margin-left: 8px;
-    transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.18s, transform 0.18s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.25s;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 5px;
-    min-width: 130px;
-    /* Force uniform size */
+    min-width: 120px;
     height: 32px;
     flex-shrink: 0;
-}
-
-#graph-toggle-btn {
-    /* Hidden until a file with functions is selected */
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(0.88);
-    max-width: 0;
-    min-width: 0;
-    margin-left: 0;
-    padding-left: 0;
-    padding-right: 0;
-    border-width: 0;
-    overflow: hidden;
     white-space: nowrap;
-    transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.3s ease, transform 0.3s ease, max-width 0.3s ease, min-width 0.3s ease, margin-left 0.3s ease, padding 0.3s ease, border-width 0.3s ease !important;
 }
 
-#graph-toggle-btn.visible {
-    opacity: 1;
-    pointer-events: auto;
-    transform: scale(1);
-    max-width: 160px;
-    min-width: 130px;
-    margin-left: 8px;
-    padding-left: 14px;
-    padding-right: 14px;
-    border-width: 1px;
+/* Disabled state: always visible but dimmed, not interactive */
+#back-btn:disabled,
+#code-toggle-btn:disabled,
+#graph-toggle-btn:disabled,
+#struct-toggle-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    border-color: var(--border);
+    color: var(--muted);
+    background: transparent;
 }
 
-/* ── Drill-group compound box hover indicator ───────────────────────── */
-/* Cytoscape renders compound node styles internally, but we add a
-   CSS cursor hint on the canvas for when the user hovers the box label */
+/* Hover (only when enabled) */
+#back-btn:not(:disabled):hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+#code-toggle-btn:not(:disabled):hover,
+#code-toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+#graph-toggle-btn:not(:disabled):hover,
+#graph-toggle-btn.active {
+    border-color: #a78bfa;
+    color: #a78bfa;
+}
+
+#code-toggle-btn.active {
+    background: rgba(0, 212, 255, .08);
+}
+
+#graph-toggle-btn.active {
+    background: rgba(167, 139, 250, .08);
+}
+
+/* ── Drill-group compound box cursor hint ─── */
 #cy.l2-view {
     cursor: default;
 }
@@ -270,41 +278,6 @@ body {
 .code-icon {
     font-size: 14px;
     line-height: 1;
-}
-
-#back-btn {
-    margin-left: 0;
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(0.88);
-    max-width: 0;
-    min-width: 0;
-    padding-left: 0;
-    padding-right: 0;
-    border-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.3s ease, transform 0.3s ease, max-width 0.3s ease, min-width 0.3s ease, margin-left 0.3s ease, padding 0.3s ease, border-width 0.3s ease !important;
-}
-
-#code-toggle-btn:hover,
-#code-toggle-btn.active {
-    border-color: var(--accent);
-    color: var(--accent)
-}
-
-#graph-toggle-btn:hover,
-#graph-toggle-btn.active {
-    border-color: #a78bfa;
-    color: #a78bfa
-}
-
-#code-toggle-btn.active {
-    background: rgba(0, 212, 255, .08)
-}
-
-#graph-toggle-btn.active {
-    background: rgba(167, 139, 250, .08)
 }
 
 /* 3D Flip Animation */
