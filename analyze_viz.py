@@ -1355,6 +1355,13 @@ HTML_SKELETON = """\
             <span class="pref-check-desc" data-i18n="extFuncsAlwaysDesc">Show external function nodes by default in Call Flow (L2).<br>External lines follow automatically.</span>
           </span>
         </label>
+        <label class="pref-check-row">
+          <input type="checkbox" id="pref-ext-expand" class="pref-check">
+          <span class="pref-check-label">
+            <span class="pref-check-title" data-i18n="extExpandDefault">Expand external groups by default</span>
+            <span class="pref-check-desc" data-i18n="extExpandDefaultDesc">Automatically expand external modules when entering a Call Flow.</span>
+          </span>
+        </label>
       </div>
 
     </div>

@@ -47,6 +47,7 @@ const depMapState = {
     preserveViewport: null,  // { pan, zoom } to restore after layout
     _prevNodeIds: null,
     _animGen: 0,             // increment every render; stale setTimeout callbacks bail out
+    _extModsInitialized: false, // true once default expand/collapse has been applied for current module
 };
 
 // File-ID → module/file lookup, built once after DATA is parsed
@@ -121,11 +122,11 @@ const _PREFS = {
     KEYS: {
         font: 'biosviz_code_font', lang: 'biosviz_lang',
         extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs',
-        theme: 'biosviz_theme'
+        theme: 'biosviz_theme', extExpand: 'biosviz_ext_expand'
     },
     DEFAULTS: {
         font: "'JetBrains Mono', monospace", lang: 'en',
-        extFiles: false, extFuncs: false, theme: 'dark'
+        extFiles: false, extFuncs: false, theme: 'dark', extExpand: true
     },
     get(k) {
         try {
@@ -203,6 +204,7 @@ function _refreshPreferenceCopy() {
     if (hint) hint.innerHTML = T('langHint');
     if (extDesc[0]) extDesc[0].textContent = T('extFilesAlwaysDesc');
     if (extDesc[1]) extDesc[1].innerHTML = T('extFuncsAlwaysDesc');
+    if (extDesc[2]) extDesc[2].textContent = T('extExpandDefaultDesc');
 }
 
 function _refreshCodePanelChrome() {
@@ -651,6 +653,7 @@ function initPreferences() {
 
     _syncCheck('pref-ext-files', _PREFS.get('extFiles'));
     _syncCheck('pref-ext-funcs', _PREFS.get('extFuncs'));
+    _syncCheck('pref-ext-expand', _PREFS.get('extExpand'));
 
     // Open/close
     prefBtn.addEventListener('click', () => { prefModal.style.display = 'flex'; });
@@ -685,6 +688,8 @@ function initPreferences() {
         updateExternalFuncsToggle?.();
         applyExternalEdgeVisibility?.();
     });
+    // "Expand All by default" — applies on next file / module load
+    _bindCheck('pref-ext-expand', 'extExpand', _v => { /* saved; applied lazily on next load */ });
 }
 
 function _syncCheck(id, val) { const el = document.getElementById(id); if (el) el.checked = !!val; }
@@ -1834,10 +1839,20 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
 
     l2State.externalModules = Array.from(extMap.keys()).sort();
 
-    // First time entering this file → default expand all external modules
+    // ── Apply Default Behaviour for external groups on first visit to this file ──
+    // Exception: goL2Prev/goL2Next call _applyL2Snapshot before openL2File, so they
+    // already restore expandedModules/expandedSysCategories from history — skip init.
     if (!l2State._expandInitialized) {
-        l2State.expandedModules = new Set(extMap.keys());
         l2State._expandInitialized = true;
+        // Only auto-expand if external funcs are visible AND user wants "Expand All" default
+        const shouldExpand = l2State.showExternalFuncs && _PREFS.get('extExpand');
+        l2State.expandedModules = shouldExpand ? new Set(extMap.keys()) : new Set();
+        if (!l2State.expandedSysCategories) l2State.expandedSysCategories = new Set();
+        if (shouldExpand) {
+            // Also expand all sys-API category groups and unresolved group
+            sysMap.forEach((_, catName) => l2State.expandedSysCategories.add(catName));
+            if (unkMap.size > 0) l2State.expandedSysCategories.add('__unk__');
+        }
     }
 
     // ─── External module groups ───────────────────────────────────────────────
@@ -3898,6 +3913,7 @@ function drillToModule(modId, opts) {
     // Reset external-files state for new module
     if (depMapState.currentModId !== modId) {
         depMapState.expandedExtModules = new Set();
+        depMapState._extModsInitialized = false; // will be initialized in renderFilesFlat with user's default
         depMapState.currentModId = modId;
     }
     if (opts?.closeExt) {
@@ -4032,6 +4048,18 @@ function renderFilesFlat(modId, files, subPath) {
         });
 
         depMapState.currentExtModules = Array.from(extModMap.keys());
+
+        // ── Apply Default Behaviour: expand all ext modules on first visit to this module ──
+        // Exception: Prev/Next navigation already restores state via history snapshots, so
+        // we only apply the default when _extModsInitialized is false (fresh navigation).
+        if (!depMapState._extModsInitialized) {
+            depMapState._extModsInitialized = true;
+            if (_PREFS.get('extExpand')) {
+                // "Expand All" default: open every external module group
+                depMapState.expandedExtModules = new Set(extModMap.keys());
+            }
+            // "Collapse All" default (extExpand=false): keep expandedExtModules as new Set()
+        }
 
         let extEdgeSeq = 0;
         for (const [extModId, fileMap] of extModMap.entries()) {
