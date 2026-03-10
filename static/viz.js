@@ -1,4 +1,4 @@
-/* viz.js — BIOSVIZ Visualization Logic v3
+﻿/* viz.js — BIOSVIZ Visualization Logic v3
    Sourcetrail-style: graph on left, live source code on right.
    Uses cytoscape.js (canvas). No D3. No SVG renderer.
 */
@@ -582,18 +582,20 @@ function initCodePanel() {
         }
     };
 
-    // Graph button: enter call graph for current file, or restore L1 state
     document.getElementById('graph-toggle-btn').onclick = () => {
         // Mutually exclusive: If Structure view is active, switch to Call Graph view
         if (window._sv && window._sv.active) {
             if (window.svHideSvView) window.svHideSvView();
-            // If we weren't already in Call Graph, jump into it
+
+            // If we were at L1, drill down to Call Graph L2 explicitly
             if (state.level < 2 && typeof drillCurrentFileToL2 === 'function') {
                 drillCurrentFileToL2();
             }
-            return; // Switched to Call Graph, done
+            // If already in L2 Call graph under the Structure view, svHideSvView restores it naturally.
+            return;
         }
 
+        // Toggle from Call Graph back to L1
         if (state.level === 2) {
             restoreL1FromCallGraph();
         } else {
@@ -2595,6 +2597,8 @@ async function loadFileInPanel(filePath, funcName) {
     if (filePath === codeState.currentFile) {
         showCpLoading(false);
         if (funcName) jumpToFunc(funcName);
+        // Ensure Structure button reflects the current file even on no-op reloads
+        if (window.svUpdateStructureBtn) svUpdateStructureBtn(filePath, ext);
         return;
     }
 
@@ -4555,6 +4559,8 @@ async function _syncCodePanel(fileRel, funcName, targetCallText = null) {
             // Use a small delay to ensure DOM is stable after showFuncView re-render
             requestAnimationFrame(() => jumpToFunc(funcName, targetCallText));
         }
+        // Keep Structure button state in sync when reselecting the same file
+        if (window.svUpdateStructureBtn) svUpdateStructureBtn(fileRel, ext);
         return;
     }
 
@@ -7591,3 +7597,5 @@ function _syncLayoutIndicator(id) {
         b.classList.toggle('active', b.dataset.layoutId === id);
     });
 }
+
+

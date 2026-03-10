@@ -19,6 +19,7 @@ const _sv = {
     _fileRel: '',     // current file rel path
     _activeBadge: null,
 };
+window._sv = _sv;
 
 // -- Button lifecycle (called from viz.js) ----------------------------------------
 
@@ -37,7 +38,11 @@ window.svUpdateStructureBtn = function (fileRel, ext) {
         btn.disabled = true;
         btn.title = 'Structure View (Not supported for this file)';
     }
-    btn.classList.remove('active');
+    if (_sv && _sv.active) {
+        btn.classList.add('active');
+    } else {
+        btn.classList.remove('active');
+    }
 };
 
 // Called by viz.js when user dismisses a file / goes back to L0/L1
@@ -100,7 +105,11 @@ window.svHideSvView = function () {
 // Toggle from button click
 window.svToggleStructView = function () {
     if (_sv.active) {
-        svHideSvView();
+        if (typeof state !== 'undefined' && state.level >= 2 && typeof window.restoreL1FromCallGraph === 'function') {
+            window.restoreL1FromCallGraph();
+        } else {
+            svHideSvView();
+        }
     } else {
         svShowSvView();
     }
