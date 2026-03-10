@@ -31,6 +31,9 @@ window.svUpdateStructureBtn = function (fileRel, ext) {
     const supported = ['.py', '.cpp', '.c', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh',
         '.js', '.jsx', '.ts', '.tsx', '.go'].includes(extLower);
 
+    // Keep fileRel in sync so the Focus Panel can query DATA.funcs_by_file
+    if (fileRel) _sv._fileRel = fileRel;
+
     if (supported && fileRel) {
         btn.disabled = false;
         btn.title = 'Structure View';
@@ -83,6 +86,7 @@ window.svShowSvView = function () {
 // Hide the sv-view and restore cy
 window.svHideSvView = function () {
     _sv.active = false;
+    _svHideFocusPanel();      // close any open focus panel first
     const sv = document.getElementById('sv-view');
     if (sv) { sv.classList.remove('active'); sv.innerHTML = ''; }
     const btn = document.getElementById('struct-toggle-btn');
@@ -467,10 +471,20 @@ function _svAttachBadgeHandlers(container) {
         const badge = e.target.closest('[data-sv-line]');
         if (!badge) return;
         e.stopPropagation();
-        const lineIdx = parseInt(badge.dataset.svLine, 10);
+        const lineIdx  = parseInt(badge.dataset.svLine,  10);
         const classIdx = parseInt(badge.dataset.svClass, 10);
+        const name     = badge.dataset.svName || '';
+
         _svSelectBadge(badge, classIdx);
         _svJumpCodeToLine(lineIdx);
+
+        // Method badges (public or private) → show the callers/callees Focus Panel
+        if (badge.classList.contains('sv-method')) {
+            _svShowFocusPanel(name, lineIdx, classIdx);
+        } else {
+            // Field or class-header click — just jump, no panel
+            _svHideFocusPanel();
+        }
     });
 
     container.addEventListener('mouseover', (e) => {
@@ -583,5 +597,171 @@ function _svEsc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function _svBasename(p) { return (p || '').split(/[\\/]/).pop().replace(/\.\w+$/, ''); }
+
+// ── Focus Panel — Callers / Callees inline view ────────────────────────────────
+
+/**
+ * Show (or refresh) the Focus Panel at the bottom of sv-view.
+ * Looks up window.DATA.funcs_by_file / func_edges_by_file so it works without
+ * any new server endpoint.  Gracefully degrades if DATA isn't present.
+ *
+ * @param {string} methodName  — function label (as stored in DATA.funcs_by_file)
+ * @param {number} lineIdx     — 0-based code line (fallback for code jump)
+ * @param {number} classIdx    — sv-class-box index (for box highlight)
+ */
+function _svShowFocusPanel(methodName, lineIdx, classIdx) {
+    _svHideFocusPanel(/* immediate */ true);
+
+    const view = document.getElementById('sv-view');
+    if (!view) return;
+
+    const fileRel = _sv._fileRel;
+    const allFuncs = (window.DATA?.funcs_by_file?.[fileRel]) || [];
+    const allEdges = (window.DATA?.func_edges_by_file?.[fileRel]) || [];
+
+    // Match by exact label; fallback: strip leading underscores
+    let funcIdx = allFuncs.findIndex(f => f.label === methodName);
+    if (funcIdx === -1) funcIdx = allFuncs.findIndex(f => f.label === methodName.replace(/^_+/, ''));
+
+    const panel = document.createElement('div');
+    panel.id = 'sv-focus-panel';
+    panel.className = 'sv-focus-panel';
+
+    if (funcIdx === -1 || allFuncs.length === 0) {
+        // No call-graph data available — show a minimal info strip
+        panel.innerHTML = `
+            <div class="sv-fp-header">
+                <span class="sv-fp-title">⬡ <code>${_svEsc(methodName)}</code></span>
+                <span class="sv-fp-hint">No call-graph data for this method</span>
+                <button class="sv-fp-close" title="Close">✕</button>
+            </div>`;
+    } else {
+        const center = allFuncs[funcIdx];
+
+        // Collect callers (edges where e.t === funcIdx → callers are e.s)
+        // and callees (edges where e.s === funcIdx → callees are e.t)
+        const _dedupe = (arr) => {
+            const seen = new Set();
+            return arr.filter(f => f && !seen.has(f.label) && seen.add(f.label));
+        };
+        const callers = _dedupe(
+            allEdges.filter(e => e.t === funcIdx).map(e => allFuncs[e.s])
+        ).slice(0, 7);
+        const callees = _dedupe(
+            allEdges.filter(e => e.s === funcIdx).map(e => allFuncs[e.t])
+        ).slice(0, 7);
+
+        const accessBadgeHtml = center.is_public
+            ? `<span class="sv-fp-access sv-fp-public">PUBLIC</span>`
+            : `<span class="sv-fp-access sv-fp-private">PRIVATE</span>`;
+
+        const _card = (f, dir) => {
+            const fi = allFuncs.indexOf(f);
+            const icon = dir === 'caller' ? '◀' : '▶';
+            return `<div class="sv-fp-card sv-fp-${dir}" data-fp-func-idx="${fi}" title="${_svEsc(f.label)}">
+                ${dir === 'caller' ? `<span class="sv-fp-card-icon">${icon}</span>` : ''}
+                <span class="sv-fp-card-name">${_svEsc(f.label)}</span>
+                ${dir === 'callee' ? `<span class="sv-fp-card-icon">${icon}</span>` : ''}
+            </div>`;
+        };
+
+        const callerHtml = callers.length
+            ? `<div class="sv-fp-cards">${callers.map(f => _card(f, 'caller')).join('')}</div>`
+            : `<div class="sv-fp-empty">No callers found</div>`;
+
+        const calleeHtml = callees.length
+            ? `<div class="sv-fp-cards">${callees.map(f => _card(f, 'callee')).join('')}</div>`
+            : `<div class="sv-fp-empty">No callees found</div>`;
+
+        panel.innerHTML = `
+            <div class="sv-fp-header">
+                <span class="sv-fp-title">⬡ <code>${_svEsc(methodName)}</code></span>
+                ${accessBadgeHtml}
+                <button class="sv-fp-close" title="Close">✕</button>
+            </div>
+            <div class="sv-fp-body">
+                <div class="sv-fp-col">
+                    <div class="sv-fp-col-label">◀ CALLERS <span class="sv-fp-count">${callers.length}</span></div>
+                    ${callerHtml}
+                </div>
+                <div class="sv-fp-divider"></div>
+                <div class="sv-fp-col">
+                    <div class="sv-fp-col-label">CALLEES <span class="sv-fp-count">${callees.length}</span> ▶</div>
+                    ${calleeHtml}
+                </div>
+            </div>`;
+    }
+
+    view.appendChild(panel);
+
+    // Slide in
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => panel.classList.add('sv-fp-visible'));
+    });
+
+    // ── Event bindings ────────────────────────────────────────────────────────
+
+    panel.querySelector('.sv-fp-close')?.addEventListener('click', () => _svHideFocusPanel());
+
+    panel.querySelectorAll('.sv-fp-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const fi = parseInt(card.dataset.fpFuncIdx, 10);
+            const f  = allFuncs[fi];
+            if (!f) return;
+
+            // Jump the code panel to this function
+            if (typeof jumpToFunc === 'function') {
+                jumpToFunc(f.label);
+            } else {
+                // Fallback: scan funcLineMap or use lineIdx heuristic
+                const li = (typeof codeState !== 'undefined' && codeState.funcLineMap?.[f.label]);
+                if (li !== undefined) _svJumpCodeToLine(li);
+            }
+
+            // Highlight the matching badge in the structure grid (if visible)
+            _svHighlightBadgeByName(f.label);
+
+            // Recurse: show callers/callees for the clicked card's function
+            const li2 = (typeof codeState !== 'undefined' && codeState.funcLineMap?.[f.label]) ?? 0;
+            _svShowFocusPanel(f.label, li2, -1);
+        });
+    });
+}
+
+/**
+ * Remove the focus panel.
+ * @param {boolean} immediate  — skip the slide-out animation (used on sv-view close)
+ */
+function _svHideFocusPanel(immediate) {
+    const existing = document.getElementById('sv-focus-panel');
+    if (!existing) return;
+    if (immediate) {
+        existing.remove();
+    } else {
+        existing.classList.remove('sv-fp-visible');
+        setTimeout(() => existing.remove(), 220);
+    }
+}
+
+/**
+ * Highlight the badge matching `name` in the structure grid and scroll it into view.
+ */
+function _svHighlightBadgeByName(name) {
+    document.querySelectorAll('.sv-active-badge').forEach(b => b.classList.remove('sv-active-badge'));
+    document.querySelectorAll('.sv-active-box').forEach(b => b.classList.remove('sv-active-box'));
+
+    // querySelector with escaped name attribute
+    const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const badge = document.querySelector(`.sv-method[data-sv-name="${escaped}"]`);
+    if (!badge) return;
+
+    badge.classList.add('sv-active-badge');
+    badge.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    _sv._activeBadge = badge;
+
+    const classIdx = parseInt(badge.dataset.svClass, 10);
+    const box = document.getElementById(`sv-cls-${classIdx}`);
+    if (box) box.classList.add('sv-active-box');
+}
 
 console.log('[VIZCODE] struct_view.js v2 loaded');

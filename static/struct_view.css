@@ -349,6 +349,230 @@
     transition: background .3s;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Focus Panel  —  Callers / Callees inline view  (v2 addition)
+   Slides up from the bottom of #sv-view when a method badge is clicked.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+#sv-focus-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--panel2, #151922);
+    border-top: 2px solid var(--border, #2a2d3a);
+    box-shadow: 0 -8px 40px rgba(0, 0, 0, .55);
+    z-index: 20;
+    max-height: 260px;
+    display: flex;
+    flex-direction: column;
+    /* Slide-up entry */
+    transform: translateY(100%);
+    transition: transform .22s cubic-bezier(.4, 0, .2, 1);
+}
+
+#sv-focus-panel.sv-fp-visible {
+    transform: translateY(0);
+}
+
+/* ── Header bar ─────────────────────────────────────────────────────────── */
+.sv-fp-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 16px;
+    background: var(--panel3, #1a1e2e);
+    border-bottom: 1px solid var(--border, #2a2d3a);
+    flex-shrink: 0;
+}
+
+.sv-fp-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg, #e2e8f0);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.sv-fp-title code {
+    font-family: var(--code-font, 'JetBrains Mono', monospace);
+    color: var(--accent, #fbbf24);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sv-fp-hint {
+    font-size: 11px;
+    color: var(--muted, #64748b);
+    flex-shrink: 0;
+}
+
+/* Access badge */
+.sv-fp-access {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+}
+
+.sv-fp-public {
+    background: rgba(59, 130, 246, .15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, .35);
+}
+
+.sv-fp-private {
+    background: rgba(100, 116, 139, .15);
+    color: #94a3b8;
+    border: 1px solid rgba(71, 85, 105, .45);
+}
+
+/* Close button */
+.sv-fp-close {
+    margin-left: auto;
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--muted, #64748b);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: color .15s;
+    line-height: 1;
+}
+
+.sv-fp-close:hover { color: var(--fg, #e2e8f0); }
+
+/* ── Two-column body ────────────────────────────────────────────────────── */
+.sv-fp-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.sv-fp-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 10px 14px 12px;
+    min-width: 0;
+}
+
+.sv-fp-divider {
+    width: 1px;
+    background: var(--border, #2a2d3a);
+    flex-shrink: 0;
+    margin: 10px 0;
+}
+
+.sv-fp-col-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.10em;
+    color: var(--muted, #64748b);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.sv-fp-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    background: var(--border, #2a2d3a);
+    border-radius: 8px;
+    font-size: 10px;
+    color: var(--muted, #64748b);
+}
+
+/* Scrollable card list inside each column */
+.sv-fp-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding-right: 2px;
+}
+
+/* Thin scrollbar for card lists */
+.sv-fp-cards::-webkit-scrollbar { width: 4px; }
+.sv-fp-cards::-webkit-scrollbar-thumb {
+    background: var(--border, #2a2d3a);
+    border-radius: 2px;
+}
+
+/* ── Individual card ────────────────────────────────────────────────────── */
+.sv-fp-card {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, .025);
+    border: 1px solid var(--border, #2a2d3a);
+    border-radius: 6px;
+    cursor: pointer;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: background .12s, border-color .12s, transform .1s;
+}
+
+.sv-fp-card:hover {
+    background: rgba(251, 191, 36, .07);
+    border-color: rgba(251, 191, 36, .28);
+}
+
+/* Caller cards slide left on hover, callee cards slide right */
+.sv-fp-caller:hover { transform: translateX(-3px); }
+.sv-fp-callee:hover { transform: translateX(3px); }
+
+.sv-fp-card-name {
+    font-family: var(--code-font, 'JetBrains Mono', monospace);
+    font-size: 11px;
+    color: var(--fg, #e2e8f0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.sv-fp-card-icon {
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    flex-shrink: 0;
+    transition: color .12s;
+}
+
+.sv-fp-card:hover .sv-fp-card-icon { color: var(--accent, #fbbf24); }
+
+/* Empty state inside a column */
+.sv-fp-empty {
+    font-size: 11px;
+    color: var(--muted, #64748b);
+    padding: 10px 0;
+    text-align: center;
+    font-style: italic;
+}
 /* ── Structure button active state ──────────────────────────────────────────── */
 
 #struct-toggle-btn:hover,
