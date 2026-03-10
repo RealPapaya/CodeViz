@@ -1,71 +1,80 @@
 /* =============================================================================
    struct_view.js -- Sourcetrail-style Structure View (VIZCODE V4 Plugin)
-   Place this file in: static/struct_view.js
-   Load in launcher.html AFTER viz.js (no script tag needed -- inlined by build_html)
-
-   HOW IT WORKS
-   ------------
-   1. Adds a "Structure" tab next to the code view toggle in the code panel.
-   2. On activation, shows SPLIT layout: structure diagram (top) + code (bottom).
-   3. Parses classes/structs from the current source file
-      (Python · C/C++ · JS/TS · Go) entirely in the browser - no backend change.
-   4. Renders Sourcetrail-style boxes: class name | PUBLIC methods | PRIVATE methods | fields
-   5. SVG arrows connect classes that inherit from or reference each other.
-   6. BIDIRECTIONAL SYNC:
-      - Click/hover method badge → code scrolls to that line + highlight
-      - Click/hover code line → structure badge highlights
-      - Click SVG arrow → code scrolls to related definition
-   7. Falls back to a "Module" box (top-level functions) for non-OOP files.
-   ----------------------------------------------------------------------------- */
+   
+   ARCHITECTURE (v2):
+   - Structure button lives in breadcrumb alongside Back / Call Graph / Code
+   - Structure view renders in #sv-view (inside #graph-wrap), same as #func-view
+   - cy canvas is hidden when sv-view is active (like func-view)
+   - Clicking a method badge → code panel jumps to that line
+   - Bidirectional sync: code panel click → highlight badge
+   ============================================================================= */
 
 // -- Internal State -------------------------------------------------------------
 const _sv = {
-    active: false,   // true when Structure tab is showing
-    classes: [],     // last parsed class list
-    _src: '',        // cached source
-    _ext: '',        // cached extension
-    _fname: '',      // cached filename
-    _activeBadge: null,  // currently highlighted badge element
-    _activeLine: null,   // currently highlighted code line index
+    active: false,    // true when sv-view is showing
+    classes: [],      // last parsed class list
+    _src: '',         // cached source
+    _ext: '',         // cached extension
+    _fname: '',       // cached filename
+    _fileRel: '',     // current file rel path
+    _activeBadge: null,
 };
 
-// -- Tab API (called from onclick in HTML) --------------------------------------
+// -- Button lifecycle (called from viz.js) ----------------------------------------
 
-window.svShowCodeTab = function () {
-    _sv.active = false;
-    _setTabActive('cp-tab-code');
-    _el('cp-code-wrap').style.display = '';
-    _el('cp-struct-wrap').style.display = 'none';
-    _el('cp-struct-divider').style.display = 'none';
-    _el('cp-struct-code').style.display = 'none';
-    const fb = _el('cp-func-bar');
-    if (fb) fb.style.display = '';
-    _svClearHighlights();
+// Called by viz.js when a file is selected that has parseable structure
+window.svUpdateStructureBtn = function (fileRel, ext) {
+    const btn = document.getElementById('struct-toggle-btn');
+    if (!btn) return;
+    const extLower = (ext || '').toLowerCase();
+    const supported = ['.py', '.cpp', '.c', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh',
+        '.js', '.jsx', '.ts', '.tsx', '.go'].includes(extLower);
+    btn.style.display = (supported && fileRel) ? '' : 'none';
+    btn.classList.remove('active');
 };
 
-window.svShowStructTab = function () {
+// Called by viz.js when user dismisses a file / goes back to L0/L1
+window.svHideStructureBtn = function () {
+    const btn = document.getElementById('struct-toggle-btn');
+    if (btn) { btn.style.display = 'none'; btn.classList.remove('active'); }
+    svHideSvView();
+};
+
+// Show the sv-view (hides cy like func-view does)
+window.svShowSvView = function () {
+    if (!_sv._src) { svHideSvView(); return; }
     _sv.active = true;
-    _setTabActive('cp-tab-struct');
+    document.getElementById('cy').style.display = 'none';
+    const fv = document.getElementById('func-view');
+    if (fv) fv.classList.remove('active');
+    const sv = document.getElementById('sv-view');
+    if (sv) sv.classList.add('active');
+    const btn = document.getElementById('struct-toggle-btn');
+    if (btn) btn.classList.add('active');
+    _svRender(_sv._src, _sv._ext, _sv._fname);
+};
 
-    // Hide original code wrap, show split layout
-    _el('cp-code-wrap').style.display = 'none';
-    _el('cp-struct-wrap').style.display = '';
-    _el('cp-struct-divider').style.display = '';
-    _el('cp-struct-code').style.display = '';
-    const fb = _el('cp-func-bar');
-    if (fb) fb.style.display = 'none';
+// Hide the sv-view and restore cy
+window.svHideSvView = function () {
+    _sv.active = false;
+    const sv = document.getElementById('sv-view');
+    if (sv) { sv.classList.remove('active'); sv.innerHTML = ''; }
+    const btn = document.getElementById('struct-toggle-btn');
+    if (btn) btn.classList.remove('active');
+    document.getElementById('cy').style.display = '';
+};
 
-    if (_sv._src) {
-        _svRender(_sv._src, _sv._ext, _sv._fname);
-        _svBuildCodeMirror(_sv._src, _sv._ext, _sv._fname);
+// Toggle from button click
+window.svToggleStructView = function () {
+    if (_sv.active) {
+        svHideSvView();
+    } else {
+        svShowSvView();
     }
-
-    // Init divider drag
-    _svInitDivider();
 };
 
 // -- Hook: called by viz.js renderCode() at the end ----------------------------
-// Add this one line at the end of renderCode():
+// viz.js already has this line at end of renderCode():
 //     if (window.svAfterRenderCode) svAfterRenderCode(src, ext, fname);
 
 window.svAfterRenderCode = function (src, ext, fname) {
@@ -73,23 +82,9 @@ window.svAfterRenderCode = function (src, ext, fname) {
     _sv._ext = ext || '';
     _sv._fname = fname || '';
 
-    // Check if structure view is supported for this file
-    const extLower = (ext || '').toLowerCase();
-    const isSupported = ['.py', '.cpp', '.c', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh', '.js', '.jsx', '.ts', '.tsx', '.go'].includes(extLower);
-
-    const tabStruct = document.getElementById('cp-tab-struct');
-    if (tabStruct) {
-        tabStruct.style.display = isSupported ? '' : 'none';
-    }
-
+    // If structure was active, re-render live
     if (_sv.active) {
-        if (isSupported) {
-            _svRender(src, ext, fname);
-            _svBuildCodeMirror(src, ext, fname);
-        } else {
-            // Force back to code tab if switching to unsupported file
-            svShowCodeTab();
-        }
+        _svRender(src, ext, fname);
     }
 };
 
@@ -111,28 +106,20 @@ function _parsePython(src) {
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-
-        // Class definition
         const cm = line.match(/^class\s+(\w+)(?:\(([^)]*)\))?:/);
         if (cm) {
             if (cur) classes.push(cur);
-            cur = _mkClass(cm[1], i,
-                cm[2] ? cm[2].split(',').map(s => s.trim()).filter(Boolean) : []);
+            cur = _mkClass(cm[1], i, cm[2] ? cm[2].split(',').map(s => s.trim()).filter(Boolean) : []);
             continue;
         }
-
         if (!cur) continue;
-
-        // Method
         const mm = line.match(/^    def\s+(\w+)\s*\(/);
         if (mm) {
             const n = mm[1];
             if (n === '__init__') {
-                // Collect self.field = ... assignments inside __init__
                 for (let j = i + 1; j < Math.min(i + 60, lines.length); j++) {
-                    const fl = lines[j];
-                    if (/^    def\s/.test(fl)) break;
-                    const fm = fl.match(/\s+self\.(\w+)\s*=/);
+                    if (/^    def\s/.test(lines[j])) break;
+                    const fm = lines[j].match(/\s+self\.(\w+)\s*=/);
                     if (fm && !cur.fields.find(f => f.name === fm[1]))
                         cur.fields.push({ name: fm[1], line: j, access: fm[1].startsWith('_') ? 'private' : 'public' });
                 }
@@ -142,28 +129,23 @@ function _parsePython(src) {
             else cur.public_methods.push({ name: n, line: i });
             continue;
         }
-
-        // Module-level fields (class body, before any def)
         const fm = line.match(/^    (\w+)\s*(?::\s*[\w\[\], |]+)?\s*=\s*/);
         if (fm && !fm[1].startsWith('def') && !cur.fields.find(f => f.name === fm[1]))
             cur.fields.push({ name: fm[1], line: i, access: fm[1].startsWith('_') ? 'private' : 'public' });
     }
     if (cur) classes.push(cur);
 
-    // Fallback: module-level functions as a virtual "Module" class
     if (classes.length === 0) {
         const mod = _mkClass(_svBasename(_sv._fname) || 'Module', 0, []);
         for (let i = 0; i < lines.length; i++) {
             const fm = lines[i].match(/^def\s+(\w+)\s*\(/);
             if (fm) {
-                const n = fm[1];
-                if (n.startsWith('_')) mod.private_methods.push({ name: n, line: i });
-                else mod.public_methods.push({ name: n, line: i });
+                if (fm[1].startsWith('_')) mod.private_methods.push({ name: fm[1], line: i });
+                else mod.public_methods.push({ name: fm[1], line: i });
             }
         }
         if (mod.public_methods.length + mod.private_methods.length > 0) classes.push(mod);
     }
-
     return classes;
 }
 
@@ -179,11 +161,9 @@ function _parseCpp(src) {
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
         const line = raw.replace(/\/\/.*$/, '').trim();
-
         const opens = (line.match(/\{/g) || []).length;
         const closes = (line.match(/\}/g) || []).length;
 
-        // Class or struct
         const cm = raw.match(/^\s*(?:class|struct)\s+(\w+)(?:\s*:\s*(?:public|protected|private)\s+(\w+))?/);
         if (cm && !raw.trim().startsWith('//') && !raw.trim().startsWith('*')) {
             if (cur) classes.push(cur);
@@ -193,39 +173,24 @@ function _parseCpp(src) {
             classDepth = depth + opens;
             depth += opens - closes;
             classes.push(cur);
-            cur = classes[classes.length - 1]; // keep ref
+            cur = classes[classes.length - 1];
             continue;
         }
-
         depth += opens - closes;
-
         if (!cur) continue;
-
-        // End of class brace
-        if (classDepth >= 0 && depth < classDepth) {
-            cur = null; classDepth = -1; access = 'private';
-            continue;
-        }
-
-        // Access specifier
+        if (classDepth >= 0 && depth < classDepth) { cur = null; classDepth = -1; access = 'private'; continue; }
         if (/^public\s*:/.test(line)) { access = 'public'; continue; }
         if (/^private\s*:/.test(line)) { access = 'private'; continue; }
         if (/^protected\s*:/.test(line)) { access = 'protected'; continue; }
-
-        // Only parse declarations at the immediate class body depth
         if (depth !== classDepth) continue;
-
-        // Member function declaration  (has parentheses + ends with ; or {)
         const methM = line.match(/(?:virtual\s+|static\s+|inline\s+|explicit\s+|constexpr\s+)?(?:[\w:*&<>\[\]]+\s+)+(\w+)\s*\([^)]*\)/);
         if (methM) {
             const n = methM[1];
-            if (n === cur.name || n === '~' + cur.name) continue; // ctor/dtor - skip
+            if (n === cur.name || n === '~' + cur.name) continue;
             if (access === 'public') cur.public_methods.push({ name: n, line: i });
             else cur.private_methods.push({ name: n, line: i });
             continue;
         }
-
-        // Member variable  (no parens, ends with ;)
         const fieldM = line.match(/(?:[\w:*&<>\[\]]+\s+)+(\w[\w_]*)\s*(?:=\s*[^;]*)?\s*;/);
         if (fieldM && !line.includes('(')) {
             const n = fieldM[1];
@@ -234,7 +199,6 @@ function _parseCpp(src) {
         }
     }
 
-    // Fallback: top-level functions as Module
     if (classes.length === 0) {
         const mod = _mkClass(_svBasename(_sv._fname) || 'Module', 0, []);
         for (let i = 0; i < lines.length; i++) {
@@ -243,7 +207,6 @@ function _parseCpp(src) {
         }
         if (mod.public_methods.length > 0) classes.push(mod);
     }
-
     return classes;
 }
 
@@ -258,11 +221,9 @@ function _parseJs(src) {
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
         const line = raw.replace(/\/\/.*$/, '').trim();
-
         const opens = (line.match(/\{/g) || []).length;
         const closes = (line.match(/\}/g) || []).length;
 
-        // Class declaration
         const cm = raw.match(/^\s*(?:export\s+)?(?:default\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?/);
         if (cm) {
             if (cur) classes.push(cur);
@@ -273,54 +234,41 @@ function _parseJs(src) {
             cur = classes[classes.length - 1];
             continue;
         }
-
         depth += opens - closes;
-
         if (!cur) continue;
-        if (classDepth >= 0 && depth < classDepth) {
-            cur = null; classDepth = -1;
-            continue;
-        }
+        if (classDepth >= 0 && depth < classDepth) { cur = null; classDepth = -1; continue; }
         if (depth !== classDepth) continue;
 
-        // Method (async? #?name(...))
         const methM = raw.match(/^\s+(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?(\#?\w+)\s*(?:<[^>]*>)?\s*\(/);
         if (methM) {
-            const rawN = methM[1];
-            const n = rawN.replace('#', '');
+            const rawN = methM[1], n = rawN.replace('#', '');
             if (n === 'constructor') continue;
             const isPrivate = rawN.startsWith('#') || n.startsWith('_') || /\bprivate\b/.test(raw);
             if (isPrivate) cur.private_methods.push({ name: n, line: i });
             else cur.public_methods.push({ name: n, line: i });
             continue;
         }
-
-        // Class field  (TypeScript: name: Type = val; or JS: #name = val)
         const fieldM = raw.match(/^\s+(?:private\s+|public\s+|protected\s+|readonly\s+|static\s+)*(\#?\w+)\s*(?:!\s*)?(?::\s*[\w<>\[\]| ]+)?\s*(?:=|;)/);
         if (fieldM && !raw.includes('(')) {
-            const rawN = fieldM[1];
-            const n = rawN.replace('#', '');
+            const rawN = fieldM[1], n = rawN.replace('#', '');
             const isPrivate = rawN.startsWith('#') || n.startsWith('_') || /\bprivate\b/.test(raw);
             if (!cur.fields.find(f => f.name === n))
                 cur.fields.push({ name: n, line: i, access: isPrivate ? 'private' : 'public' });
         }
     }
 
-    // Fallback: module-level const/function
     if (classes.length === 0) {
         const mod = _mkClass(_svBasename(_sv._fname) || 'Module', 0, []);
         for (let i = 0; i < lines.length; i++) {
             const m = lines[i].match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(/)
                 || lines[i].match(/^(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s+)?\(/);
             if (m) {
-                const n = m[1];
-                if (n.startsWith('_')) mod.private_methods.push({ name: n, line: i });
-                else mod.public_methods.push({ name: n, line: i });
+                if (m[1].startsWith('_')) mod.private_methods.push({ name: m[1], line: i });
+                else mod.public_methods.push({ name: m[1], line: i });
             }
         }
         if (mod.public_methods.length + mod.private_methods.length > 0) classes.push(mod);
     }
-
     return classes;
 }
 
@@ -328,60 +276,48 @@ function _parseJs(src) {
 function _parseGo(src) {
     const structs = [];
     const lines = src.split('\n');
-
-    // Structs
     for (let i = 0; i < lines.length; i++) {
         const sm = lines[i].match(/^type\s+(\w+)\s+struct\s*\{/);
         if (sm) {
             const s = _mkClass(sm[1], i, []);
             for (let j = i + 1; j < lines.length; j++) {
-                const fl = lines[j].trim();
-                if (fl === '}') break;
-                const fm = fl.match(/^(\w+)\s+/);
+                if (lines[j].trim() === '}') break;
+                const fm = lines[j].trim().match(/^(\w+)\s+/);
                 if (fm) {
-                    const n = fm[1];
-                    const isPrivate = n[0] === n[0].toLowerCase() && n[0] !== n[0].toUpperCase();
+                    const n = fm[1], isPrivate = n[0] === n[0].toLowerCase() && n[0] !== n[0].toUpperCase();
                     s.fields.push({ name: n, line: j, access: isPrivate ? 'private' : 'public' });
                 }
             }
             structs.push(s);
         }
     }
-
-    // Methods  func (recv *TypeName) MethodName(...)
     for (let i = 0; i < lines.length; i++) {
         const mm = lines[i].match(/^func\s+\(\w+\s+\*?(\w+)\)\s+(\w+)\s*\(/);
         if (mm) {
             const s = structs.find(x => x.name === mm[1]);
             if (s) {
-                const n = mm[2];
-                const isPrivate = n[0] === n[0].toLowerCase();
+                const n = mm[2], isPrivate = n[0] === n[0].toLowerCase();
                 if (isPrivate) s.private_methods.push({ name: n, line: i });
                 else s.public_methods.push({ name: n, line: i });
             }
         }
     }
-
-    // Fallback: top-level functions
     if (structs.length === 0) {
         const mod = _mkClass(_svBasename(_sv._fname) || 'Module', 0, []);
         for (let i = 0; i < lines.length; i++) {
             const m = lines[i].match(/^func\s+(\w+)\s*\(/);
             if (m) {
-                const n = m[1];
-                if (n[0] === n[0].toLowerCase()) mod.private_methods.push({ name: n, line: i });
-                else mod.public_methods.push({ name: n, line: i });
+                if (m[1][0] === m[1][0].toLowerCase()) mod.private_methods.push({ name: m[1], line: i });
+                else mod.public_methods.push({ name: m[1], line: i });
             }
         }
         if (mod.public_methods.length + mod.private_methods.length > 0) structs.push(mod);
     }
-
     return structs;
 }
 
-// -- Renderer -------------------------------------------------------------------
+// -- Renderer (renders into #sv-view) -------------------------------------------
 
-// Method color wheel - warm Sourcetrail-style palette
 const _SV_COLORS = [
     '#f59e0b', '#3b82f6', '#10b981', '#ec4899', '#8b5cf6',
     '#06b6d4', '#f97316', '#84cc16', '#e11d48', '#14b8a6',
@@ -389,48 +325,54 @@ const _SV_COLORS = [
 ];
 
 function _svRender(src, ext, fname) {
-    const wrap = _el('cp-struct-wrap');
-    if (!wrap) return;
-    wrap.innerHTML = '';
+    const view = document.getElementById('sv-view');
+    if (!view) return;
+    view.innerHTML = '';
 
     const classes = _svParseClasses(src, ext);
     _sv.classes = classes;
 
     if (classes.length === 0) {
-        wrap.innerHTML = `
-        <div class="sv-empty">
+        view.innerHTML = `<div class="sv-empty">
             <div class="sv-empty-icon">🔍</div>
             <p>No classes or structs found</p>
-            <small>Supports Python · C/C++ · JavaScript/TypeScript · Go</small>
+            <small>${_svEsc(fname)} · Supports Python · C/C++ · JavaScript/TypeScript · Go</small>
         </div>`;
         return;
     }
 
-    // -- SVG overlay for arrows -----------------------------------------------
+    // Header bar
+    const header = document.createElement('div');
+    header.className = 'sv-header';
+    header.innerHTML = `
+        <span class="sv-header-title">⬛ Structure · <code>${_svEsc(fname)}</code></span>
+        <span class="sv-header-count">${classes.length} class${classes.length !== 1 ? 'es' : ''}</span>
+        <button class="sv-close-btn" onclick="svToggleStructView()" title="Close Structure View">✕</button>`;
+    view.appendChild(header);
+
+    // Scroll area
+    const scroll = document.createElement('div');
+    scroll.className = 'sv-scroll';
+    view.appendChild(scroll);
+
+    // SVG overlay
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.id = 'sv-arrows';
     svg.setAttribute('aria-hidden', 'true');
     svg.innerHTML = `<defs>
-        <marker id="sv-ah-uses"    markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-            <polygon points="0 0,8 3,0 6" fill="#f59e0baa"/>
-        </marker>
-        <marker id="sv-ah-inherit" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-            <polygon points="0 0,8 3,0 6" fill="#60a5faaa"/>
-        </marker>
+        <marker id="sv-ah-uses"    markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f59e0baa"/></marker>
+        <marker id="sv-ah-inherit" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#60a5faaa"/></marker>
     </defs>`;
 
-    // -- Class box container --------------------------------------------------
     const grid = document.createElement('div');
     grid.id = 'sv-grid';
-
-    wrap.appendChild(svg);
-    wrap.appendChild(grid);
+    scroll.appendChild(svg);
+    scroll.appendChild(grid);
 
     classes.forEach((cls, ci) => {
         const box = document.createElement('div');
         box.className = 'sv-class-box';
         box.id = `sv-cls-${ci}`;
-
         const total = cls.public_methods.length + cls.private_methods.length + cls.fields.length;
         const baseColor = _SV_COLORS[ci % _SV_COLORS.length];
 
@@ -441,326 +383,105 @@ function _svRender(src, ext, fname) {
             <span class="sv-class-badge" style="background:${baseColor}22;border-color:${baseColor};color:${baseColor}">${total}</span>
         </div>`;
 
-        if (cls.inherits.length > 0) {
+        if (cls.inherits.length > 0)
             html += `<div class="sv-inherits">↑ ${cls.inherits.map(_svEsc).join(', ')}</div>`;
-        }
 
-        // Fields
         if (cls.fields.length > 0) {
-            const show = cls.fields.slice(0, 10);
-            const extra = cls.fields.length - show.length;
-            html += `<div class="sv-section">
-                <div class="sv-section-hdr"><span>#</span> FIELDS</div>
-                <div class="sv-items">
-                ${show.map(f => `
-                    <span class="sv-field sv-field-${f.access || 'private'}"
-                          data-sv-class="${ci}" data-sv-line="${f.line}" data-sv-name="${_svEsc(f.name)}"
-                          title="${_svEsc(f.name)}">${_svEsc(f.name)}</span>
-                `).join('')}
-                ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}
-                </div></div>`;
+            const show = cls.fields.slice(0, 10), extra = cls.fields.length - show.length;
+            html += `<div class="sv-section"><div class="sv-section-hdr"><span>#</span> FIELDS</div><div class="sv-items">
+            ${show.map(f => `<span class="sv-field sv-field-${f.access || 'private'}" data-sv-class="${ci}" data-sv-line="${f.line}" data-sv-name="${_svEsc(f.name)}" title="${_svEsc(f.name)}">${_svEsc(f.name)}</span>`).join('')}
+            ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}</div></div>`;
         }
 
-        // Public methods
         if (cls.public_methods.length > 0) {
-            const show = cls.public_methods.slice(0, 14);
-            const extra = cls.public_methods.length - show.length;
-            html += `<div class="sv-section">
-                <div class="sv-section-hdr"><span>🌐</span> PUBLIC</div>
-                <div class="sv-items">
-                ${show.map((m, mi) => {
+            const show = cls.public_methods.slice(0, 14), extra = cls.public_methods.length - show.length;
+            html += `<div class="sv-section"><div class="sv-section-hdr"><span>🌐</span> PUBLIC</div><div class="sv-items">
+            ${show.map((m, mi) => {
                 const col = _SV_COLORS[(ci * 5 + mi) % _SV_COLORS.length];
-                return `<span class="sv-method"
-                                  style="background:${col}1a;border-color:${col}88;color:${col}"
-                                  data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}"
-                                  title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`;
+                return `<span class="sv-method" style="background:${col}1a;border-color:${col}88;color:${col}" data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`;
             }).join('')}
-                ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}
-                </div></div>`;
+            ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}</div></div>`;
         }
 
-        // Private methods
         if (cls.private_methods.length > 0) {
-            const show = cls.private_methods.slice(0, 14);
-            const extra = cls.private_methods.length - show.length;
-            html += `<div class="sv-section">
-                <div class="sv-section-hdr"><span>🏠</span> PRIVATE</div>
-                <div class="sv-items">
-                ${show.map(m => `
-                    <span class="sv-method sv-method-priv"
-                          data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}"
-                          title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>
-                `).join('')}
-                ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}
-                </div></div>`;
+            const show = cls.private_methods.slice(0, 14), extra = cls.private_methods.length - show.length;
+            html += `<div class="sv-section"><div class="sv-section-hdr"><span>🏠</span> PRIVATE</div><div class="sv-items">
+            ${show.map(m => `<span class="sv-method sv-method-priv" data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`).join('')}
+            ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}</div></div>`;
         }
 
         box.innerHTML = html;
         grid.appendChild(box);
     });
 
-    // -- Attach click/hover handlers to badges --
-    _svAttachBadgeHandlers(wrap);
-
-    // Draw arrows after layout is painted
-    requestAnimationFrame(() => _svDrawArrows(classes, svg, grid));
+    _svAttachBadgeHandlers(scroll);
+    requestAnimationFrame(() => _svDrawArrows(classes, svg, scroll));
 }
 
-// -- Badge click/hover → code sync -------------------------------------------
+// -- Badge click/hover → code panel sync ----------------------------------------
 
-function _svAttachBadgeHandlers(wrap) {
-    // Click on any badge or class header
-    wrap.addEventListener('click', (e) => {
+function _svAttachBadgeHandlers(container) {
+    container.addEventListener('click', (e) => {
         const badge = e.target.closest('[data-sv-line]');
         if (!badge) return;
         e.stopPropagation();
         const lineIdx = parseInt(badge.dataset.svLine, 10);
         const classIdx = parseInt(badge.dataset.svClass, 10);
-        const name = badge.dataset.svName || null;
         _svSelectBadge(badge, classIdx);
-        _svScrollCodeToLine(lineIdx, true);
+        _svJumpCodeToLine(lineIdx);
     });
 
-    // Hover on badge → preview highlight in code
-    wrap.addEventListener('mouseover', (e) => {
+    container.addEventListener('mouseover', (e) => {
         const badge = e.target.closest('[data-sv-line]');
         if (!badge) return;
-        const lineIdx = parseInt(badge.dataset.svLine, 10);
-        _svHoverCodeLine(lineIdx, true);
         badge.classList.add('sv-hover-badge');
     });
 
-    wrap.addEventListener('mouseout', (e) => {
+    container.addEventListener('mouseout', (e) => {
         const badge = e.target.closest('[data-sv-line]');
         if (!badge) return;
         badge.classList.remove('sv-hover-badge');
-        _svHoverCodeLine(-1, false);
     });
 }
-
-// -- Code Mirror (bottom pane) ------------------------------------------------
-
-function _svBuildCodeMirror(src, ext, fname) {
-    const codePane = _el('cp-struct-code');
-    if (!codePane) return;
-
-    const lines = src.split('\n');
-
-    // Extension → hljs language map (reuse from renderCode)
-    const hlExt = {
-        '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
-        '.h': 'cpp', '.hpp': 'cpp', '.hxx': 'cpp', '.hh': 'cpp',
-        '.py': 'python', '.pyw': 'python',
-        '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
-        '.jsx': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
-        '.go': 'go',
-    };
-    const lang = hlExt[ext] || 'plaintext';
-
-    // Syntax-highlight
-    let highlightedLines;
-    if (window.hljs) {
-        try {
-            const result = hljs.highlight(src, { language: lang, ignoreIllegals: true });
-            highlightedLines = result.value.split('\n');
-        } catch (_) {
-            highlightedLines = lines.map(l => _svEsc(l));
-        }
-    } else {
-        highlightedLines = lines.map(l => _svEsc(l));
-    }
-
-    const lineDivs = highlightedLines.map((hl, i) =>
-        `<div class="code-line" id="svc-${i}" data-svc-line="${i}"><span class="line-num">${i + 1}</span><span class="line-content">${hl}</span></div>`
-    ).join('');
-
-    codePane.innerHTML = `<pre><code class="hljs language-${lang}">${lineDivs}</code></pre>`;
-
-    // -- Attach code → structure handlers --
-    _svAttachCodeHandlers(codePane);
-}
-
-// -- Code line click/hover → structure sync -----------------------------------
-
-function _svAttachCodeHandlers(codePane) {
-    codePane.addEventListener('click', (e) => {
-        const lineEl = e.target.closest('[data-svc-line]');
-        if (!lineEl) return;
-        const lineIdx = parseInt(lineEl.dataset.svcLine, 10);
-        _svCodeLineClicked(lineIdx);
-    });
-
-    codePane.addEventListener('mouseover', (e) => {
-        const lineEl = e.target.closest('[data-svc-line]');
-        if (!lineEl) return;
-        const lineIdx = parseInt(lineEl.dataset.svcLine, 10);
-        // Find matching badge and preview-highlight it
-        const member = _svFindMemberAtLine(lineIdx);
-        if (member) {
-            const badge = _svFindBadgeElement(member.classIdx, member.name);
-            if (badge) badge.classList.add('sv-hover-badge');
-        }
-    });
-
-    codePane.addEventListener('mouseout', (e) => {
-        const lineEl = e.target.closest('[data-svc-line]');
-        if (!lineEl) return;
-        // Clear all hover badges
-        document.querySelectorAll('.sv-hover-badge').forEach(b => b.classList.remove('sv-hover-badge'));
-    });
-}
-
-function _svCodeLineClicked(lineIdx) {
-    const member = _svFindMemberAtLine(lineIdx);
-    if (!member) return;
-
-    // Highlight the corresponding badge
-    const badge = _svFindBadgeElement(member.classIdx, member.name);
-    if (badge) {
-        _svSelectBadge(badge, member.classIdx);
-        // Scroll badge into view in the structure pane
-        badge.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    // Highlight the clicked line
-    _svScrollCodeToLine(lineIdx, true);
-}
-
-// -- Bidirectional highlight helpers ------------------------------------------
 
 function _svSelectBadge(badgeEl, classIdx) {
     // Clear previous
-    _svClearHighlights();
-
-    // Highlight badge
+    document.querySelectorAll('.sv-active-badge').forEach(b => b.classList.remove('sv-active-badge'));
+    document.querySelectorAll('.sv-active-box').forEach(b => b.classList.remove('sv-active-box'));
     badgeEl.classList.add('sv-active-badge');
     _sv._activeBadge = badgeEl;
-
-    // Highlight parent class box
-    const box = _el(`sv-cls-${classIdx}`);
+    const box = document.getElementById(`sv-cls-${classIdx}`);
     if (box) box.classList.add('sv-active-box');
 }
 
-function _svScrollCodeToLine(lineIdx, activate) {
-    const codePane = _el('cp-struct-code');
-    if (!codePane) return;
-
-    // Clear previous active line
-    const prev = codePane.querySelector('.sv-active-line');
-    if (prev) prev.classList.remove('sv-active-line');
-
-    const lineEl = _el(`svc-${lineIdx}`);
+// Jump to a line in the code panel (jumps to cp-code-wrap line if panel is open)
+function _svJumpCodeToLine(lineIdx) {
+    if (typeof jumpToFunc === 'function') {
+        // Prefer built-in jumpToFunc if it handles line-based jumping
+    }
+    // Scroll the code panel to the line
+    const lineEl = document.getElementById(`cl-${lineIdx}`);
     if (!lineEl) return;
-
-    if (activate) {
-        lineEl.classList.add('sv-active-line');
-        _sv._activeLine = lineIdx;
-    }
+    // Make sure code panel is visible
+    if (typeof openCodePanel === 'function') openCodePanel();
     lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Flash highlight
+    lineEl.classList.add('sv-jump-highlight');
+    setTimeout(() => lineEl.classList.remove('sv-jump-highlight'), 1500);
 }
 
-function _svHoverCodeLine(lineIdx, show) {
-    const codePane = _el('cp-struct-code');
-    if (!codePane) return;
+// -- Arrow drawing with click handlers -----------------------------------------
 
-    // Clear previous hover
-    codePane.querySelectorAll('.sv-hover-line').forEach(el => el.classList.remove('sv-hover-line'));
-
-    if (show && lineIdx >= 0) {
-        const lineEl = _el(`svc-${lineIdx}`);
-        if (lineEl) {
-            lineEl.classList.add('sv-hover-line');
-            lineEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-    }
-}
-
-function _svClearHighlights() {
-    // Clear badge highlights
-    document.querySelectorAll('.sv-active-badge').forEach(b => b.classList.remove('sv-active-badge'));
-    document.querySelectorAll('.sv-hover-badge').forEach(b => b.classList.remove('sv-hover-badge'));
-    document.querySelectorAll('.sv-active-box').forEach(b => b.classList.remove('sv-active-box'));
-
-    // Clear code highlights
-    const codePane = _el('cp-struct-code');
-    if (codePane) {
-        codePane.querySelectorAll('.sv-active-line').forEach(el => el.classList.remove('sv-active-line'));
-        codePane.querySelectorAll('.sv-hover-line').forEach(el => el.classList.remove('sv-hover-line'));
-    }
-
-    // Clear arrow highlights
-    document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
-
-    _sv._activeBadge = null;
-    _sv._activeLine = null;
-}
-
-// -- Find member at line (for code → structure sync) --------------------------
-
-function _svFindMemberAtLine(lineIdx) {
-    // Exact match first
-    for (let ci = 0; ci < _sv.classes.length; ci++) {
-        const cls = _sv.classes[ci];
-        if (cls.line === lineIdx) return { classIdx: ci, name: cls.name, type: 'class' };
-        for (const m of cls.public_methods) {
-            if (m.line === lineIdx) return { classIdx: ci, name: m.name, type: 'method' };
-        }
-        for (const m of cls.private_methods) {
-            if (m.line === lineIdx) return { classIdx: ci, name: m.name, type: 'method' };
-        }
-        for (const f of cls.fields) {
-            if (f.line === lineIdx) return { classIdx: ci, name: f.name, type: 'field' };
-        }
-    }
-
-    // Nearest: find which method/class body we're inside
-    let best = null;
-    for (let ci = 0; ci < _sv.classes.length; ci++) {
-        const cls = _sv.classes[ci];
-        const allMembers = [
-            ...cls.public_methods.map(m => ({ ...m, classIdx: ci, type: 'method' })),
-            ...cls.private_methods.map(m => ({ ...m, classIdx: ci, type: 'method' })),
-            ...cls.fields.map(f => ({ ...f, classIdx: ci, type: 'field' })),
-        ];
-        // Include the class header itself
-        allMembers.push({ name: cls.name, line: cls.line, classIdx: ci, type: 'class' });
-
-        for (const m of allMembers) {
-            if (m.line <= lineIdx) {
-                if (!best || m.line > best.line) {
-                    best = m;
-                }
-            }
-        }
-    }
-
-    return best ? { classIdx: best.classIdx, name: best.name, type: best.type } : null;
-}
-
-function _svFindBadgeElement(classIdx, name) {
-    const wrap = _el('cp-struct-wrap');
-    if (!wrap) return null;
-    return wrap.querySelector(`[data-sv-class="${classIdx}"][data-sv-name="${name}"]`)
-        || wrap.querySelector(`[data-sv-class="${classIdx}"]`);
-}
-
-// -- Arrow drawing with click handlers ----------------------------------------
-
-function _svDrawArrows(classes, svg, grid) {
-    // Build: class name -> DOM box
+function _svDrawArrows(classes, svg, scroll) {
     const boxMap = {};
     classes.forEach((cls, i) => { boxMap[cls.name] = i; });
 
     const arrows = [];
-
     classes.forEach((cls, fi) => {
-        // Inheritance
         cls.inherits.forEach(parent => {
             if (boxMap[parent] !== undefined)
                 arrows.push({ from: fi, to: boxMap[parent], type: 'inherit', targetLine: classes[boxMap[parent]].line });
         });
-
-        // Field-type associations: if a field name (stripped of _) matches a class name
         cls.fields.forEach(f => {
             const clean = f.name.replace(/^_+|_+$/g, '');
             classes.forEach((other, ti) => {
@@ -772,17 +493,9 @@ function _svDrawArrows(classes, svg, grid) {
 
     if (arrows.length === 0) return;
 
-    const gridRect = grid.getBoundingClientRect();
-    const wrapRect = _el('cp-struct-wrap').getBoundingClientRect();
-    const ox = gridRect.left - wrapRect.left;
-    const oy = gridRect.top - wrapRect.top;
-
-    // Resize SVG to full wrap
-    svg.style.width = _el('cp-struct-wrap').scrollWidth + 'px';
-    svg.style.height = _el('cp-struct-wrap').scrollHeight + 'px';
-
-    // Enable pointer events on SVG for arrow clicks
-    svg.style.pointerEvents = 'none';
+    const scrollRect = scroll.getBoundingClientRect();
+    svg.style.width = scroll.scrollWidth + 'px';
+    svg.style.height = scroll.scrollHeight + 'px';
 
     arrows.forEach(({ from, to, type, targetLine }) => {
         const fe = document.getElementById(`sv-cls-${from}`);
@@ -791,117 +504,42 @@ function _svDrawArrows(classes, svg, grid) {
 
         const fr = fe.getBoundingClientRect();
         const tr = te.getBoundingClientRect();
-
-        const x1 = fr.right - wrapRect.left;
-        const y1 = fr.top + fr.height / 2 - wrapRect.top;
-        const x2 = tr.left - wrapRect.left;
-        const y2 = tr.top + tr.height / 2 - wrapRect.top;
-
+        const x1 = fr.right - scrollRect.left + scroll.scrollLeft;
+        const y1 = fr.top + fr.height / 2 - scrollRect.top + scroll.scrollTop;
+        const x2 = tr.left - scrollRect.left + scroll.scrollLeft;
+        const y2 = tr.top + tr.height / 2 - scrollRect.top + scroll.scrollTop;
         const cx = (x1 + x2) / 2;
+
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`);
         path.classList.add('sv-arrow', `sv-arrow-${type}`);
         path.setAttribute('marker-end', `url(#sv-ah-${type})`);
-
-        // Make arrows clickable individually
         path.style.pointerEvents = 'stroke';
         path.style.cursor = 'pointer';
 
-        // Click arrow → scroll code to target line
         path.addEventListener('click', (e) => {
             e.stopPropagation();
-            _svClearHighlights();
+            document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
             path.classList.add('sv-arrow-active');
-            _svScrollCodeToLine(targetLine, true);
-            // Highlight both endpoints
-            const fromBox = _el(`sv-cls-${from}`);
-            const toBox = _el(`sv-cls-${to}`);
+            const fromBox = document.getElementById(`sv-cls-${from}`);
+            const toBox = document.getElementById(`sv-cls-${to}`);
             if (fromBox) fromBox.classList.add('sv-active-box');
             if (toBox) toBox.classList.add('sv-active-box');
+            _svJumpCodeToLine(targetLine);
         });
 
         svg.appendChild(path);
     });
 }
 
-// -- Divider drag (resizable split) -------------------------------------------
-
-function _svInitDivider() {
-    const divider = _el('cp-struct-divider');
-    if (!divider || divider._svInitialized) return;
-    divider._svInitialized = true;
-
-    let startY = 0;
-    let startHeight = 0;
-
-    divider.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        startY = e.clientY;
-        const structWrap = _el('cp-struct-wrap');
-        startHeight = structWrap.offsetHeight;
-        divider.classList.add('sv-dragging');
-        document.addEventListener('mousemove', onDrag);
-        document.addEventListener('mouseup', onUp);
-    });
-
-    function onDrag(e) {
-        const delta = e.clientY - startY;
-        const structWrap = _el('cp-struct-wrap');
-        const newH = Math.max(100, startHeight + delta);
-        const bodyH = _el('cp-body').offsetHeight;
-        const maxH = bodyH - 130; // leave room for code pane
-        structWrap.style.flex = 'none';
-        structWrap.style.height = Math.min(newH, maxH) + 'px';
-    }
-
-    function onUp() {
-        divider.classList.remove('sv-dragging');
-        document.removeEventListener('mousemove', onDrag);
-        document.removeEventListener('mouseup', onUp);
-    }
-}
-
-// -- Jump to line (legacy — for code tab) -------------------------------------
-
-window.svJumpToLine = function (lineIdx) {
-    if (_sv.active) {
-        // In structure mode, scroll in the code mirror pane
-        _svScrollCodeToLine(lineIdx, true);
-    } else {
-        svShowCodeTab();
-        setTimeout(() => {
-            const target = document.getElementById(`cl-${lineIdx}`);
-            if (!target) return;
-            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            target.classList.add('sv-jump-highlight');
-            setTimeout(() => target.classList.remove('sv-jump-highlight'), 1600);
-        }, 120);
-    }
-};
-
 // -- Helpers --------------------------------------------------------------------
 
 function _mkClass(name, line, inherits) {
     return { name, line, inherits, public_methods: [], private_methods: [], fields: [] };
 }
-
 function _svEsc(s) {
-    return String(s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+function _svBasename(p) { return (p || '').split(/[\\/]/).pop().replace(/\.\w+$/, ''); }
 
-function _svBasename(p) {
-    return (p || '').split(/[\\/]/).pop().replace(/\.\w+$/, '');
-}
-
-function _el(id) { return document.getElementById(id); }
-
-function _setTabActive(id) {
-    ['cp-tab-code', 'cp-tab-struct'].forEach(tid => {
-        const b = _el(tid);
-        if (b) b.classList.toggle('active', tid === id);
-    });
-}
-
-console.log('[VIZCODE] struct_view.js loaded');
+console.log('[VIZCODE] struct_view.js v2 loaded');

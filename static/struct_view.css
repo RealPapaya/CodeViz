@@ -1,155 +1,80 @@
 /* ══════════════════════════════════════════════════════════════════════════════
-   struct_view.css  —  Structure View Styles  (VIZCODE V4 Plugin)
-
-   HOW TO INTEGRATE:
-   Option A (recommended):  paste this entire block at the END of viz.css
-   Option B:                 add <link rel="stylesheet" href="static/struct_view.css">
-                              in launcher.html BEFORE </head>
+   struct_view.css  —  Structure View Styles  (VIZCODE V4 Plugin - v2)
+   Structure view now renders in #sv-view inside #graph-wrap, same as #func-view.
    ══════════════════════════════════════════════════════════════════════════════ */
 
-/* ── Tab Switcher in code panel header ───────────────────────────────────────── */
-#cp-view-tabs {
+/* ── Structure view overlay (same as #func-view) ─────────────────────────────── */
+#sv-view {
+    position: absolute;
+    inset: 0;
+    background: var(--panel, #0d0f17);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 5;
+}
+
+#sv-view.active {
+    display: flex;
+}
+
+/* ── Header bar ──────────────────────────────────────────────────────────────── */
+.sv-header {
     display: flex;
     align-items: center;
-    gap: 2px;
-    margin-left: auto;
-    margin-right: 6px;
+    gap: 12px;
+    padding: 10px 20px;
+    background: var(--panel2, #151922);
+    border-bottom: 1px solid var(--border, #2a2d3a);
     flex-shrink: 0;
 }
 
-.cp-tab {
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 3px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    cursor: pointer;
-    transition: color .15s, border-color .15s;
-    border-radius: 0;
-    outline: none;
-}
-
-.cp-tab:hover {
-    color: var(--fg);
-}
-
-.cp-tab.active {
-    color: var(--accent, #fbbf24);
-    border-bottom-color: var(--accent, #fbbf24);
-}
-
-/* ── Structure view container (top half in split mode) ───────────────────────── */
-#cp-struct-wrap {
-    position: relative;
-    width: 100%;
-    overflow: auto;
-    background: var(--panel, #0d0f17);
-    box-sizing: border-box;
-    padding: 20px;
-    /* In split mode, take ~45% of cp-body height */
-    flex: 0 0 45%;
-    min-height: 140px;
-    max-height: 60%;
-}
-
-
-
-/* ── Divider (draggable splitter) ────────────────────────────────────────────── */
-#cp-struct-divider {
-    height: 5px;
-    min-height: 5px;
-    background: var(--border, #2a2d3a);
-    cursor: row-resize;
-    flex-shrink: 0;
-    position: relative;
-    transition: background .15s;
-    z-index: 10;
-}
-
-#cp-struct-divider:hover,
-#cp-struct-divider.sv-dragging {
-    background: var(--accent, #fbbf24);
-}
-
-#cp-struct-divider::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 30px;
-    height: 3px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, .15);
-}
-
-/* ── Code mirror pane (bottom half in split mode) ────────────────────────────── */
-#cp-struct-code {
+.sv-header-title {
     flex: 1;
-    min-height: 100px;
-    overflow: auto;
-    background: var(--panel, #0d0f17);
-    box-sizing: border-box;
-    position: relative;
-    min-width: 0;
-    width: 0;
-    min-width: 100%;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg, #e2e8f0);
 }
 
-#cp-struct-code pre {
-    margin: 0;
-    padding: 8px 0;
-    font-family: var(--code-font, 'JetBrains Mono', monospace);
+.sv-header-title code {
+    font-family: var(--code-font, monospace);
+    color: var(--accent, #fbbf24);
     font-size: 12px;
-    line-height: 1.65;
-    background: transparent !important;
-    tab-size: 4;
-    display: inline-block;
-    min-width: 100%;
 }
 
-#cp-struct-code code {
-    background: transparent !important;
-    font-size: inherit;
-    font-family: inherit !important;
-    white-space: pre;
-}
-
-#cp-struct-code .code-line {
-    display: flex;
-    width: max-content;
-    min-width: 100%;
-    cursor: pointer;
-    transition: background .12s;
-}
-
-#cp-struct-code .code-line:hover {
-    background: rgba(255, 255, 255, .04);
-}
-
-#cp-struct-code .line-num {
-    min-width: 48px;
-    padding: 0 12px 0 8px;
-    text-align: right;
-    color: #2d3f55;
-    user-select: none;
-    flex-shrink: 0;
+.sv-header-count {
     font-size: 11px;
-    position: sticky;
-    left: 0;
-    background: var(--panel, #0d0f17);
-    z-index: 1;
+    color: var(--muted, #64748b);
+    padding: 2px 8px;
+    background: var(--border, #2a2d3a);
+    border-radius: 10px;
 }
 
-#cp-struct-code .line-content {
-    padding-right: 48px;
-    white-space: pre;
+.sv-close-btn {
+    background: none;
+    border: none;
+    color: var(--muted, #64748b);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color .15s;
+    line-height: 1;
 }
 
-/* SVG arrow canvas — floats above everything */
+.sv-close-btn:hover {
+    color: var(--fg, #e2e8f0);
+}
+
+/* ── Scroll area (contains grid + SVG) ───────────────────────────────────────── */
+.sv-scroll {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    padding: 24px;
+}
+
+/* SVG arrow canvas */
 #sv-arrows {
     position: absolute;
     top: 0;
@@ -174,8 +99,8 @@
     background: var(--panel2, #151922);
     border: 1px solid var(--border, #2a2d3a);
     border-radius: 10px;
-    min-width: 180px;
-    max-width: 270px;
+    min-width: 200px;
+    max-width: 280px;
     overflow: hidden;
     box-shadow: 0 2px 16px rgba(0, 0, 0, .35);
     transition: box-shadow .2s, border-color .2s, transform .15s;
@@ -232,12 +157,9 @@
     color: #60a5fa;
     background: rgba(96, 165, 250, .07);
     border-bottom: 1px solid var(--border, #2a2d3a);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
-/* ── Sections (FIELDS / PUBLIC / PRIVATE) ─────────────────────────────────────── */
+/* ── Sections ─────────────────────────────────────────────────────────────────── */
 .sv-section {
     padding: 8px 14px;
     border-bottom: 1px solid var(--border, #2a2d3a);
@@ -265,7 +187,7 @@
     gap: 4px;
 }
 
-/* ── Method badge (pill, colored) ─────────────────────────────────────────────── */
+/* ── Method badge ─────────────────────────────────────────────────────────────── */
 .sv-method {
     display: inline-block;
     padding: 2px 9px;
@@ -275,7 +197,7 @@
     font-family: var(--code-font, monospace);
     cursor: pointer;
     white-space: nowrap;
-    max-width: 150px;
+    max-width: 160px;
     overflow: hidden;
     text-overflow: ellipsis;
     transition: opacity .12s, transform .1s, box-shadow .2s;
@@ -287,14 +209,13 @@
     transform: scale(1.07);
 }
 
-/* Private method  — grey style */
 .sv-method-priv {
     background: rgba(100, 116, 139, .12) !important;
     border-color: #475569 !important;
     color: #94a3b8 !important;
 }
 
-/* ── Field badge (square/rect) ────────────────────────────────────────────────── */
+/* ── Field badge ──────────────────────────────────────────────────────────────── */
 .sv-field {
     display: inline-block;
     padding: 2px 8px;
@@ -303,7 +224,7 @@
     font-family: var(--code-font, monospace);
     cursor: pointer;
     white-space: nowrap;
-    max-width: 150px;
+    max-width: 160px;
     overflow: hidden;
     text-overflow: ellipsis;
     transition: opacity .12s, box-shadow .2s;
@@ -335,13 +256,13 @@
     line-height: 1.5;
 }
 
-/* ── SVG connection arrows ──────────────────────────────────────────────────────── */
+/* ── SVG arrows ───────────────────────────────────────────────────────────────── */
 .sv-arrow {
     fill: none;
     stroke-width: 1.5px;
     pointer-events: stroke;
     cursor: pointer;
-    transition: stroke-width .15s, stroke .15s;
+    transition: stroke-width .15s;
 }
 
 .sv-arrow:hover {
@@ -376,19 +297,19 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 240px;
+    min-height: 300px;
     text-align: center;
     color: var(--muted, #64748b);
-    gap: 10px;
+    gap: 12px;
 }
 
 .sv-empty-icon {
-    font-size: 40px;
+    font-size: 48px;
 }
 
 .sv-empty p {
     margin: 0;
-    font-size: 14px;
+    font-size: 15px;
     color: var(--fg, #e2e8f0);
 }
 
@@ -401,7 +322,7 @@
    Bidirectional highlight styles
    ══════════════════════════════════════════════════════════════════════════════ */
 
-/* Active badge in structure graph — glow + scale */
+/* Active badge in structure graph */
 .sv-active-badge {
     box-shadow: 0 0 10px rgba(251, 191, 36, .5), 0 0 20px rgba(251, 191, 36, .25) !important;
     transform: scale(1.12) !important;
@@ -409,36 +330,33 @@
     position: relative;
 }
 
-/* Hover-preview badge (lighter glow) */
+/* Hover-preview badge */
 .sv-hover-badge {
     box-shadow: 0 0 8px rgba(251, 191, 36, .3) !important;
     transform: scale(1.06) !important;
 }
 
-/* Active class box — border glow */
+/* Active class box border glow */
 .sv-active-box {
     border-color: var(--accent, #fbbf24) !important;
     box-shadow: 0 0 16px rgba(251, 191, 36, .25), 0 4px 20px rgba(0, 0, 0, .4) !important;
 }
 
-/* Active line highlight in code pane */
-.sv-active-line {
-    background: rgba(251, 191, 36, .15) !important;
-    border-left: 3px solid var(--accent, #fbbf24);
-}
-
-/* Hover-preview line (lighter) */
-.sv-hover-line {
-    background: rgba(251, 191, 36, .07) !important;
-}
-
-/* Code range highlight (for showing method body) */
-.sv-range-highlight {
-    background: rgba(96, 165, 250, .06) !important;
-}
-
-/* ── Jump-to-line highlight (code view) ──────────────────────────────────────── */
+/* Jump-to-line highlight in code panel */
 .sv-jump-highlight {
     background: rgba(251, 191, 36, .18) !important;
+    border-left: 3px solid var(--accent, #fbbf24) !important;
     transition: background .3s;
+}
+
+/* ── Structure button active state ──────────────────────────────────────────── */
+
+#struct-toggle-btn:hover,
+#struct-toggle-btn.active {
+    border-color: var(--accent, #fbbf24);
+    color: var(--accent, #fbbf24);
+}
+
+#struct-toggle-btn.active {
+    background: rgba(251, 191, 36, .08);
 }

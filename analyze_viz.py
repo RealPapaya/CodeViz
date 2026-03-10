@@ -1202,6 +1202,7 @@ HTML_SKELETON = """\
   <span id="bc-items" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"></span>
   <button id="back-btn" onclick="goBack()" data-i18n="back">&#8592; Back</button>
   <button id="graph-toggle-btn" data-i18n-attr="data-tip" data-i18n="graphBtnCallGraphTip">⬡ <span data-i18n="graphBtnCallGraph">Call Graph</span></button>
+  <button id="struct-toggle-btn" style="display:none">⬛ Structure</button>
   <button id="code-toggle-btn" data-i18n-attr="data-tip" data-i18n="codePanelToggleTip"><span class="code-icon">&#60;&#92;&#62;</span> <span data-i18n="codePanelToggle">Code</span></button>
 </div>
 
@@ -1244,6 +1245,7 @@ HTML_SKELETON = """\
     <button id="l2-toggle-ext-lines" class="l2-btn" style="position: absolute; bottom: 16px; left: 16px; z-index: 50; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 1px solid var(--border); background: var(--panel2);" data-i18n="extLinesOn">External Lines: On</button>
     <div id="cy"></div>
     <div id="func-view"></div>
+    <div id="sv-view"></div>
     <div id="loading"><div class="spinner"></div><span id="loading-msg" data-i18n="loading">Loading...</span><button id="loading-cancel-btn" onclick="cancelRender()" data-i18n="cancelRender">✕ Cancel</button></div>
   </div>
   <!-- Resizer handle -->
@@ -1254,10 +1256,6 @@ HTML_SKELETON = """\
       <div id="cp-file-bar">
         <span id="cp-ext-badge">.C</span>
         <span id="cp-filename" data-i18n="noFileSelected">No file selected</span>
-        <div id="cp-view-tabs">
-          <button id="cp-tab-code"   class="cp-tab active" onclick="svShowCodeTab()">Code</button>
-          <button id="cp-tab-struct" class="cp-tab"        onclick="svShowStructTab()">Structure</button>
-        </div>
         <button id="cp-close" data-i18n-attr="data-tip" data-i18n="close">✕</button>
       </div>
       <div id="cp-func-bar">
@@ -1280,9 +1278,6 @@ HTML_SKELETON = """\
         <small data-i18n="clickFileHint">Single-click → preview · Double-click → drill in</small>
       </div>
       <div id="cp-code-wrap" style="display:none"></div>
-      <div id="cp-struct-wrap" style="display:none"></div>
-      <div id="cp-struct-divider" style="display:none"></div>
-      <div id="cp-struct-code" style="display:none"></div>
     </div>
   </div>
 </div>

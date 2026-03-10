@@ -591,6 +591,14 @@ function initCodePanel() {
         }
     };
 
+    // Structure button: toggle structure view in center panel
+    const structBtn = document.getElementById('struct-toggle-btn');
+    if (structBtn) {
+        structBtn.onclick = () => {
+            if (window.svToggleStructView) svToggleStructView();
+        };
+    }
+
     document.getElementById('cp-prev-func').onclick = () => navigateFunc(-1);
     document.getElementById('cp-next-func').onclick = () => navigateFunc(1);
 
@@ -2589,6 +2597,8 @@ async function loadFileInPanel(filePath, funcName) {
         renderFileContent(data, ext, fname);
         showCpLoading(false);
         if (funcName) setTimeout(() => jumpToFunc(funcName), 80);
+        // Show Structure button if file type is supported
+        if (window.svUpdateStructureBtn) svUpdateStructureBtn(filePath, ext);
     } catch (e) {
         showCpError(T('fetchError', { error: e.message }));
     }
@@ -4417,6 +4427,7 @@ function restoreL1FromCallGraph() {
     // hideFuncView clears L2 DOM and cy classes, but does NOT reload L1 nodes.
     // We then need to re-render L1 (cy was replaced during L2).
     hideFuncView();
+    if (window.svHideStructureBtn) svHideStructureBtn();
     state.level = 1;
     state.activeFile = null;
 
@@ -4527,6 +4538,8 @@ async function _syncCodePanel(fileRel, funcName, targetCallText = null) {
         renderFileContent(data, ext, fname);
         showCpLoading(false);
         if (funcName) requestAnimationFrame(() => jumpToFunc(funcName, targetCallText));
+        // Show Structure button if file type is supported
+        if (window.svUpdateStructureBtn) svUpdateStructureBtn(fileRel, ext);
     } catch (e) {
         showCpError(T('fetchError', { error: e.message }));
     }

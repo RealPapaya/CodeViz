@@ -210,7 +210,8 @@ body {
 /* Common breadcrumb buttons */
 #back-btn,
 #code-toggle-btn,
-#graph-toggle-btn {
+#graph-toggle-btn,
+#struct-toggle-btn {
     padding: 6px 14px;
     border-radius: 5px;
     border: 1px solid var(--border);
