@@ -1254,6 +1254,10 @@ HTML_SKELETON = """\
       <div id="cp-file-bar">
         <span id="cp-ext-badge">.C</span>
         <span id="cp-filename" data-i18n="noFileSelected">No file selected</span>
+        <div id="cp-view-tabs">
+          <button id="cp-tab-code"   class="cp-tab active" onclick="svShowCodeTab()">Code</button>
+          <button id="cp-tab-struct" class="cp-tab"        onclick="svShowStructTab()">Structure</button>
+        </div>
         <button id="cp-close" data-i18n-attr="data-tip" data-i18n="close">✕</button>
       </div>
       <div id="cp-func-bar">
@@ -1276,6 +1280,7 @@ HTML_SKELETON = """\
         <small data-i18n="clickFileHint">Single-click → preview · Double-click → drill in</small>
       </div>
       <div id="cp-code-wrap" style="display:none"></div>
+      <div id="cp-struct-wrap" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -1441,8 +1446,8 @@ HTML_TEMPLATE = HTML_SKELETON
 def build_html(data: dict, job_id: str = None) -> str:
     """Read shared static assets and embed them inline into the HTML skeleton."""
     base = Path(__file__).parent / 'static'
-    css_assets = [base / 'viz.css', base / 'themes.css']
-    js_assets = [base / 'i18n.js', base / 'viz.js']
+    css_assets = [base / 'viz.css', base / 'themes.css', base / 'struct_view.css']
+    js_assets = [base / 'i18n.js', base / 'viz.js', base / 'struct_view.js']
     missing = [p for p in css_assets + js_assets if not p.exists()]
 
     if missing:

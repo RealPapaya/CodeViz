@@ -3104,6 +3104,8 @@ function renderCode(src, ext, fname, langHint) {
 
     wrap.innerHTML = `<pre><code class="hljs language-${lang}">${lineDivs}</code></pre>`;
     wrap.style.display = '';
+    // ── Structure View hook ──────────────────────────────────────────────────
+    if (window.svAfterRenderCode) svAfterRenderCode(src, ext, fname);
 }
 
 function jumpToFunc(funcName, targetCallText = null) {
