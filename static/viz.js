@@ -2565,31 +2565,122 @@ async function loadFileInPanel(filePath, funcName) {
 
 function extColor(ext) {
     const map = {
-        // C/C++ / ASM
-        '.c': '#3b82f6', '.cpp': '#06b6d4', '.cc': '#06b6d4',
-        '.h': '#8b5cf6', '.hpp': '#7c3aed',
+        // ── C / C++ / Systems ────────────────────────────────────────────────
+        '.c': '#3b82f6', '.cpp': '#06b6d4', '.cc': '#06b6d4', '.cxx': '#06b6d4',
+        '.h': '#8b5cf6', '.hpp': '#7c3aed', '.hxx': '#7c3aed', '.hh': '#7c3aed',
+        '.rs': '#f97316',       // Rust — orange
+        '.zig': '#f6a21e',      // Zig — amber
+        // ── Assembly ─────────────────────────────────────────────────────────
         '.asm': '#f59e0b', '.s': '#f59e0b', '.S': '#f59e0b', '.nasm': '#f59e0b',
-        // UEFI / EDK2
+        // ── UEFI / EDK2 / AMI ────────────────────────────────────────────────
         '.inf': '#ffd700', '.dec': '#00d4ff', '.dsc': '#e2e8f0', '.fdf': '#c084fc',
-        // AMI 特有
         '.sdl': '#34d399', '.sd': '#10b981', '.cif': '#60a5fa', '.mak': '#94a3b8',
-        // HII (UEFI 標準 + AMI 擴充)
-        '.vfr': '#f472b6',
-        '.hfr': '#e940a0',
-        '.uni': '#fb923c',
-        // ACPI
-        '.asl': '#a78bfa',
-        // ── Python ──────────────────────────────────────────────────────────
-        '.py': '#4584c3',
+        '.vfr': '#f472b6', '.hfr': '#e940a0', '.uni': '#fb923c', '.asl': '#a78bfa',
+        // ── Python ───────────────────────────────────────────────────────────
+        '.py': '#4584c3', '.pyw': '#4584c3', '.pyx': '#3a74b3',
+        '.ipynb': '#f59e0b',   // Jupyter — amber
         // ── JavaScript / TypeScript ──────────────────────────────────────────
-        '.js': '#f0c040',
-        '.mjs': '#f0c040',
-        '.cjs': '#e8b830',
+        '.js': '#f0c040', '.mjs': '#f0c040', '.cjs': '#e8b830',
         '.jsx': '#61dafb',
-        '.ts': '#3b8fd4',
-        '.tsx': '#61dafb',
+        '.ts': '#3b8fd4', '.tsx': '#61dafb',
+        // ── Web ──────────────────────────────────────────────────────────────
+        '.html': '#e44d26', '.htm': '#e44d26', '.xhtml': '#e44d26',
+        '.css': '#1572b6', '.scss': '#cd669a', '.sass': '#cd669a', '.less': '#1d365d',
+        '.styl': '#ff6347',
+        '.svg': '#ffb13b',
+        '.graphql': '#e10098', '.gql': '#e10098',
         // ── Go ───────────────────────────────────────────────────────────────
         '.go': '#00c6db',
+        // ── JVM / Mobile ─────────────────────────────────────────────────────
+        '.java': '#ed8b00',    // Java — dark amber
+        '.kt': '#7f52ff',      // Kotlin — purple
+        '.kts': '#7f52ff',
+        '.scala': '#dc322f',   // Scala — red
+        '.groovy': '#629fcc',
+        '.gradle': '#629fcc',
+        '.dart': '#0175c2',    // Dart — blue
+        '.swift': '#f05138',   // Swift — orange-red
+        '.m': '#438eff',       // Objective-C — blue
+        '.mm': '#438eff',
+        // ── C# / .NET ────────────────────────────────────────────────────────
+        '.cs': '#9b4993',      // C# — purple
+        '.vb': '#004289',
+        '.fs': '#378bba',      // F# — teal
+        '.fsx': '#378bba',
+        // ── Scripting ────────────────────────────────────────────────────────
+        '.rb': '#cc342d',      // Ruby — red
+        '.gemspec': '#cc342d', '.rake': '#cc342d',
+        '.php': '#8892bf',     // PHP — indigo
+        '.pl': '#39457e',      // Perl — dark blue
+        '.pm': '#39457e',
+        '.lua': '#000080',     // Lua — navy
+        '.sh': '#4eaa25',      // Bash — green
+        '.bash': '#4eaa25', '.zsh': '#4eaa25', '.fish': '#4eaa25',
+        '.ps1': '#012456',     // PowerShell — dark blue
+        '.psm1': '#012456',
+        '.bat': '#c1c1c1', '.cmd': '#c1c1c1',
+        '.r': '#276dc3',       // R — blue
+        '.R': '#276dc3',
+        '.jl': '#9558b2',      // Julia — purple
+        '.ex': '#6e4a7e',      // Elixir — plum
+        '.exs': '#6e4a7e',
+        '.erl': '#a90533',     // Erlang — dark red
+        '.hrl': '#a90533',
+        '.clj': '#5881d8',     // Clojure — blue
+        '.cljs': '#5881d8',
+        '.hs': '#5e5086',      // Haskell — deep purple
+        '.ml': '#ee6a1a',      // OCaml — orange
+        '.mli': '#ee6a1a',
+        '.elm': '#60b5cc',     // Elm — teal
+        '.nim': '#ffe953',     // Nim — yellow
+        '.cr': '#000000',      // Crystal — black
+        '.d': '#ba595e',       // D — rose
+        '.coffee': '#244776',
+        '.awk': '#c0c0c0',
+        '.tcl': '#e4cc98',
+        '.pony': '#864029',
+        '.v': '#5d87bf',       // Verilog
+        '.vhd': '#048a81',     // VHDL
+        // ── Data / Config ────────────────────────────────────────────────────
+        '.json': '#cbcb41',    // yellow
+        '.jsonc': '#cbcb41',
+        '.yaml': '#cc3e44',    // red
+        '.yml': '#cc3e44',
+        '.toml': '#9c4221',    // burnt
+        '.ini': '#94a3b8', '.cfg': '#94a3b8', '.conf': '#94a3b8',
+        '.xml': '#f16529',     // orange (like HTML)
+        '.plist': '#f16529',
+        '.csv': '#6abd45',
+        '.env': '#ecd53f',
+        '.properties': '#b58900',
+        // ── Infrastructure ───────────────────────────────────────────────────
+        '.tf': '#7b42bc',      // Terraform — purple
+        '.hcl': '#7b42bc',
+        '.proto': '#4285f4',   // Protobuf — blue
+        '.thrift': '#d74108',
+        // ── Build ────────────────────────────────────────────────────────────
+        '.cmake': '#064f8c',
+        '.mk': '#94a3b8',
+        '.bazel': '#76d275', '.bzl': '#76d275',
+        // ── Docs ─────────────────────────────────────────────────────────────
+        '.md': '#519aba',      // Markdown — steel blue
+        '.mdx': '#519aba',
+        '.rst': '#87ceeb',
+        '.tex': '#3d6117',     // LaTeX — dark green
+        '.txt': '#9aaab4',
+        // ── Database ─────────────────────────────────────────────────────────
+        '.sql': '#dad8d8',
+        '.psql': '#336791', '.pgsql': '#336791',
+        // ── Shader / GPU ─────────────────────────────────────────────────────
+        '.glsl': '#5686a5', '.vert': '#5686a5', '.frag': '#5686a5',
+        '.hlsl': '#aaaaff',
+        '.wgsl': '#005580',
+        // ── Misc ─────────────────────────────────────────────────────────────
+        '.diff': '#41535b', '.patch': '#41535b',
+        '.vim': '#019733',
+        '.nix': '#7ebae4',
+        '.sol': '#363636',
+        '.lock': '#bbbbbb', '.log': '#999999',
     };
     return map[ext] || '#64748b';
 }
@@ -2818,27 +2909,134 @@ function renderCode(src, ext, fname, langHint) {
     const lines = src.split('\n');
     codeState.rawLines = lines;
     const hlExt = {
-        // C / ASM
-        '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.h': 'cpp', '.hpp': 'cpp',
-        '.asm': 'x86asm', '.s': 'x86asm', '.S': 'x86asm',
-        // UEFI module metadata — ini-like sections
+        // ── C / C++ / Systems ───────────────────────────────────────────────
+        '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
+        '.h': 'cpp', '.hpp': 'cpp', '.hxx': 'cpp', '.hh': 'cpp',
+        '.cs': 'csharp',
+        '.vb': 'vbnet',
+        '.rs': 'rust',
+        '.zig': 'plaintext',
+        '.d': 'd',
+        // ── Assembly ─────────────────────────────────────────────────────────
+        '.asm': 'x86asm', '.s': 'x86asm', '.S': 'x86asm', '.nasm': 'x86asm',
+        '.mips': 'mipsasm',
+        // ── UEFI / Firmware ──────────────────────────────────────────────────
         '.inf': 'ini', '.dec': 'ini', '.dsc': 'ini', '.fdf': 'ini',
-        // AMI specific — ini-like
         '.sdl': 'ini', '.sd': 'ini', '.cif': 'ini', '.mak': 'makefile',
-        // HII / ACPI
-        '.vfr': 'c', '.hfr': 'c',
-        '.uni': 'plaintext',
-        '.asl': 'c',
-        // Extra types
-        '.xml': 'xml', '.bat': 'bat', '.cmd': 'bat',
-        '.sh': 'bash', '.py': 'python',
-        '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
-        '.json': 'json', '.toml': 'ini',
-        '.cmake': 'cmake', '.mk': 'makefile',
+        '.vfr': 'c', '.hfr': 'c', '.uni': 'plaintext', '.asl': 'c',
+        // ── Python ───────────────────────────────────────────────────────────
+        '.py': 'python', '.pyw': 'python', '.pyx': 'python',
+        '.ipynb': 'json',
+        // ── JavaScript / TypeScript ──────────────────────────────────────────
+        '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+        '.jsx': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
+        '.graphql': 'graphql', '.gql': 'graphql',
+        // ── Web ──────────────────────────────────────────────────────────────
+        '.html': 'html', '.htm': 'html', '.xhtml': 'html',
+        '.css': 'css', '.scss': 'scss', '.sass': 'scss',
+        '.less': 'less', '.styl': 'stylus',
+        '.svg': 'xml',
+        // ── Go ───────────────────────────────────────────────────────────────
+        '.go': 'go',
+        // ── JVM / Mobile ─────────────────────────────────────────────────────
+        '.java': 'java',
+        '.kt': 'kotlin', '.kts': 'kotlin',
+        '.scala': 'scala', '.sc': 'scala',
+        '.groovy': 'groovy', '.gradle': 'groovy',
+        '.dart': 'dart',
+        '.swift': 'swift',
+        '.m': 'objectivec', '.mm': 'objectivec',
+        // ── Scripting ────────────────────────────────────────────────────────
+        '.rb': 'ruby', '.gemspec': 'ruby', '.rake': 'ruby',
+        '.php': 'php',
+        '.pl': 'perl', '.pm': 'perl',
+        '.lua': 'lua',
+        '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash', '.fish': 'bash',
+        '.ksh': 'bash', '.tcsh': 'bash',
+        '.ps1': 'powershell', '.psm1': 'powershell', '.psd1': 'powershell',
+        '.bat': 'dos', '.cmd': 'dos',
+        '.awk': 'awk',
+        '.tcl': 'tcl',
+        '.r': 'r', '.R': 'r',
+        '.jl': 'julia',
+        '.ex': 'elixir', '.exs': 'elixir',
+        '.erl': 'erlang', '.hrl': 'erlang',
+        '.clj': 'clojure', '.cljs': 'clojure', '.cljc': 'clojure',
+        '.hs': 'haskell', '.lhs': 'haskell',
+        '.ml': 'ocaml', '.mli': 'ocaml',
+        '.fs': 'fsharp', '.fsi': 'fsharp', '.fsx': 'fsharp',
+        '.elm': 'elm',
+        '.nim': 'nim',
+        '.cr': 'crystal',
+        '.coffee': 'coffeescript',
+        '.lisp': 'lisp', '.lsp': 'lisp', '.el': 'lisp',
+        '.scm': 'scheme',
+        '.pas': 'delphi', '.dpr': 'delphi',
+        '.for': 'fortran', '.f90': 'fortran', '.f95': 'fortran', '.f': 'fortran',
+        '.vala': 'vala',
+        '.hx': 'haxe',
+        '.awk': 'awk',
+        // ── Hardware description ──────────────────────────────────────────────
+        '.v': 'verilog', '.sv': 'verilog', '.svh': 'verilog',
+        '.vhd': 'vhdl', '.vhdl': 'vhdl',
+        // ── Data / Config ────────────────────────────────────────────────────
+        '.json': 'json', '.jsonc': 'json', '.json5': 'json',
+        '.yaml': 'yaml', '.yml': 'yaml',
+        '.toml': 'ini',
+        '.ini': 'ini', '.cfg': 'ini', '.conf': 'ini',
+        '.properties': 'properties', '.env': 'properties',
+        '.xml': 'xml', '.xsl': 'xml', '.xsd': 'xml', '.plist': 'xml',
+        '.csv': 'plaintext', '.tsv': 'plaintext',
+        // ── Infrastructure / Cloud ───────────────────────────────────────────
+        '.tf': 'hcl', '.hcl': 'hcl',
+        '.proto': 'protobuf',
+        '.thrift': 'thrift',
+        // ── Build systems ────────────────────────────────────────────────────
+        '.cmake': 'cmake',
+        '.mk': 'makefile', '.mak': 'makefile',
+        '.bazel': 'python', '.bzl': 'python',
+        // ── Docs ─────────────────────────────────────────────────────────────
+        '.md': 'markdown', '.mdx': 'markdown',
+        '.rst': 'plaintext',
+        '.txt': 'plaintext',
+        '.tex': 'latex', '.ltx': 'latex',
+        // ── Database ─────────────────────────────────────────────────────────
+        '.sql': 'sql', '.psql': 'pgsql', '.pgsql': 'pgsql',
+        '.ddl': 'sql', '.dml': 'sql',
+        // ── Shader / GPU ─────────────────────────────────────────────────────
+        '.glsl': 'glsl', '.vert': 'glsl', '.frag': 'glsl',
+        '.hlsl': 'plaintext', '.wgsl': 'plaintext',
+        // ── Misc ─────────────────────────────────────────────────────────────
+        '.diff': 'diff', '.patch': 'diff',
+        '.vim': 'vim',
+        '.nix': 'nix',
+        '.sol': 'javascript',
+        '.feature': 'gherkin',
+        '.http': 'http',
+        '.log': 'plaintext', '.lock': 'plaintext',
+        '.editorconfig': 'ini',
+        '.gitignore': 'plaintext', '.gitattributes': 'plaintext',
+        '.dockerignore': 'plaintext', '.npmignore': 'plaintext',
+    };
+
+    // Special filename → hljs lang (files with no extension or fixed names)
+    const hlFilename = {
+        'dockerfile': 'dockerfile', 'Dockerfile': 'dockerfile',
+        'makefile': 'makefile', 'Makefile': 'makefile', 'GNUmakefile': 'makefile',
+        'jenkinsfile': 'groovy', 'Jenkinsfile': 'groovy',
+        'vagrantfile': 'ruby', 'Vagrantfile': 'ruby',
+        'gemfile': 'ruby', 'Gemfile': 'ruby',
+        'rakefile': 'ruby', 'Rakefile': 'ruby',
+        'brewfile': 'ruby', 'Brewfile': 'ruby',
+        'pipfile': 'ini', 'Pipfile': 'ini',
+        '.bashrc': 'bash', '.zshrc': 'bash', '.bash_profile': 'bash',
+        '.bash_aliases': 'bash', '.profile': 'bash',
+        'nginx.conf': 'nginx', 'httpd.conf': 'apache',
+        'CMakeLists.txt': 'cmake', 'cmakelists.txt': 'cmake',
     };
     // langHint from server takes priority (e.g. 'xml', 'python')
     const lang = (langHint && langHint !== 'plaintext') ? langHint
-        : hlExt[ext] || 'plaintext';
+        : hlExt[ext] || hlFilename[fname] || 'plaintext';
 
     // Build funcLineMap: scan for `funcName(` patterns
     codeState.funcLineMap = {};

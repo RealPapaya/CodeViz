@@ -1,148 +1,121 @@
-# VIZCODE — AI Working Memory
-> 每次修改後更新此文件。這是給下一位 AI 的完整工作紀錄。
+# VIZCODE — AI 核心記憶與快速上手指南
+
+> ⚠️ **所有 AI Agent 注意** ⚠️
+> 這是一份幫助你快速理解專案的指南。每次重大架構修改後，**必須**同步更新此檔案，以確保給下一位 AI 接手時資訊是最新的。
 
 ---
 
-## 專案概覽
+## 🚀 系統概覽 (System Overview)
 
-| 項目 | 內容 |
-|------|------|
-| 名稱 | VIZCODE V4 |
-| 用途 | 本地 code 視覺化工具，分析 codebase 並產生互動式 HTML graph |
-| 啟動 | `launch.bat` → 開 Chrome `http://localhost:7777` |
-| 核心入口 | `analyze_viz.py` |
+- **專案名稱**: VIZCODE V4
+- **專案用途**: 本地端 (Local) 的程式碼視覺化工具。掃描使用者的 codebase 並產生互動式的 HTML 關聯圖 (Dependency Graph / Call Graph)。
+- **啟動方式**: 執行 `launch.bat` → 自動開啟互動式終端機 CLI `vizcode.py` → 啟動本地伺服器 `server.py` → 在 Chrome 打開 `http://localhost:7777`。
+- **核心特色**: 完全依賴 Python 標準函式庫 (無 pip 安裝需求)、支援多語言 (Pluggable Parser)、前後端分離架構。
 
 ---
 
-## 檔案地圖
+## 📂 核心檔案地圖與相依關係
 
-```
-VIZCODE_V4/
-├── analyze_viz.py          主分析引擎。掃描檔案、建圖、產出 JSON + HTML（無語言細節）
-├── detector.py             偵測專案類型（BIOS / Python / JS / Go / 混合）
-├── server.py               HTTP 伺服器（port 7777），接收 /analyze POST，串流進度
-├── launcher.html           瀏覽器前端 UI（輸入路徑、顯示進度、開啟結果）
-├── launch.bat              Windows 啟動腳本
-│
-├── parsers/                ★ 可插拔語言 parser（所有語言平等）
-│   ├── __init__.py
-│   ├── bios_parser.py      ★ BIOS/UEFI/AMI/C/ASM → 所有 BIOS 邏輯都在這
-│   ├── python_parser.py    .py → imports / funcdefs / call graph
-│   ├── js_parser.py        .js/.mjs/.jsx/.ts/.tsx → ES6 import + function
-│   └── go_parser.py        .go → import path + func（大寫=public）
-│
-└── static/                 前端資源（server.py 從這裡 serve）
-    ├── viz.js              圖形渲染、側邊欄、圖例、節點樣式、過濾器
-    └── viz.css             全部樣式
-```
+為了方便人類與 AI 快速閱讀，請參考以下結構化的檔案樹狀圖設計：
+
+### 🟢 啟動與伺服器 (Entry & Server)
+- 📄 **`launch.bat`** (腳本)
+  - **用途**: Windows 專屬啟動腳本。設定 UTF-8 環境。
+  - **👉 觸發**: `vizcode.py`
+- 🐍 **`vizcode.py`** (後端)
+  - **用途**: 互動式終端機介面 (TUI)，供使用者選擇歷史紀錄與目錄。
+  - **👉 觸發**: 以子程序 (Subprocess) 啟動 `server.py`
+- 🌐 **`server.py`** (後端)
+  - **用途**: HTTP 伺服器 (Port 7777)，負責處理網頁請求與 `/analyze` 背景任務。
+  - **👉 觸發**: 載入 `analyze_viz.py` 進行分析，發送 `launcher.html` 給瀏覽器。
+
+### 🔴 核心分析引擎 (Backend Analysis)
+- 🧠 **`analyze_viz.py`** (後端)
+  - **用途**: **系統的大腦與心臟**。遍歷資料夾、建立專案依賴圖表 (Nodes & Edges)、產出最終 JSON。
+  - **🔄 依賴**: `detector.py` 以及所有的 `parsers/*.py`
+- 🕵️ **`detector.py`** (後端)
+  - **用途**: 掃描資料夾內的特徵檔案，判斷目前的專案類型 (Python, JS, Go 或 BIOS)。
+- 🧩 **`parsers/`** (後端)
+  - **用途**: 各獨立語言的解析器，只負責將原始碼轉為統一格式的資料 (Tuple) 交還給 `analyze_viz.py`。
+  - `bios_parser.py`: 解析 BIOS 相關檔案 (C/C++, ASM, EDK2, INF, SDL 等)
+  - `python_parser.py`: 解析 `.py`
+  - `js_parser.py`: 解析 `.js`, `.ts`, `.jsx`, `.tsx`
+  - `go_parser.py`: 解析 `.go`
+
+### 🔵 前端視覺化 (Frontend UI)
+- 🖥️ **`launcher.html`** (前端)
+  - **用途**: 單頁應用 (SPA) 介面。顯示讀取進度條，並作為畫布的容器。
+  - **🔄 依賴**: 載入 `static/` 下的靜態資源。
+- 🎨 **`static/viz.js`** (前端)
+  - **用途**: **前端的心臟**。解析 JSON 資料，處理 D3.js 繪圖、佈局、點擊事件與過濾器邏輯。
+- 💅 **`static/viz.css`** (前端)
+  - **用途**: 所有介面的視覺外觀定義。
+- 🌍 **`static/i18n.js`** (前端)
+  - **用途**: 管理中英雙語的翻譯對照表。
 
 ---
 
-## 修 BIOS 需要的檔案
+## 🔄 系統核心資料流 (Data Flow Workflow)
 
-**只需要丟這些給 AI：**
+當使用者在網頁上輸入路徑並點擊「Analyze」時，整個系統的資料流向如下：
 
-| 檔案 | 原因 |
-|------|------|
-| `parsers/bios_parser.py` | **所有 BIOS parser 都在這裡**（scan_inf / scan_sdl / scan_cif / scan_vfr / scan_c ...） |
-| `static/viz.js` | BIOS 節點形狀、邊顏色、圖例都在這 |
-
-> `analyze_viz.py`、`detector.py`、其他 parsers 都不需要動。
+1. **Frontend Request**: 使用者在 `launcher.html` 點擊分析，網頁發送 POST 請求至 `http://localhost:7777/analyze`。
+2. **Server Handling**: `server.py` 接收到請求，開啟一個子線程 (Thread)，開始 Server 端的事件串流 (SSE)。
+3. **Core Engine Starts**: `server.py` 呼叫 `analyze_viz.py` 的主函式，開始掃描指定的目錄。
+4. **Project Detection**: `analyze_viz.py` 先呼叫 `detector.py` 判定專案類型 (如 Python 或 BIOS)。
+5. **File Parsing (Dispatch)**: `analyze_viz.py` 讀取每一個檔案，並根據副檔名分發 (Dispatch) 給對應的 `parsers/` 下的模組。
+    - 各個 Parser (`xxx_parser.py`) 只需要負責把程式碼轉成統一格式的 Tuple (Imports, FuncDefs, Calls)。
+6. **Graph Building**: `analyze_viz.py` 統整所有 Parser 的結果，建立 Nodes (檔案/函式) 和 Edges (依賴/呼叫關係)，轉換成巨大的 JSON 物件。
+7. **Frontend Rendering**: `server.py` 將包含 JSON 的 HTML 結果發送回瀏覽器。`launcher.html` 載入後，`static/viz.js` 接手，將 JSON 物件渲染成視覺化的關聯圖。
 
 ---
 
-## 架構重點（給 AI 讀）
+## 🛠️ AI 擴充與修改指南 (Extensibility Guide)
 
-### analyze_viz.py 主流程
-```
-build_graph(root_dir)
-  ├── 掃描所有符合 SCAN_EXT 的檔案
-  ├── detector.py → 偵測專案類型，印 banner
-  ├── scan_file(filepath) → 依副檔名 dispatch 到對應 parser
-  │     BIOS/C/ASM: parsers/bios_parser.scan_bios(src, ext)
-  │     Python:     parsers/python_parser.scan_python()
-  │     JS/TS:      parsers/js_parser.scan_js() / scan_ts()
-  │     Go:         parsers/go_parser.scan_go()
-  ├── 建立 file_meta / file_incs / file_defs / file_calls
-  ├── resolve_ref() → 把字串 ref 解析成實際 rel_path
-  ├── add_edge() → 根據 ext 決定 edge type
-  └── 回傳 dict → build_html() 嵌入 JSON → 瀏覽器渲染
-```
+如果你需要新增或修改功能，請嚴格遵守以下對應位置，**不要改錯檔案**：
 
-### scan_file() 回傳格式（所有 parser 統一）
+### 情境 1：新增一種新的程式語言支援 (例如：Java)
+1. **建立 Parser**: 在 `parsers/` 資料夾下新增 `java_parser.py`，實作 `scan_java(content, filepath)` 並回傳規定的 Tuple 格式。
+2. **註冊 Parser**: 修改 `analyze_viz.py`，在 `scan_file()` 中匯入你的 parser 並新增附檔名判斷 (`.java`)，呼叫 `scan_java()`。並在頂部 `SCAN_EXT` 和 `FILE_TYPE_MAP` 註冊。
+3. **專案偵測**: 修改 `detector.py`，加入識別 Java 專案的特徵 (例如 `pom.xml`, `build.gradle`)。
+4. **前端樣式**: 修改 `static/viz.js`，在 `extColor()` 設定 Java 檔案的顏色，並在 `FILE_TYPE_SHAPE`、`FT_GROUPS` 等常數表增加 Java 類別的顯示。
+
+### 情境 2：修改或修復 BIOS (C/C++/EDK2) 的解析邏輯
+- **唯一需要修改的地方**: `parsers/bios_parser.py`。
+- `analyze_viz.py` 和 `detector.py` 完全**不需要碰**。BIOS 所有的正規表示式與邊界案例都在這個 parser 裡面。
+
+### 情境 3：修改畫面上節點的顏色、形狀或連線的外觀
+- 只需要修改 **`static/viz.css`** (靜態外觀) 或 **`static/viz.js`** (畫布算圖邏輯、點擊高亮邏輯)。
+
+### 情境 4：修改伺服器機制、增加 API Endpoints
+- 修改 **`server.py`** 下的 `Handler` class (`do_GET`, `do_POST`)。
+
+### 情境 5：修改終端機操作畫面 (CLI/TUI)
+- 修改 **`vizcode.py`** 裡面的 `TUI` 類別 (包含 Banner、動畫、按鍵回應)。
+
+---
+
+## 💡 統一的 Parser 介面規範
+
+任何在 `parsers/` 下的模組，其 `scan_xxx()` 函式都**必須**回傳如下格式：
+
 ```python
 return (
-    imports_or_refs,      # list[str]  — 這個檔案依賴什麼
-    funcdefs,             # list[dict] — {label, is_efiapi, is_static}
-    funccalls,            # list[str]  — 所有 call site 名稱
-    extra_dict,           # dict | None — 額外 metadata（BIOS 用）
-    func_calls_by_func,   # list[list[str]] — 每個 funcdef 對應的 call list
+    imports_or_refs,      # list[str]: 這個檔案依賴的外部模組/檔案/字串
+    funcdefs,             # list[dict]: 這個檔案定義的函式 [{label, is_efiapi, is_static}, ...]
+    funccalls,            # list[str]: 這個檔案呼叫了哪些外部函式 (Call Site 列表)
+    extra_dict,           # dict | None: 額外的 Metadata (目前主要用於 BIOS 特殊屬性，通常為 None)
+    func_calls_by_func,   # list[list[str]]: 精確紀錄每個 funcdef 對應的外部呼叫陣列
 )
 ```
 
-### 新增語言的步驟（4 個地方）
-1. `parsers/` → 新建 `xxx_parser.py`，實作 `scan_xxx()` 回傳上面格式
-2. `analyze_viz.py` → `scan_file()` 加 dispatch，`SCAN_EXT` 加副檔名，`FILE_TYPE_MAP` 登記 file_type key
-3. `detector.py` → `PROJECT_TYPES` 登記，`detect_project_type()` 加 score 邏輯
-4. `static/viz.js` → `extColor()` 加顏色，`FILE_TYPE_SHAPE` 加節點形狀，`FT_GROUPS` 加 filter chip，`LEGEND_NODES` 加圖例
-
-> **修 BIOS parser 邏輯** → 只需動 `parsers/bios_parser.py`，其他檔案完全不用碰
-
----
-
-## BIOS 支援的檔案類型
-
-| 副檔名 | file_type key | 說明 |
-|--------|--------------|------|
-| `.c/.cpp/.cc` | `c_source` | C/C++ 原始碼 |
-| `.h/.hpp` | `header` | 標頭檔 |
-| `.asm/.s/.S/.nasm` | `assembly` | 組合語言 |
-| `.inf` | `module_inf` | EDK2 模組描述（Sources/Packages/LibraryClasses）|
-| `.dec` | `package_dec` | EDK2 package 宣告（GUID/Protocol/PPI）|
-| `.dsc` | `platform_dsc` | 平台描述（Components 列表）|
-| `.fdf` | `flash_desc` | Flash 描述（FV 區段）|
-| `.sdl` | `ami_sdl` | AMI 模組清單（INFComponent/LibraryMapping/ELINK）|
-| `.sd` | `ami_sd` | AMI Setup Data（C struct + VFR 混合）|
-| `.cif` | `ami_cif` | AMI Component Index（[INF]/[files]/[parts]）|
-| `.mak` | `makefile` | Makefile |
-| `.vfr` | `hii_vfr` | UEFI 標準 HII 表單 |
-| `.hfr` | `hii_hfr` | AMI 擴充 HII Form Resource |
-| `.uni` | `hii_string` | Unicode 字串包 |
-| `.asl` | `acpi_asl` | ACPI Source Language |
-
-## BIOS Edge 類型
-
-| Edge | 顏色 | 觸發條件 |
-|------|------|---------|
-| `include` | 紫 `#c084fc` | `#include` / VFR include |
-| `sources` | 金 `#ffd700` | INF `[Sources]` |
-| `package` | 青 `#00d4ff` | INF `[Packages]` |
-| `library` | 紫 `#a78bfa` | INF/SDL LibraryClasses |
-| `component` | 藍 `#60a5fa` | DSC/FDF/SDL INFComponent |
-| `elink` | 橙 `#ff6b35` | SDL ELINK Parent |
-| `guid_ref` | 橙 `#fb923c` | INF Guids/Ppis/Protocols |
-| `cif_own` | 綠 `#34d399` | CIF [INF]/[files] |
-| `str_ref` | 粉 `#e879f9` | VFR/HFR → .uni |
-| `asl_include` | 靛 `#818cf8` | ASL Include() |
-| `callback_ref` | 紅 `#f87171` | VFR/HFR callback key |
-| `depex` | 粉 `#f472b6` | INF [Depex] |
-
----
-
-## 已知限制 / 待改進
-
-- [ ] Python parser 用縮排推斷函式邊界，巢狀 class 不保證 100% 正確
-- [ ] JS parser 不解析動態 `import()` 或 `require` 在 if/switch 內
-- [ ] Go parser 不追蹤 interface 實作關係
-- [ ] BIOS `resolve_ref()` 只做 basename / stem 比對，同名檔案可能 ambiguous
-- [ ] node_modules 完全跳過（設計如此），不顯示第三方依賴
-
----
-
-## 版本歷史
-
-| 版本 | 日期 | 內容 |
-|------|------|------|
-| V3 | — | 原始 BIOS 專用版（analyze_bios.py）|
-| V4 | 2025-03-05 | 架構重構：Pluggable Parsers + Python/JS/TS/Go 支援 + 專案類型偵測 |
-| V4.1 | 2026-03-05 | BIOS 邏輯移入 parsers/bios_parser.py，架構完全對稱，analyze_viz.py 減少 544 行 |
+## 📜 備忘：BIOS 的 Edge Type 與顏色定義
+(保留這部分是因為 BIOS 結構過於龐大，常需要除錯)
+- Includes (`#include`): `#c084fc` (紫色)
+- Sources (`[Sources]`): `#ffd700` (金色)
+- Packages (`[Packages]`): `#00d4ff` (青色)
+- LibraryClasses: `#a78bfa` (淺紫)
+- Components: `#60a5fa` (藍色)
+- Guid/Protocol Ref: `#fb923c` (橘色)
+- String Ref (`.uni`): `#e879f9` (粉紅)
+- VFR/HFR Callbacks: `#f87171` (紅色)

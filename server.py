@@ -213,18 +213,174 @@ class Handler(BaseHTTPRequestHandler):
                     })
                     return
 
-                # ── XML / plain-text variants → serve as text with type hint ──
-                TEXT_FORCE_EXTS = {
-                    '.xml', '.txt', '.bat', '.cmd', '.sh', '.py',
-                    '.md', '.yaml', '.yml', '.toml', '.json',
-                    '.cmake', '.mk', '.gitignore', '.editorconfig',
+                # ── Comprehensive lang hint map (ext → highlight.js language alias) ──
+                # Covers 130+ extensions — mirrors VS Code's grammar support.
+                LANG_HINT_MAP = {
+                    # ── Web ────────────────────────────────────────────────────
+                    '.html': 'html', '.htm': 'html', '.xhtml': 'html',
+                    '.css': 'css', '.scss': 'scss', '.sass': 'scss',
+                    '.less': 'less', '.styl': 'stylus',
+                    '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+                    '.jsx': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
+                    '.graphql': 'graphql', '.gql': 'graphql',
+                    '.wasm': 'wasm', '.wat': 'wasm',
+                    # ── Systems languages ──────────────────────────────────────
+                    '.c': 'c', '.h': 'cpp',
+                    '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
+                    '.hpp': 'cpp', '.hxx': 'cpp', '.hh': 'cpp',
+                    '.cs': 'csharp', '.vb': 'vbnet',
+                    '.rs': 'rust',
+                    '.go': 'go',
+                    '.zig': 'plaintext',
+                    '.v': 'verilog',
+                    '.vhd': 'vhdl', '.vhdl': 'vhdl',
+                    '.sv': 'verilog', '.svh': 'verilog',
+                    # ── Assembly ──────────────────────────────────────────────
+                    '.asm': 'x86asm', '.s': 'x86asm', '.S': 'x86asm',
+                    '.nasm': 'x86asm', '.mips': 'mipsasm',
+                    # ── JVM / mobile ──────────────────────────────────────────
+                    '.java': 'java',
+                    '.kt': 'kotlin', '.kts': 'kotlin',
+                    '.scala': 'scala', '.sc': 'scala',
+                    '.groovy': 'groovy', '.gradle': 'groovy',
+                    '.dart': 'dart',
+                    '.swift': 'swift',
+                    '.m': 'objectivec', '.mm': 'objectivec',
+                    # ── Scripting ─────────────────────────────────────────────
+                    '.py': 'python', '.pyw': 'python', '.pyx': 'python',
+                    '.rb': 'ruby', '.gemspec': 'ruby', '.rake': 'ruby',
+                    '.php': 'php', '.php3': 'php', '.php4': 'php', '.php5': 'php',
+                    '.pl': 'perl', '.pm': 'perl',
+                    '.lua': 'lua',
+                    '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash',
+                    '.fish': 'bash', '.ksh': 'bash', '.tcsh': 'bash',
+                    '.ps1': 'powershell', '.psm1': 'powershell', '.psd1': 'powershell',
+                    '.bat': 'dos', '.cmd': 'dos',
+                    '.awk': 'awk',
+                    '.tcl': 'tcl',
+                    '.r': 'r', '.R': 'r',
+                    '.jl': 'julia',
+                    '.ex': 'elixir', '.exs': 'elixir',
+                    '.erl': 'erlang', '.hrl': 'erlang',
+                    '.clj': 'clojure', '.cljs': 'clojure', '.cljc': 'clojure',
+                    '.hs': 'haskell', '.lhs': 'haskell',
+                    '.ml': 'ocaml', '.mli': 'ocaml',
+                    '.fs': 'fsharp', '.fsi': 'fsharp', '.fsx': 'fsharp',
+                    '.nim': 'nim',
+                    '.cr': 'crystal',
+                    '.d': 'd',
+                    '.coffee': 'coffeescript',
+                    '.elm': 'elm',
+                    '.ex': 'elixir',
+                    '.pony': 'pony',
+                    '.pas': 'delphi', '.dpr': 'delphi',
+                    '.lisp': 'lisp', '.lsp': 'lisp', '.el': 'lisp',
+                    '.scm': 'scheme',
+                    '.prolog': 'prolog', '.pro': 'prolog',
+                    '.ada': 'ada', '.adb': 'ada', '.ads': 'ada',
+                    '.for': 'fortran', '.f90': 'fortran', '.f95': 'fortran', '.f': 'fortran',
+                    '.vala': 'vala',
+                    '.hx': 'haxe',
+                    # ── Data / Config ─────────────────────────────────────────
+                    '.json': 'json', '.jsonc': 'json', '.json5': 'json',
+                    '.yaml': 'yaml', '.yml': 'yaml',
+                    '.toml': 'ini',
+                    '.ini': 'ini', '.cfg': 'ini', '.conf': 'ini',
+                    '.properties': 'properties',
+                    '.env': 'properties',
+                    '.xml': 'xml', '.xsl': 'xml', '.xsd': 'xml',
+                    '.plist': 'xml', '.rss': 'xml', '.atom': 'xml',
+                    '.svg': 'xml',
+                    '.csv': 'plaintext', '.tsv': 'plaintext',
+                    # ── Infrastructure / DevOps ────────────────────────────────
+                    '.tf': 'hcl', '.hcl': 'hcl',
+                    '.dockerfile': 'dockerfile',
+                    '.nginx': 'nginx',
+                    '.proto': 'protobuf',
+                    '.thrift': 'thrift',
+                    # ── Build systems ─────────────────────────────────────────
+                    '.cmake': 'cmake',
+                    '.mk': 'makefile', '.mak': 'makefile',
+                    '.bazel': 'python', '.bzl': 'python',
+                    '.gradle': 'groovy',
+                    # ── Documentation / text ──────────────────────────────────
+                    '.md': 'markdown', '.mdx': 'markdown',
+                    '.rst': 'plaintext',
+                    '.txt': 'plaintext',
+                    '.tex': 'latex', '.ltx': 'latex',
+                    '.asciidoc': 'asciidoc', '.adoc': 'asciidoc',
+                    # ── Database ──────────────────────────────────────────────
+                    '.sql': 'sql', '.psql': 'pgsql', '.pgsql': 'pgsql',
+                    '.ddl': 'sql', '.dml': 'sql',
+                    # ── UEFI / Firmware (existing BIOS support) ────────────────
+                    '.inf': 'ini', '.dec': 'ini', '.dsc': 'ini', '.fdf': 'ini',
+                    '.sdl': 'ini', '.sd': 'ini', '.cif': 'ini',
+                    '.vfr': 'c', '.hfr': 'c', '.uni': 'plaintext',
+                    '.asl': 'c',
+                    # ── Misc ──────────────────────────────────────────────────
+                    '.diff': 'diff', '.patch': 'diff',
+                    '.vim': 'vim', '.vimrc': 'vim',
+                    '.nix': 'nix',
+                    '.rego': 'plaintext',
+                    '.wgsl': 'plaintext',
+                    '.glsl': 'glsl', '.vert': 'glsl', '.frag': 'glsl', '.hlsl': 'plaintext',
+                    '.sol': 'javascript',   # Solidity — close enough
+                    '.proto': 'protobuf',
+                    '.feature': 'gherkin',
+                    '.http': 'http',
+                    '.ipynb': 'json',
+                    '.lock': 'plaintext',
+                    '.log': 'plaintext',
+                    '.editorconfig': 'ini',
+                    '.gitignore': 'plaintext', '.gitattributes': 'plaintext',
+                    '.dockerignore': 'plaintext', '.npmignore': 'plaintext',
                 }
-                if ext in TEXT_FORCE_EXTS:
+
+                # Special filenames with no extension
+                FILENAME_LANG_MAP = {
+                    'dockerfile': 'dockerfile', 'Dockerfile': 'dockerfile',
+                    'makefile': 'makefile', 'Makefile': 'makefile', 'GNUmakefile': 'makefile',
+                    'jenkinsfile': 'groovy', 'Jenkinsfile': 'groovy',
+                    'vagrantfile': 'ruby', 'Vagrantfile': 'ruby',
+                    'gemfile': 'ruby', 'Gemfile': 'ruby',
+                    'rakefile': 'ruby', 'Rakefile': 'ruby',
+                    'brewfile': 'ruby', 'Brewfile': 'ruby',
+                    'pipfile': 'ini', 'Pipfile': 'ini',
+                    'procfile': 'plaintext', 'Procfile': 'plaintext',
+                    '.bashrc': 'bash', '.zshrc': 'bash', '.bash_profile': 'bash',
+                    '.bash_aliases': 'bash', '.profile': 'bash',
+                    '.env': 'properties', '.env.local': 'properties',
+                    '.eslintrc': 'json', '.prettierrc': 'json', '.babelrc': 'json',
+                    'cmakelists.txt': 'cmake', 'CMakeLists.txt': 'cmake',
+                    'go.mod': 'plaintext', 'go.sum': 'plaintext',
+                    'cargo.toml': 'ini', 'cargo.lock': 'plaintext',
+                    'package.json': 'json', 'package-lock.json': 'json',
+                    'yarn.lock': 'plaintext',
+                    'requirements.txt': 'plaintext',
+                    'pyproject.toml': 'ini', 'setup.cfg': 'ini', 'setup.py': 'python',
+                    'tsconfig.json': 'json', 'jsconfig.json': 'json',
+                    'webpack.config.js': 'javascript', 'vite.config.js': 'javascript',
+                    'nginx.conf': 'nginx', 'httpd.conf': 'apache',
+                    'robots.txt': 'plaintext', 'humans.txt': 'plaintext',
+                    'license': 'plaintext', 'LICENSE': 'plaintext',
+                    'readme': 'markdown', 'README': 'markdown',
+                    'changelog': 'markdown', 'CHANGELOG': 'markdown',
+                    'authors': 'plaintext', 'AUTHORS': 'plaintext',
+                }
+
+                fname_lower = Path(abs_path).name
+                lang_hint = (
+                    FILENAME_LANG_MAP.get(fname_lower)
+                    or FILENAME_LANG_MAP.get(Path(abs_path).name)
+                    or LANG_HINT_MAP.get(ext)
+                )
+
+                if lang_hint is not None or ext in LANG_HINT_MAP:
                     content = Path(abs_path).read_text(encoding='utf-8', errors='replace')
                     self.json_resp({
                         'content_type': 'text',
                         'content': content,
-                        'lang_hint': ext.lstrip('.'),
+                        'lang_hint': lang_hint or 'plaintext',
                         'path': rel,
                     })
                     return
