@@ -1,28 +1,12 @@
-# SKILL: Stateful UI Default-Behaviour with Preference Overrides
+# Implementation Guide: Stateful UI Default-Behaviour
 
-## When to Apply This Pattern
-
-Use this pattern whenever a visualizer or graph UI has:
-- **Toggleable visibility** of a node/edge class (e.g. "External Functions", "External Files")
-- **Expand/Collapse All** actions on groups of nodes
-- **Navigation history** (Prev / Next buttons) that the user expects to restore their prior view
-
----
-
-## Core Design Rule
-
-> **Fresh navigation → user's preference.  
-> History navigation → restore snapshot.**
-
-The two cases must be mutually exclusive. Never apply default-behaviour when restoring a history slot.
-
----
+This guide provides the exact implementation steps and code examples for the stateful default-behaviour pattern.
 
 ## Implementation Checklist
 
 ### 1. Preference Registry
 
-Add every default-behaviour toggle to the central preferences object:
+Add every default-behaviour toggle to the central preferences object. Defaults belong here, not scattered across render functions.
 
 ```js
 const _PREFS = {
@@ -39,13 +23,9 @@ const _PREFS = {
 };
 ```
 
-Key principle: **defaults go here, not scattered across render functions.**
-
----
-
 ### 2. One Initialization Flag Per Graph Level
 
-Each graph level (L1 dependency map, L2 call graph) needs its own "have I applied defaults yet?" flag so the first render initialises expand state and subsequent re-renders (collapse group, toggle filter, etc.) do not reset it.
+Each graph level (e.g., L1 dependency map, L2 call graph) needs its own "have I applied defaults yet?" flag. This ensures the first render initialises expand state and subsequent re-renders (collapse group, toggle filter, etc.) do not reset it.
 
 **L1 (depMapState):**
 ```js
@@ -66,8 +46,6 @@ const l2State = {
 };
 ```
 
----
-
 ### 3. Reset the Flag on Fresh Navigation
 
 When navigating to a **new** module/file (not via history), reset the init flag **before** the render function runs:
@@ -86,11 +64,9 @@ if (l2State.activeFile !== fileRel) {
 }
 ```
 
----
-
 ### 4. Apply Default Inside the Render Function (One-Shot)
 
-Inside the render function, after you have computed the full set of groups, apply the default **once**:
+Inside the render function, after computing the full set of groups, apply the default **once**:
 
 ```js
 // ── L1: renderFilesFlat ──────────────────────────────────────────────────────
@@ -103,7 +79,6 @@ if (!depMapState._extModsInitialized) {
     }
     // extExpand=false → keep expandedExtModules as new Set() (collapse all)
 }
-
 
 // ── L2: renderL2Flowchart ────────────────────────────────────────────────────
 if (!l2State._expandInitialized) {
@@ -123,11 +98,9 @@ if (!l2State._expandInitialized) {
 
 **Crucially:** `showExternalFuncs` being OFF gates the whole expand logic — if the user doesn't want external nodes at all, their expand/collapse state is irrelevant.
 
----
-
 ### 5. History Navigation Must Bypass the Flag
 
-Prev/Next history handlers must **restore a snapshot** before calling the render function, not after. Because the init flag is false only on fresh visits, restoring a snapshot sets `_expandInitialized = true` (via the snapshot field or a flag carried through), and the "apply default" block is skipped:
+Prev/Next history handlers must **restore a snapshot** before calling the render function, not after. Because the init flag is false only on fresh visits, restoring a snapshot must set `_expandInitialized = true` (via the snapshot field or a flag carried through). This ensures the "apply default" block is skipped:
 
 ```js
 function goL2Prev() {
@@ -150,8 +123,6 @@ function _applyL2Snapshot(idx) {
     l2State._expandInitialized       = true;   // ← add this line
 }
 ```
-
----
 
 ### 6. Preference UI Wiring
 
@@ -187,24 +158,3 @@ HTML checkbox to add to the preference modal:
 | History restore calling render before restoring snapshot | Always `_applyL2Snapshot()` → then `openL2File()` |
 | Snapshot restore not setting `_expandInitialized = true` | Add it to `_applyL2Snapshot` |
 | Sys-API category groups not included in expand-all default | Iterate `sysMap` and add each category in `_expandInitialized` block |
-
----
-
-## Mental Model Summary
-
-```
-User opens file/module
-       │
-       ├─ Via Prev/Next history?
-       │       YES → _applyL2Snapshot() sets expandedModules from history
-       │             _expandInitialized = true (prevents default overwrite)
-       │             render() → default block skipped ✓
-       │
-       └─ Fresh navigation?
-               _expandInitialized = false (set in reset/drillTo)
-               render() runs → default block fires:
-                   showExternal OFF → expandedModules = {} (irrelevant)
-                   showExternal ON  → extExpand ON  → expand all groups
-                                    → extExpand OFF → collapse all groups
-               _expandInitialized = true (blocks future re-renders from resetting)
-```
