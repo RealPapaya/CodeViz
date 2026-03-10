@@ -76,7 +76,7 @@ const codeState = {
 };
 
 // ─── Layout extension availability ───────────────────────────────────────────
-// All CDN UMD bundles (fcose, elk, cola, cise) self-register by calling
+// All CDN UMD bundles (fcose, elk, cola) self-register by calling
 // cytoscape.use() internally when their <script> tag executes.
 // No manual cytoscape.use() or window.cytoscapeXxx lookup needed.
 // We probe after cy is initialised: cy.layout({ name }) throws synchronously
@@ -87,7 +87,7 @@ const _registeredLayouts = new Set([
 ]);
 
 function _probeAvailableLayouts() {
-    ['fcose', 'elk', 'cola', 'cise'].forEach(name => {
+    ['fcose', 'elk', 'cola'].forEach(name => {
         try {
             const dummy = cy.layout({ name, stop: () => { } });
             dummy.destroy();
@@ -121,11 +121,17 @@ const _PREFS = {
     KEYS: {
         font: 'biosviz_code_font', lang: 'biosviz_lang',
         extFiles: 'biosviz_ext_files', extFuncs: 'biosviz_ext_funcs',
-        theme: 'biosviz_theme'
+        theme: 'biosviz_theme',
+        layoutL0: 'biosviz_layout_l0',    // default layout for L0 module overview
+        layoutL1: 'biosviz_layout_l1',    // default layout for L1 dep-map
+        layoutL2: 'biosviz_layout_l2',    // default layout for L2 call-flow
     },
     DEFAULTS: {
         font: "'JetBrains Mono', monospace", lang: 'en',
-        extFiles: false, extFuncs: false, theme: 'dark'
+        extFiles: false, extFuncs: false, theme: 'dark',
+        layoutL0: 'cose',      // Force-directed — best for module overview
+        layoutL1: 'dagre-lr',  // Hierarchy LR — best for dep-map 
+        layoutL2: 'dagre-lr',  // Hierarchy LR — best for call-flow
     },
     get(k) {
         try {
@@ -303,7 +309,6 @@ function _layoutKeyMap(id) {
         'cola': ['layoutCola', 'layoutCola_Tip'],
         'elk-layered': ['layoutElkLayered', 'layoutElkLayered_Tip'],
         'elk-stress': ['layoutElkStress', 'layoutElkStress_Tip'],
-        'cise': ['layoutCise', 'layoutCise_Tip'],
     })[id] || [];
 }
 
@@ -652,6 +657,14 @@ function initPreferences() {
     _syncCheck('pref-ext-files', _PREFS.get('extFiles'));
     _syncCheck('pref-ext-funcs', _PREFS.get('extFuncs'));
 
+    // Layout defaults
+    const layoutL0Sel = document.getElementById('pref-layout-l0');
+    const layoutL1Sel = document.getElementById('pref-layout-l1');
+    const layoutL2Sel = document.getElementById('pref-layout-l2');
+    if (layoutL0Sel) layoutL0Sel.value = _PREFS.get('layoutL0');
+    if (layoutL1Sel) layoutL1Sel.value = _PREFS.get('layoutL1');
+    if (layoutL2Sel) layoutL2Sel.value = _PREFS.get('layoutL2');
+
     // Open/close
     prefBtn.addEventListener('click', () => { prefModal.style.display = 'flex'; });
     const close = () => { prefModal.style.display = 'none'; };
@@ -684,6 +697,17 @@ function initPreferences() {
         l2State.showExternalEdges = v;          // lines always follow funcs
         updateExternalFuncsToggle?.();
         applyExternalEdgeVisibility?.();
+    });
+
+    // Default layout selects — save pref; takes effect on next level load
+    if (layoutL0Sel) layoutL0Sel.addEventListener('change', e => {
+        _PREFS.set('layoutL0', e.target.value);
+    });
+    if (layoutL1Sel) layoutL1Sel.addEventListener('change', e => {
+        _PREFS.set('layoutL1', e.target.value);
+    });
+    if (layoutL2Sel) layoutL2Sel.addEventListener('change', e => {
+        _PREFS.set('layoutL2', e.target.value);
     });
 }
 
@@ -2095,7 +2119,14 @@ function renderL2Flowchart(fileRel, focusFuncName = null) {
         applyCyFont(getSavedFont());
         applyExternalEdgeVisibility();
 
-        const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 26, rankSep: 80, padding: 50 });
+        const l2LayoutId = _PREFS.get('layoutL2');
+        const l2Preset = LAYOUT_PRESETS.find(p => p.id === l2LayoutId);
+        const canUseL2 = l2Preset && (!l2Preset.requires || _isLayoutAvailable(l2Preset.requires));
+        const l2Config = canUseL2
+            ? { ...l2Preset.config(), animate: false }
+            : { name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 26, rankSep: 80, padding: 50 };
+        const lay = cy.layout(l2Config);
+        _syncLayoutIndicator(canUseL2 ? l2LayoutId : 'dagre-lr');
         refreshLayoutSwitcher();  // update visible layout buttons for level 2
         lay.one('layoutstop', () => {
             if (_renderToken !== _l2Token) return;
@@ -3875,12 +3906,18 @@ function loadLevel0() {
     cy.add(els);
     applyCyFont(getSavedFont());
 
-    _syncLayoutIndicator('cose');
+    const l0LayoutId = _PREFS.get('layoutL0');
+    const l0Preset = LAYOUT_PRESETS.find(p => p.id === l0LayoutId);
+    _syncLayoutIndicator(l0LayoutId);
     refreshLayoutSwitcher();
-    const lay = cy.layout({
-        name: 'cose', animate: false, randomize: true,
-        nodeRepulsion: 10000, idealEdgeLength: 200, nodeOverlap: 20, padding: 60,
-    });
+    // If the saved preset needs an unloaded CDN extension, fall back to cose
+    const l0Config = (l0Preset && (!l0Preset.requires || _isLayoutAvailable(l0Preset.requires)))
+        ? { ...l0Preset.config(), animate: false }
+        : { name: 'cose', animate: false, randomize: true, nodeRepulsion: 10000, idealEdgeLength: 200, nodeOverlap: 20, padding: 60 };
+    if (!l0Preset || (l0Preset.requires && !_isLayoutAvailable(l0Preset.requires))) {
+        _syncLayoutIndicator('cose'); // fallback indicator
+    }
+    const lay = cy.layout(l0Config);
     lay.one('layoutstop', () => showLoading(false));
     lay.run();
 }
@@ -4168,10 +4205,17 @@ function renderFilesFlat(modId, files, subPath) {
         const extraEls = cy.nodes().filter(n => n.data('isExtra'));
 
         if (extraEls.length === 0) {
-            // Simple path: no extras, just run dagre normally
-            _syncLayoutIndicator('dagre-lr');
+            // Simple path: no extras, just run the user's preferred layout
+            const l1LayoutId = _PREFS.get('layoutL1');
+            const l1Preset = LAYOUT_PRESETS.find(p => p.id === l1LayoutId);
+            const canUse = l1Preset && (!l1Preset.requires || _isLayoutAvailable(l1Preset.requires));
+            const effectiveId = canUse ? l1LayoutId : 'dagre-lr';
+            const l1Config = canUse
+                ? { ...l1Preset.config(), animate: false }
+                : { name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 };
+            _syncLayoutIndicator(effectiveId);
             refreshLayoutSwitcher();
-            const lay = cy.layout({ name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 });
+            const lay = cy.layout(l1Config);
             lay.one('layoutstop', () => {
                 if (_renderToken !== _l1Token) return;
                 updateBreadcrumb();
@@ -4182,13 +4226,19 @@ function renderFilesFlat(modId, files, subPath) {
             return;
         }
 
-        // Hide extra nodes while dagre runs so they don't affect the layout
+        // Hide extra nodes while main layout runs so they don't affect positions
         extraEls.style('display', 'none');
 
-        const layMain = cy.layout({
-            name: 'dagre', rankDir: 'LR', animate: false,
-            nodeSep: 30, rankSep: 90, padding: 40,
-        });
+        // Use user's preferred layout for the main nodes (extras get grid-placed below)
+        const l1LayoutId2 = _PREFS.get('layoutL1');
+        const l1Preset2 = LAYOUT_PRESETS.find(p => p.id === l1LayoutId2);
+        const canUse2 = l1Preset2 && (!l1Preset2.requires || _isLayoutAvailable(l1Preset2.requires));
+        const l1Config2 = canUse2
+            ? { ...l1Preset2.config(), animate: false }
+            : { name: 'dagre', rankDir: 'LR', animate: false, nodeSep: 30, rankSep: 90, padding: 40 };
+        _syncLayoutIndicator(canUse2 ? l1LayoutId2 : 'dagre-lr');
+
+        const layMain = cy.layout(l1Config2);
 
         layMain.one('layoutstop', () => {
             if (_renderToken !== _l1Token) return;
@@ -7364,73 +7414,6 @@ const LAYOUT_PRESETS = [
                     'elk.spacing.nodeNode': 40,
                     'elk.stress.fixedStartPosition': 'false',
                 },
-            };
-        },
-    },
-
-    // ── Circular Clusters (CiSE) ─────────────────────────────────────────────
-    // Best for: L0 module overview with many small clusters.
-    // Unique: auto-detects communities and places each as a circular "island".
-    // Physics simulation then spaces the islands apart — result looks like a solar
-    // system of modules, making inter-module dependencies immediately visible.
-    // Requires: cytoscape-cise
-    {
-        id: 'cise',
-        icon: '🫧',
-        label: 'Cluster Rings',
-        tip: 'CiSE — auto-groups related nodes into circular islands, best for L0 module overview (requires cise CDN)',
-        levels: [0, 1],
-        requires: 'cise',
-        config: () => {
-            // CiSE requires `clusters`: array of arrays of node ID strings.
-            // Each inner array is one circular island. Nodes not in any array
-            // are placed as free-floating singletons between the rings.
-            //
-            // Strategy: group by the node's module affiliation.
-            //   L0 view  → each node IS a module (_t === 'module'), so every
-            //               node forms its own singleton cluster — CiSE will
-            //               still space them cleanly via the physics pass.
-            //   L1 view  → nodes carry a `mod` field (their parent module ID);
-            //               group by that so same-module files ring together.
-            //   L2 view  → function nodes share a file; group by `_f` path.
-            const clusterMap = new Map(); // key → [nodeId, ...]
-            cy.nodes().forEach(n => {
-                const d = n.data();
-                let key;
-                if (d._t === 'module') {
-                    // L0: each module node is its own singleton island
-                    key = d.id;
-                } else if (d.mod) {
-                    // L1 file nodes, L2 ext_func nodes
-                    key = d.mod;
-                } else if (d._f) {
-                    // L2 internal function nodes — group by parent file path
-                    key = typeof d._f === 'object' ? (d._f.path || d._f.id || d.id) : d._f;
-                } else {
-                    // Fallback: each orphan node is its own cluster
-                    key = d.id;
-                }
-                if (!clusterMap.has(key)) clusterMap.set(key, []);
-                clusterMap.get(key).push(n.id());
-            });
-
-            const clusters = Array.from(clusterMap.values());
-
-            return {
-                name: 'cise',
-                clusters,
-                animate: true,
-                animationDuration: 600,
-                animationEasing: 'ease-out',
-                idealInterClusterEdgeLengthCoefficient: 1.6,
-                allowNodesInsideCircle: false,
-                maxRatioOfNodesInsideCircle: 0.1,
-                springCoeff: 0.45,
-                nodeRepulsion: 900,
-                gravity: 0.25,
-                gravityRange: 3.8,
-                nodeSeparation: 12.5,
-                padding: 50,
             };
         },
     },

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 analyze_viz.py V4 — VIZCODE Universal Code Visualizer
 Supports: UEFI/BIOS (C/H/ASM/INF/DEC/DSC/FDF/SDL/CIF/MAK/VFR/HFR/UNI/ASL)
@@ -1123,8 +1123,6 @@ HTML_SKELETON = """\
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-elk@2.3.0/dist/cytoscape-elk.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/webcola@3.4.0/WebCola/cola.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-cola@2.5.1/cytoscape-cola.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/avsdf-base@1.0.0/avsdf-base.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-cise@2.0.1/cytoscape-cise.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -1362,6 +1360,43 @@ HTML_SKELETON = """\
             <span class="pref-check-desc" data-i18n="extExpandDefaultDesc">Automatically expand external modules when entering a Call Flow.</span>
           </span>
         </label>
+      </div>
+
+      <div class="pref-section">
+        <div class="pref-row">
+          <label class="pref-label" for="pref-layout-l0" data-i18n="layoutL0Label">Module(L0)</label>
+          <select id="pref-layout-l0" class="pref-select">
+            <option value="cose"        data-i18n="layoutCose">Force</option>
+            <option value="dagre-lr"    data-i18n="layoutDagreLR">Hierarchy LR</option>
+            <option value="dagre-tb"    data-i18n="layoutDagreTB">Hierarchy TB</option>
+            <option value="fcose"       data-i18n="layoutFcose">Smart Cluster</option>
+            <option value="elk-stress"  data-i18n="layoutElkStress">ELK Stress</option>
+          </select>
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="pref-layout-l1" data-i18n="layoutL1Label">Dependency Map(L1)</label>
+          <select id="pref-layout-l1" class="pref-select">
+            <option value="dagre-lr"    data-i18n="layoutDagreLR">Hierarchy LR</option>
+            <option value="dagre-tb"    data-i18n="layoutDagreTB">Hierarchy TB</option>
+            <option value="cose"        data-i18n="layoutCose">Force</option>
+            <option value="fcose"       data-i18n="layoutFcose">Smart Cluster</option>
+            <option value="cola"        data-i18n="layoutCola">Smooth Physics</option>
+            <option value="elk-layered" data-i18n="layoutElkLayered">ELK Flow</option>
+            <option value="elk-stress"  data-i18n="layoutElkStress">ELK Stress</option>
+          </select>
+        </div>
+        <div class="pref-row">
+          <label class="pref-label" for="pref-layout-l2" data-i18n="layoutL2Label">Call Flow(L2)</label>
+          <select id="pref-layout-l2" class="pref-select">
+            <option value="dagre-lr"    data-i18n="layoutDagreLR">Hierarchy LR</option>
+            <option value="dagre-tb"    data-i18n="layoutDagreTB">Hierarchy TB</option>
+            <option value="cose"        data-i18n="layoutCose">Force</option>
+            <option value="fcose"       data-i18n="layoutFcose">Smart Cluster</option>
+            <option value="cola"        data-i18n="layoutCola">Smooth Physics</option>
+            <option value="elk-layered" data-i18n="layoutElkLayered">ELK Flow</option>
+            <option value="elk-stress"  data-i18n="layoutElkStress">ELK Stress</option>
+          </select>
+        </div>
       </div>
 
     </div>
