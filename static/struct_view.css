@@ -4,7 +4,7 @@
    HOW TO INTEGRATE:
    Option A (recommended):  paste this entire block at the END of viz.css
    Option B:                 add <link rel="stylesheet" href="static/struct_view.css">
-                             in launcher.html BEFORE </head>
+                              in launcher.html BEFORE </head>
    ══════════════════════════════════════════════════════════════════════════════ */
 
 /* ── Tab Switcher in code panel header ───────────────────────────────────────── */
@@ -31,21 +31,122 @@
     border-radius: 0;
     outline: none;
 }
-.cp-tab:hover  { color: var(--fg); }
+
+.cp-tab:hover {
+    color: var(--fg);
+}
+
 .cp-tab.active {
     color: var(--accent, #fbbf24);
     border-bottom-color: var(--accent, #fbbf24);
 }
 
-/* ── Structure view container (mirrors #cp-code-wrap sizing) ─────────────────── */
+/* ── Structure view container (top half in split mode) ───────────────────────── */
 #cp-struct-wrap {
     position: relative;
     width: 100%;
-    height: 100%;
     overflow: auto;
     background: var(--panel, #0d0f17);
     box-sizing: border-box;
     padding: 20px;
+    /* In split mode, take ~45% of cp-body height */
+    flex: 0 0 45%;
+    min-height: 140px;
+    max-height: 60%;
+}
+
+
+
+/* ── Divider (draggable splitter) ────────────────────────────────────────────── */
+#cp-struct-divider {
+    height: 5px;
+    min-height: 5px;
+    background: var(--border, #2a2d3a);
+    cursor: row-resize;
+    flex-shrink: 0;
+    position: relative;
+    transition: background .15s;
+    z-index: 10;
+}
+
+#cp-struct-divider:hover,
+#cp-struct-divider.sv-dragging {
+    background: var(--accent, #fbbf24);
+}
+
+#cp-struct-divider::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 30px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, .15);
+}
+
+/* ── Code mirror pane (bottom half in split mode) ────────────────────────────── */
+#cp-struct-code {
+    flex: 1;
+    min-height: 100px;
+    overflow: auto;
+    background: var(--panel, #0d0f17);
+    box-sizing: border-box;
+    position: relative;
+    min-width: 0;
+    width: 0;
+    min-width: 100%;
+}
+
+#cp-struct-code pre {
+    margin: 0;
+    padding: 8px 0;
+    font-family: var(--code-font, 'JetBrains Mono', monospace);
+    font-size: 12px;
+    line-height: 1.65;
+    background: transparent !important;
+    tab-size: 4;
+    display: inline-block;
+    min-width: 100%;
+}
+
+#cp-struct-code code {
+    background: transparent !important;
+    font-size: inherit;
+    font-family: inherit !important;
+    white-space: pre;
+}
+
+#cp-struct-code .code-line {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+    cursor: pointer;
+    transition: background .12s;
+}
+
+#cp-struct-code .code-line:hover {
+    background: rgba(255, 255, 255, .04);
+}
+
+#cp-struct-code .line-num {
+    min-width: 48px;
+    padding: 0 12px 0 8px;
+    text-align: right;
+    color: #2d3f55;
+    user-select: none;
+    flex-shrink: 0;
+    font-size: 11px;
+    position: sticky;
+    left: 0;
+    background: var(--panel, #0d0f17);
+    z-index: 1;
+}
+
+#cp-struct-code .line-content {
+    padding-right: 48px;
+    white-space: pre;
 }
 
 /* SVG arrow canvas — floats above everything */
@@ -76,12 +177,13 @@
     min-width: 180px;
     max-width: 270px;
     overflow: hidden;
-    box-shadow: 0 2px 16px rgba(0,0,0,.35);
+    box-shadow: 0 2px 16px rgba(0, 0, 0, .35);
     transition: box-shadow .2s, border-color .2s, transform .15s;
     flex-shrink: 0;
 }
+
 .sv-class-box:hover {
-    box-shadow: 0 6px 28px rgba(0,0,0,.55);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, .55);
     transform: translateY(-2px);
 }
 
@@ -98,7 +200,10 @@
     user-select: none;
     transition: background .15s;
 }
-.sv-class-hdr:hover { background: var(--hover, rgba(255,255,255,.05)); }
+
+.sv-class-hdr:hover {
+    background: var(--hover, rgba(255, 255, 255, .05));
+}
 
 .sv-class-name {
     font-family: var(--code-font, 'JetBrains Mono', monospace);
@@ -125,7 +230,7 @@
     font-size: 11px;
     font-family: var(--code-font, monospace);
     color: #60a5fa;
-    background: rgba(96,165,250,.07);
+    background: rgba(96, 165, 250, .07);
     border-bottom: 1px solid var(--border, #2a2d3a);
     white-space: nowrap;
     overflow: hidden;
@@ -137,7 +242,10 @@
     padding: 8px 14px;
     border-bottom: 1px solid var(--border, #2a2d3a);
 }
-.sv-section:last-child { border-bottom: none; }
+
+.sv-section:last-child {
+    border-bottom: none;
+}
 
 .sv-section-hdr {
     display: flex;
@@ -170,14 +278,18 @@
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: opacity .12s, transform .1s;
+    transition: opacity .12s, transform .1s, box-shadow .2s;
     line-height: 1.5;
 }
-.sv-method:hover { opacity: .75; transform: scale(1.07); }
+
+.sv-method:hover {
+    opacity: .75;
+    transform: scale(1.07);
+}
 
 /* Private method  — grey style */
 .sv-method-priv {
-    background: rgba(100,116,139,.12) !important;
+    background: rgba(100, 116, 139, .12) !important;
     border-color: #475569 !important;
     color: #94a3b8 !important;
 }
@@ -194,12 +306,23 @@
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: opacity .12s;
+    transition: opacity .12s, box-shadow .2s;
     line-height: 1.5;
 }
-.sv-field:hover { opacity: .75; }
-.sv-field-public  { background: rgba(99,102,241,.14); color: #818cf8; }
-.sv-field-private { background: rgba(100,116,139,.12); color: #94a3b8; }
+
+.sv-field:hover {
+    opacity: .75;
+}
+
+.sv-field-public {
+    background: rgba(99, 102, 241, .14);
+    color: #818cf8;
+}
+
+.sv-field-private {
+    background: rgba(100, 116, 139, .12);
+    color: #94a3b8;
+}
 
 /* Overflow indicator */
 .sv-more {
@@ -207,7 +330,7 @@
     color: var(--muted, #64748b);
     padding: 2px 7px;
     border-radius: 4px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255, 255, 255, .04);
     border: 1px solid var(--border, #2a2d3a);
     line-height: 1.5;
 }
@@ -216,9 +339,36 @@
 .sv-arrow {
     fill: none;
     stroke-width: 1.5px;
+    pointer-events: stroke;
+    cursor: pointer;
+    transition: stroke-width .15s, stroke .15s;
 }
-.sv-arrow-uses    { stroke: #f59e0b88; }
-.sv-arrow-inherit { stroke: #60a5fa88; stroke-dasharray: 5 3; }
+
+.sv-arrow:hover {
+    stroke-width: 3px;
+}
+
+.sv-arrow-uses {
+    stroke: #f59e0b88;
+}
+
+.sv-arrow-uses:hover {
+    stroke: #f59e0bee;
+}
+
+.sv-arrow-inherit {
+    stroke: #60a5fa88;
+    stroke-dasharray: 5 3;
+}
+
+.sv-arrow-inherit:hover {
+    stroke: #60a5faee;
+}
+
+.sv-arrow-active {
+    stroke-width: 3px !important;
+    filter: drop-shadow(0 0 6px currentColor);
+}
 
 /* ── Empty state ──────────────────────────────────────────────────────────────── */
 .sv-empty {
@@ -231,12 +381,64 @@
     color: var(--muted, #64748b);
     gap: 10px;
 }
-.sv-empty-icon { font-size: 40px; }
-.sv-empty p    { margin: 0; font-size: 14px; color: var(--fg, #e2e8f0); }
-.sv-empty small { font-size: 12px; opacity: .7; }
+
+.sv-empty-icon {
+    font-size: 40px;
+}
+
+.sv-empty p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--fg, #e2e8f0);
+}
+
+.sv-empty small {
+    font-size: 12px;
+    opacity: .7;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Bidirectional highlight styles
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Active badge in structure graph — glow + scale */
+.sv-active-badge {
+    box-shadow: 0 0 10px rgba(251, 191, 36, .5), 0 0 20px rgba(251, 191, 36, .25) !important;
+    transform: scale(1.12) !important;
+    z-index: 10;
+    position: relative;
+}
+
+/* Hover-preview badge (lighter glow) */
+.sv-hover-badge {
+    box-shadow: 0 0 8px rgba(251, 191, 36, .3) !important;
+    transform: scale(1.06) !important;
+}
+
+/* Active class box — border glow */
+.sv-active-box {
+    border-color: var(--accent, #fbbf24) !important;
+    box-shadow: 0 0 16px rgba(251, 191, 36, .25), 0 4px 20px rgba(0, 0, 0, .4) !important;
+}
+
+/* Active line highlight in code pane */
+.sv-active-line {
+    background: rgba(251, 191, 36, .15) !important;
+    border-left: 3px solid var(--accent, #fbbf24);
+}
+
+/* Hover-preview line (lighter) */
+.sv-hover-line {
+    background: rgba(251, 191, 36, .07) !important;
+}
+
+/* Code range highlight (for showing method body) */
+.sv-range-highlight {
+    background: rgba(96, 165, 250, .06) !important;
+}
 
 /* ── Jump-to-line highlight (code view) ──────────────────────────────────────── */
 .sv-jump-highlight {
-    background: rgba(251,191,36,.18) !important;
+    background: rgba(251, 191, 36, .18) !important;
     transition: background .3s;
 }

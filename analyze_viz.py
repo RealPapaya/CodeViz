@@ -1281,6 +1281,8 @@ HTML_SKELETON = """\
       </div>
       <div id="cp-code-wrap" style="display:none"></div>
       <div id="cp-struct-wrap" style="display:none"></div>
+      <div id="cp-struct-divider" style="display:none"></div>
+      <div id="cp-struct-code" style="display:none"></div>
     </div>
   </div>
 </div>
