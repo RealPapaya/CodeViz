@@ -203,41 +203,59 @@ GET /symbol-graph?job=JID&sym=sym_0
 GET /symbol-refs?job=JID&sym=sym_0
 → 回傳該 symbol 在所有檔案中的出現位置 [{file, line, snippet, context}]
 ```
-
-#### 1.2 前端 — Symbol-Aware Search
-
-**修改 `viz.js`**：搜尋框增加 symbol 模式
-
-- 輸入時打 `/symbols` endpoint，autocomplete 下拉按 **kind** 分組 (🔵 class / 🟢 function / 🟡 variable / 📁 file)
-- 每個結果顯示 `qualified_name` + `file:line`
-- 選中後 → 觸發 `activateSymbol(symbolId)`
-
 ---
 
 ### Phase 2：Symbol-Centric Graph ★★★★★
 
-> **核心目標**：點擊任何 symbol，Graph 以該 symbol 為中心重新繪製，並呈現真正的「節點與連線（Spline Edges）」互動圖表。
+> **核心目標**：點擊任何 symbol 或打開任何檔案的 Structure View 時，Graph 以該 symbol (或該檔案的主要類別) 為中心重新繪製，並呈現真正的「節點與連線（Spline Edges）」互動圖表，**完全取代舊版的靜態檔案結構樹 (Structure View)**。
+
+> ⚠️ **參考截圖（目標 UI）**：
+> ```
+> [ ArtificialPlayer ↓ ]    [ Field         ↑↓ ]          code panel
+>  ┌─────────────────┐       ┌──────────────────────┐      ┌──────────────────────────────┐
+>  │ 🏠 PRIVATE      │ ──→   │ 🌐 PUBLIC            │      │ 77  int Field::SameInRow(...){│
+>  │  [Evaluate]     │       │   [Token] ③          │      │ 78    int sum = amount*token; │
+>  └─────────────────┘       │ 🏠 PRIVATE           │      │ ...                          │
+>                            │  ▶[SameInRow]◀ ←─ active   │ 89  if (grid_[0][0]+...)    │
+> [ TicTacToe      ↓ ]       │   [grid_]            │      └──────────────────────────────┘
+>  ┌─────────────────┐       └──────────────────────┘
+>  │ 🌐 PUBLIC       │
+>  │  [Run]          │
+>  └─────────────────┘
+>
+> 橘色曲線 edge 從 ArtificialPlayer.Evaluate → Field.SameInRow
+> 橘色曲線 edge 從 TicTacToe.Run         → Field (整體)
+> ```
+> 這是我們要做到的具體 UI 樣子。
 
 #### 2.1 前端 — 獨立的 Cytoscape Canvas
 
-在現有 Structure View 面板（`#sv-view`）內部，放棄靜態的 3-column HTML，改為初始一個全新的、獨立的 Cytoscape 實例（例如綁定在 `<div id="sv-cy">`）：
+在現有 Structure 面板（`#sv-view`）內部，放棄靜態的 3-column HTML，改為初始一個全新的、獨立的 Cytoscape 實例（綁定在 `<div id="sv-cy">`）：
 
 ```
-選中 symbol → fetch /symbol-graph → 渲染 svCy:
+透過上方面板點擊「Structure」或從搜尋點擊 Symbol → 
+跳過原本的 file parsing，直接 fetch /symbol-graph → 渲染 svCy:
   - 中央大節點（Compound Node） = active class，內部包含 Methods/Fields
   - 左側 = incoming nodes (callers, base classes)
   - 右側 = outgoing nodes (callees, derived classes)
-  - Edge = 支援 Bezier / Taxi 等平滑曲線，標籤顯示 edge type + count
+  - Edge = 橘色 Bezier spline 曲線；edge 從具體的 member badge 出發，連到目標 member badge
 ```
 
-**節點外觀與佈局**：
-- **Compound Nodes**：Sourcetrail 的 Class 本質上是包含多個 member 節點的容器。使用 Cytoscape 的 `parent` 屬性將 methods/fields 包在 Class node 裡面。
-- 只有被點擊為中心的 Class Node 會展開所有的 members；周圍的 Callers/Callees 預設收合，只呈現與中心有直接關係的 member 節點。
-- 佈局引擎：使用 `fcose` 或 constraint-based `cola` / `dagre (LR)`，讓圖表自動將 incoming 排在左邊，outgoing 排在右邊。
+**節點外觀（對照截圖）**：
+- Class card = 帶圓角的白底矩形，左上方顯示 class 名稱 + 右上方顯示 collapse/expand 計數徽章
+- 每個 class card 分兩區塊顯示：
+  - `🌐 PUBLIC` 區塊（header 灰底）→ 列出 public methods/fields 的橘色 badge pill
+  - `🏠 PRIVATE` 區塊（header 灰底）→ 列出 private members 的藍色 badge pill
+- **Active member badge**（被邊連接到的那個）高亮顯示，如截圖中的 `SameInRow` 為橘底白字
+- 被 edge 引用到的具體 member badge 發光 / 加粗邊框
+- **只有中心 class 展開所有 members；周圍的 caller class 只展開與中心有關係的 member**
+- 佈局引擎：`dagre (LR)`（left-to-right），incoming class 在左，active class 在中，outgoing 在右
 
 **互動**：
-- 單擊任意 node → 把該 node 變成新的中心，觸發 pivot，畫布重新飛行動畫佈局。
-- 支援拖曳節點、平移縮放畫布（原生 Cytoscape 優勢）。
+- 單擊任意 class node 或 member badge → 把該 symbol 變成新中心，重新 fetch `/symbol-graph`，畫布 animate 重佈局
+- member badge 被設為 active 後，同時觸發右側 Code Panel 跳到該 member 的定義處（見 Phase 3）
+- 支援拖曳節點、平移縮放畫布（原生 Cytoscape 優勢）
+- **原本專門針對個別檔案的 Structure View 按鈕行為已被攔截，改為自動尋找該檔案的第一個 Class/Function 作為起始點進入 Sourcetrail 模式**
 
 #### 2.2 Bundled Edges
 
@@ -247,14 +265,17 @@ GET /symbol-refs?job=JID&sym=sym_0
 - Click → 展開為 N 條細邊（或 side panel 列表）
 
 **實作方式**：
-- `symbol_edges` 回傳時附加 `bundle_key = from+to+type`
+- `/symbol-graph` 在後端先依照 `source + target + edge_type` 進行 GroupBy 算出 `count`，前端再映射為線條粗細。
 - 前端 group by `bundle_key`，如果 count > 1 則 render bundle
 
 ---
 
 ### Phase 3：Multi-file Code Snippets ★★★★
 
-> **核心目標**：選中 symbol 後，Code View 聚合多個檔案的 snippet。
+> **核心目標**：選中 symbol 後，Code View 右側直接跳到/顯示該 member 的函式定義 snippet。
+
+> ⚠️ **參考截圖（目標 Code Panel 行為）**：
+> Graph 中點擊 `Field::SameInRow` badge → Code Panel 立刻顯示該函式的原始碼片段（帶行號，從第 77 行開始），而**不是**捲到整個檔案頂部。這是「Symbol-aware code jump」，不同於普通的「載入整個檔案」。
 
 #### 3.1 後端 — `/symbol-refs` endpoint
 
@@ -273,11 +294,13 @@ GET /symbol-refs?job=JID&sym=sym_0
 
 #### 3.2 前端 — Code View 改版
 
-- **定義片段** 顯示在最上方（黃色左邊框）
-- **引用片段** 按檔案分組，每個可折疊
+- **點擊 Graph 中的 member badge**（如 `SameInRow`）→ Code Panel 自動載入該 symbol 所在的檔案，並 scroll + highlight 到該函式定義的起始行（不是檔案頂部）
+- **定義片段** 顯示在最上方（黃色左邊框），context 顯示前後各 3–5 行
+- **引用片段** 按檔案分組，每個可折疊，顯示上下各 2 行 context
 - 每個 snippet 有 `↗ 開啟完整檔案` 按鈕
 - snippet 內的 symbol 可點擊 → 觸發 `activateSymbol()`
 - 保留原本的「完整檔案模式」作為 toggle 選項
+- file tab 標題顯示 `field.cpp  1 reference`（對照截圖右上角）
 
 ---
 

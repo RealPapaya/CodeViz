@@ -547,7 +547,9 @@
     line-height: 1;
 }
 
-.sv-fp-close:hover { color: var(--fg, #e2e8f0); }
+.sv-fp-close:hover {
+    color: var(--fg, #e2e8f0);
+}
 
 /* ── Two-column body ────────────────────────────────────────────────────── */
 .sv-fp-body {
@@ -611,7 +613,10 @@
 }
 
 /* Thin scrollbar for card lists */
-.sv-fp-cards::-webkit-scrollbar { width: 4px; }
+.sv-fp-cards::-webkit-scrollbar {
+    width: 4px;
+}
+
 .sv-fp-cards::-webkit-scrollbar-thumb {
     background: var(--border, #2a2d3a);
     border-radius: 2px;
@@ -638,8 +643,13 @@
 }
 
 /* Caller cards slide left on hover, callee cards slide right */
-.sv-fp-caller:hover { transform: translateX(-3px); }
-.sv-fp-callee:hover { transform: translateX(3px); }
+.sv-fp-caller:hover {
+    transform: translateX(-3px);
+}
+
+.sv-fp-callee:hover {
+    transform: translateX(3px);
+}
 
 .sv-fp-card-name {
     font-family: var(--code-font, 'JetBrains Mono', monospace);
@@ -658,7 +668,9 @@
     transition: color .12s;
 }
 
-.sv-fp-card:hover .sv-fp-card-icon { color: var(--accent, #fbbf24); }
+.sv-fp-card:hover .sv-fp-card-icon {
+    color: var(--accent, #fbbf24);
+}
 
 /* Empty state inside a column */
 .sv-fp-empty {
@@ -668,6 +680,7 @@
     text-align: center;
     font-style: italic;
 }
+
 /* ── Structure button active state ──────────────────────────────────────────── */
 
 #struct-toggle-btn:hover,
@@ -699,8 +712,15 @@
 }
 
 @keyframes sv-cf-pulse {
-    0%, 100% { opacity: .45; }
-    50%       { opacity: 1;   }
+
+    0%,
+    100% {
+        opacity: .45;
+    }
+
+    50% {
+        opacity: 1;
+    }
 }
 
 /* ── Ghost class box ─────────────────────────────────────────────────────── */
@@ -957,7 +977,9 @@
     min-height: 44px;
 }
 
-.sv-sym-title-icon { font-size: 16px; }
+.sv-sym-title-icon {
+    font-size: 16px;
+}
 
 .sv-sym-title-name {
     font-size: 14px;
@@ -972,7 +994,7 @@
     text-transform: uppercase;
     letter-spacing: .08em;
     color: var(--muted, #64748b);
-    background: rgba(255,255,255,.06);
+    background: rgba(255, 255, 255, .06);
     padding: 2px 7px;
     border-radius: 8px;
 }
@@ -995,11 +1017,19 @@
     border-radius: 10px;
     white-space: nowrap;
 }
-.sv-sym-count.in  { background: rgba(32, 201, 151, .12); color: #20c997; }
-.sv-sym-count.out { background: rgba(204, 93, 232, .12);  color: #cc5de8; }
+
+.sv-sym-count.in {
+    background: rgba(32, 201, 151, .12);
+    color: #20c997;
+}
+
+.sv-sym-count.out {
+    background: rgba(204, 93, 232, .12);
+    color: #cc5de8;
+}
 
 .sv-sym-back-btn {
-    background: rgba(255,255,255,.06);
+    background: rgba(255, 255, 255, .06);
     border: 1px solid var(--border, #2a2d3a);
     color: var(--fg, #e2e8f0);
     padding: 4px 12px;
@@ -1009,8 +1039,9 @@
     transition: background .15s, border-color .15s;
     white-space: nowrap;
 }
+
 .sv-sym-back-btn:hover {
-    background: rgba(255,255,255,.1);
+    background: rgba(255, 255, 255, .1);
     border-color: var(--accent, #fbbf24);
     color: var(--accent, #fbbf24);
 }
@@ -1035,11 +1066,23 @@
     width: 220px;
     flex-shrink: 0;
 }
-.sv-sym-col::-webkit-scrollbar { width: 4px; }
-.sv-sym-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-.sv-sym-in-col  { border-right: 1px solid var(--border, #2a2d3a); }
-.sv-sym-out-col { border-left:  1px solid var(--border, #2a2d3a); }
+.sv-sym-col::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sv-sym-col::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+.sv-sym-in-col {
+    border-right: 1px solid var(--border, #2a2d3a);
+}
+
+.sv-sym-out-col {
+    border-left: 1px solid var(--border, #2a2d3a);
+}
 
 .sv-sym-center-col {
     flex: 1;
@@ -1049,13 +1092,20 @@
     overflow-y: auto;
     padding: 24px 20px;
 }
-.sv-sym-center-col::-webkit-scrollbar { width: 4px; }
-.sv-sym-center-col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.sv-sym-center-col::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sv-sym-center-col::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
 
 .sv-sym-center-box {
     max-width: 340px;
     width: 100%;
-    box-shadow: 0 0 0 2px rgba(76, 110, 245, .3), 0 8px 32px rgba(0,0,0,.5) !important;
+    box-shadow: 0 0 0 2px rgba(76, 110, 245, .3), 0 8px 32px rgba(0, 0, 0, .5) !important;
 }
 
 /* ── Column header ──────────────────────────────────────────────────────── */
@@ -1072,7 +1122,7 @@
 
 /* ── Neighbour box (incoming / outgoing) ────────────────────────────────── */
 .sv-sym-nbr-box {
-    background: rgba(255,255,255,.03);
+    background: rgba(255, 255, 255, .03);
     border: 1px solid var(--border, #2a2d3a);
     border-radius: 8px;
     padding: 8px 10px;
@@ -1080,19 +1130,26 @@
     transition: background .15s, border-color .15s, transform .12s, box-shadow .15s;
     flex-shrink: 0;
 }
+
 .sv-sym-nbr-box:hover {
-    background: rgba(255,255,255,.07);
+    background: rgba(255, 255, 255, .07);
     border-color: #4c6ef5;
     transform: scale(1.02);
     box-shadow: 0 3px 14px rgba(76, 110, 245, .2);
 }
+
 .sv-sym-nbr-hdr {
     display: flex;
     align-items: center;
     gap: 6px;
     overflow: hidden;
 }
-.sv-sym-nbr-icon { font-size: 13px; flex-shrink: 0; }
+
+.sv-sym-nbr-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
 .sv-sym-nbr-name {
     font-size: 12px;
     font-family: var(--code-font, monospace);
@@ -1103,7 +1160,12 @@
     flex: 1;
     min-width: 0;
 }
-.sv-sym-parent { color: var(--muted, #64748b); font-size: 11px; }
+
+.sv-sym-parent {
+    color: var(--muted, #64748b);
+    font-size: 11px;
+}
+
 .sv-sym-nbr-meta {
     margin-top: 4px;
     font-size: 10px;
@@ -1135,9 +1197,9 @@
     letter-spacing: .06em;
     padding: 1px 5px;
     border-radius: 4px;
-    background: rgba(255,255,255,.06);
+    background: rgba(255, 255, 255, .06);
     color: var(--muted, #64748b);
-    border: 1px solid rgba(255,255,255,.08);
+    border: 1px solid rgba(255, 255, 255, .08);
     flex-shrink: 0;
 }
 
@@ -1151,20 +1213,29 @@
     padding: 6px 0 3px;
     width: 100%;
 }
-.sv-private-label { color: #475569; }
+
+.sv-private-label {
+    color: #475569;
+}
 
 /* ── Symbol member badge ────────────────────────────────────────────────── */
 .sv-sym-member {
     cursor: pointer;
     transition: opacity .12s, transform .1s;
 }
-.sv-sym-member:hover { opacity: .75; transform: scale(1.05); }
+
+.sv-sym-member:hover {
+    opacity: .75;
+    transform: scale(1.05);
+}
 
 /* ── SVG arrows overlay ─────────────────────────────────────────────────── */
 .sv-sym-arrows {
     position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     pointer-events: none;
     overflow: visible;
     z-index: 5;
@@ -1223,7 +1294,11 @@
     line-height: 1.5;
     transition: opacity .12s, transform .1s;
 }
-.sv-badge:hover { opacity: .75; transform: scale(1.07); }
+
+.sv-badge:hover {
+    opacity: .75;
+    transform: scale(1.07);
+}
 
 /* Private method badge */
 .sv-priv {
@@ -1243,5 +1318,446 @@
     line-height: 1.5;
     transition: opacity .12s, transform .1s;
 }
-.sv-priv:hover { opacity: .75; transform: scale(1.05); }
 
+.sv-priv:hover {
+    opacity: .75;
+    transform: scale(1.05);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   sv_p2_styles.css  —  Phase 2: Symbol-Centric Cytoscape Graph styles
+   Append these rules to the bottom of static/struct_view.css
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── sv-view in symbol mode: flex column ────────────────────────────────────── */
+#sv-view.sv-sym-mode {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────────── */
+#sv-sym-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    background: var(--panel2, #151922);
+    border-bottom: 1px solid var(--border, #2a2d3a);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    z-index: 10;
+}
+
+.sv-sym-tb-btn {
+    background: var(--panel3, #1a1e2e);
+    border: 1px solid var(--border, #2a2d3a);
+    color: var(--fg, #e2e8f0);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 5px;
+    transition: background .15s, border-color .15s;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.sv-sym-tb-btn:hover:not(:disabled) {
+    background: var(--hover, rgba(255, 255, 255, .06));
+    border-color: var(--accent, #fbbf24);
+    color: var(--accent, #fbbf24);
+}
+
+.sv-sym-tb-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* ── Breadcrumb ──────────────────────────────────────────────────────────────── */
+#sv-sym-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sv-sym-bc-icon {
+    font-size: 13px;
+}
+
+.sv-sym-bc-file {
+    color: var(--muted, #64748b);
+    font-size: 11px;
+}
+
+.sv-sym-bc-sep {
+    color: var(--muted, #64748b);
+}
+
+.sv-sym-bc-name {
+    color: var(--fg, #e2e8f0);
+    font-weight: 600;
+}
+
+.sv-sym-bc-kind {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .07);
+}
+
+.sv-sym-bc-counts {
+    display: flex;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    margin-left: 4px;
+}
+
+/* ── Symbol search ───────────────────────────────────────────────────────────── */
+.sv-sym-search-wrap {
+    position: relative;
+}
+
+.sv-sym-search {
+    background: var(--panel3, #1a1e2e);
+    border: 1px solid var(--border, #2a2d3a);
+    color: var(--fg, #e2e8f0);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    width: 200px;
+    outline: none;
+    transition: border-color .15s;
+}
+
+.sv-sym-search:focus {
+    border-color: var(--accent, #fbbf24);
+    box-shadow: 0 0 0 2px rgba(251, 191, 36, .12);
+}
+
+.sv-sym-sr {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 280px;
+    background: var(--panel2, #151922);
+    border: 1px solid var(--border, #2a2d3a);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+    z-index: 100;
+    overflow: hidden;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.sv-sr-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255, 255, 255, .04);
+    transition: background .1s;
+}
+
+.sv-sr-item:hover {
+    background: rgba(255, 255, 255, .06);
+}
+
+.sv-sr-item:last-child {
+    border-bottom: none;
+}
+
+.sv-sr-icon {
+    font-size: 13px;
+}
+
+.sv-sr-name {
+    flex: 1;
+    color: var(--fg, #e2e8f0);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sv-sr-file {
+    color: var(--muted, #64748b);
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 90px;
+}
+
+.sv-sr-kind {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .07);
+    white-space: nowrap;
+}
+
+/* ── Main area: Cytoscape + cards overlay ─────────────────────────────────────── */
+#sv-sym-main {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    background: var(--bg, #0d1117);
+}
+
+#sv-cy-mount {
+    position: absolute;
+    inset: 0;
+    /* Cytoscape renders here — SVG edges drawn in this canvas */
+}
+
+#sv-cards-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    /* Cards live here; transform synced with svCy pan/zoom */
+}
+
+/* ── Base card styles ─────────────────────────────────────────────────────────── */
+.sv-sc-card {
+    position: absolute;
+    background: var(--panel2, #151922);
+    border: 1px solid var(--border, #2a2d3a);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, .35);
+    transition: border-color .15s, box-shadow .15s;
+    pointer-events: auto;
+    user-select: none;
+}
+
+/* ── Center class card ─────────────────────────────────────────────────────────── */
+.sv-sc-center {
+    border-width: 2px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, .5);
+    z-index: 2;
+}
+
+.sv-sc-hdr {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: background .15s;
+}
+
+.sv-sc-hdr:hover {
+    background: rgba(255, 255, 255, .04);
+}
+
+.sv-sc-icon {
+    font-size: 14px;
+}
+
+.sv-sc-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--fg, #e2e8f0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sv-sc-tag {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.sv-sc-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, .05);
+}
+
+.sv-sc-file {
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sv-sc-flow {
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    white-space: nowrap;
+}
+
+/* ── Sections (PUBLIC / PRIVATE / FIELDS) ─────────────────────────────────────── */
+.sv-sc-section {
+    padding: 6px 10px 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, .04);
+}
+
+.sv-sc-section:last-child {
+    border-bottom: none;
+}
+
+.sv-sc-sec-hdr {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .6px;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+}
+
+.sv-sc-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.sv-sc-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-family: var(--code-font, monospace);
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: filter .12s, transform .1s;
+}
+
+.sv-sc-badge:hover {
+    filter: brightness(1.3);
+    transform: translateY(-1px);
+}
+
+.sv-sc-badge:active {
+    transform: translateY(0);
+}
+
+/* Pub = green tint, Priv = purple tint, Field = amber tint */
+.sv-sc-badge.sv-pub {
+    background: #20c99718;
+    color: #20c997;
+    border: 1px solid #20c99733;
+}
+
+.sv-sc-badge.sv-priv {
+    background: #cc5de818;
+    color: #cc5de8;
+    border: 1px solid #cc5de833;
+}
+
+.sv-sc-badge.sv-field {
+    background: #9775fa18;
+    color: #9775fa;
+    border: 1px solid #9775fa33;
+}
+
+.sv-sc-more {
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .05);
+}
+
+/* ── Side (caller / callee) cards ─────────────────────────────────────────────── */
+.sv-sc-side {
+    cursor: pointer;
+    z-index: 1;
+}
+
+.sv-sc-side:hover {
+    border-color: var(--accent, #fbbf24);
+    box-shadow: 0 4px 16px rgba(251, 191, 36, .15);
+    z-index: 3;
+}
+
+.sv-sc-caller {
+    border-left: 3px solid #f59e0b;
+}
+
+.sv-sc-callee {
+    border-right: 3px solid #cc5de8;
+}
+
+.sv-sc-side-hdr {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, .06);
+    border-left: 2px solid transparent;
+}
+
+.sv-sc-side-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px 7px;
+    flex-wrap: wrap;
+}
+
+.sv-sc-edge-pill {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.sv-sc-side-file {
+    font-size: 9px;
+    color: var(--muted, #64748b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 130px;
+}
+
+/* ── Fallback (no Cytoscape) ─────────────────────────────────────────────────── */
+#sv-sym-fallback {
+    display: flex;
+    gap: 20px;
+    padding: 20px;
+    height: 100%;
+    overflow: auto;
+    align-items: flex-start;
+}
+
+.sv-sym-fb-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+}
+
+.sv-sym-fb-col .sv-sc-card {
+    position: relative;
+    width: 100%;
+}

@@ -63,16 +63,17 @@ window.svHideStructureBtn = function () {
 
 // Show the sv-view (hides cy like func-view does)
 window.svShowSvView = function () {
-    if (!_sv._src) { svHideSvView(); return; }
+    // Allow opening via symbol even without source loaded
+    if (!_sv._src && !_sv._fileRel) { svHideSvView(); return; }
     _sv.active = true;
-    
+
     // Switch to structure mode if not already active to align other UI states
     if (typeof state !== 'undefined' && state.level >= 1) {
         const structBtn = document.getElementById('struct-toggle-btn');
         if (structBtn && !structBtn.classList.contains('active')) {
-             if (typeof window.switchMode === 'function') {
-                 window.switchMode('structure');
-             }
+            if (typeof window.switchMode === 'function') {
+                window.switchMode('structure');
+            }
         }
     }
     const cyEl = document.getElementById('cy');
@@ -102,7 +103,15 @@ window.svShowSvView = function () {
     if (sv) sv.classList.add('active');
     const btn = document.getElementById('struct-toggle-btn');
     if (btn) btn.classList.add('active');
-    _svRender(_sv._src, _sv._ext, _sv._fname);
+    // Phase 2: try symbol-centric mode first
+    const _p2sym = _svFindPrimarySymbol(_sv._fileRel);
+    if (_p2sym && window.DATA?.symbol_index?.[_p2sym]) {
+        _svSym.history = [];
+        _svSym.activeId = null;
+        window.svShowSymbol(_p2sym);
+    } else {
+        _svRender(_sv._src, _sv._ext, _sv._fname);
+    }
 };
 
 // Hide the sv-view and restore cy
@@ -111,7 +120,7 @@ window.svHideSvView = function () {
     _svHideFocusPanel();      // close any open focus panel first
     const sv = document.getElementById('sv-view');
     if (sv) { sv.classList.remove('active'); sv.innerHTML = ''; }
-    
+
     if (window._svCyListener && typeof cy !== 'undefined' && cy) {
         cy.off('pan zoom', window._svCyListener);
         window._svCyListener = null;
@@ -119,10 +128,10 @@ window.svHideSvView = function () {
 
     const btn = document.getElementById('struct-toggle-btn');
     if (btn) btn.classList.remove('active');
-    
+
     const cyEl = document.getElementById('cy');
     if (cyEl) cyEl.style.opacity = '';
-    
+
     if (typeof cy !== 'undefined' && cy && _sv._cySavedViewport) {
         cy.viewport(_sv._cySavedViewport);
     }
@@ -457,7 +466,7 @@ function _svRender(src, ext, fname) {
 
     const grid = document.createElement('div');
     grid.id = 'sv-grid';
-    
+
     const tGroup = document.createElement('div');
     tGroup.className = 'sv-transform-group';
     tGroup.style.transformOrigin = '0 0';
@@ -620,12 +629,12 @@ function _svJumpCodeToLine(lineIdx) {
 function _svMakeCoordMapper(scroll) {
     const tGroup = scroll?.querySelector('.sv-transform-group');
     if (!tGroup) return (vpX, vpY) => ({ x: vpX, y: vpY });
-    const tgR   = tGroup.getBoundingClientRect();
-    const sm    = (tGroup.style.transform || '').match(/scale\((-?[\d.]+)\)/);
+    const tgR = tGroup.getBoundingClientRect();
+    const sm = (tGroup.style.transform || '').match(/scale\((-?[\d.]+)\)/);
     const scale = sm ? parseFloat(sm[1]) : 1;
     return (vpX, vpY) => ({
         x: (vpX - tgR.left) / scale,
-        y: (vpY - tgR.top)  / scale,
+        y: (vpY - tgR.top) / scale,
     });
 }
 
@@ -639,22 +648,22 @@ function _svMakeCoordMapper(scroll) {
 function _svGetPivots(el, toSVG) {
     const r = el.getBoundingClientRect();
     if (r.width + r.height === 0) return null;
-    const cx = r.left + r.width  / 2;
-    const cy = r.top  + r.height / 2;
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
     return [
-        toSVG(cx,      r.top),     // [0] top-center
+        toSVG(cx, r.top),     // [0] top-center
         toSVG(r.right, cy),        // [1] right-center
-        toSVG(cx,      r.bottom),  // [2] bottom-center
-        toSVG(r.left,  cy),        // [3] left-center
+        toSVG(cx, r.bottom),  // [2] bottom-center
+        toSVG(r.left, cy),        // [3] left-center
     ];
 }
 
 // Outward direction unit vectors for each side (used for bezier control arms)
 const _SV_SIDE_DIR = [
-    { x:  0, y: -1 },  // [0] top    → exit upward
-    { x:  1, y:  0 },  // [1] right  → exit rightward
-    { x:  0, y:  1 },  // [2] bottom → exit downward
-    { x: -1, y:  0 },  // [3] left   → exit leftward
+    { x: 0, y: -1 },  // [0] top    → exit upward
+    { x: 1, y: 0 },  // [1] right  → exit rightward
+    { x: 0, y: 1 },  // [2] bottom → exit downward
+    { x: -1, y: 0 },  // [3] left   → exit leftward
 ];
 
 /**
@@ -675,7 +684,7 @@ function _svBestPair(srcPts, dstPts, route) {
             if (route === 'V' && si % 2 === 1) continue;  // skip horizontal pairs
             const dx = srcPts[si].x - dstPts[ti].x;
             const dy = srcPts[si].y - dstPts[ti].y;
-            const d  = dx * dx + dy * dy;
+            const d = dx * dx + dy * dy;
             if (d < best.dist) best = { si, ti, dist: d };
         }
     }
@@ -709,15 +718,19 @@ function _svDrawArrows(classes, svg, scroll) {
     classes.forEach((cls, fi) => {
         cls.inherits.forEach(parent => {
             if (boxMap[parent] !== undefined)
-                arrows.push({ from: fi, to: boxMap[parent], type: 'inherit',
-                              targetLine: classes[boxMap[parent]].line, anchorName: null });
+                arrows.push({
+                    from: fi, to: boxMap[parent], type: 'inherit',
+                    targetLine: classes[boxMap[parent]].line, anchorName: null
+                });
         });
         cls.fields.forEach(f => {
             const clean = f.name.replace(/^_+|_+$/g, '');
             classes.forEach((other, ti) => {
                 if (ti !== fi && other.name.toLowerCase() === clean.toLowerCase())
-                    arrows.push({ from: fi, to: ti, type: 'uses',
-                                  targetLine: f.line, anchorName: f.name });
+                    arrows.push({
+                        from: fi, to: ti, type: 'uses',
+                        targetLine: f.line, anchorName: f.name
+                    });
             });
         });
     });
@@ -782,7 +795,7 @@ function _svEsc(s) {
 }
 function _svBasename(p) { return (p || '').split(/[\\/]/).pop().replace(/\.\w+$/, ''); }
 
-window._svToggleExternal = function(btn) {
+window._svToggleExternal = function (btn) {
     _sv.showExternal = !_sv.showExternal;
     btn.textContent = `External Dependencies: ${_sv.showExternal ? 'On' : 'Off'}`;
     if (_sv.showExternal) btn.classList.add('active');
@@ -977,9 +990,9 @@ function _svHighlightBadgeByName(name) {
     }
 }
 
-window.svHighlightBadgeByName = function(name) {
+window.svHighlightBadgeByName = function (name) {
     if (_sv.classes) {
-        const exists = _sv.classes.some(cls => 
+        const exists = _sv.classes.some(cls =>
             cls.name === name ||
             cls.public_methods.some(m => m.name === name) ||
             cls.private_methods.some(m => m.name === name) ||
@@ -1086,7 +1099,7 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
     const ghostBadgeEls = {};  // fi → { className → badge DOM element }
 
     ghostFiles.forEach((gf, fi) => {
-        const dirIcon  = gf.direction === 'import' ? '→' : '←';
+        const dirIcon = gf.direction === 'import' ? '→' : '←';
         const dirLabel = gf.direction === 'import' ? 'imports' : 'imported by';
         const box = document.createElement('div');
         box.className = 'sv-ghost-box';
@@ -1102,8 +1115,8 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
         if (gf.classes.length > 0) {
             html += `<div class="sv-ghost-classes">
                 ${gf.classes.map(gc =>
-                    `<span class="sv-ghost-class-badge" data-gcname="${_svEsc(gc.name)}" title="${_svEsc(gf.path)}">${_svEsc(gc.name)}</span>`
-                ).join('')}
+                `<span class="sv-ghost-class-badge" data-gcname="${_svEsc(gc.name)}" title="${_svEsc(gf.path)}">${_svEsc(gc.name)}</span>`
+            ).join('')}
             </div>`;
         } else {
             html += `<div class="sv-ghost-no-classes">no classes detected</div>`;
@@ -1168,7 +1181,7 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
 
     const localNames = new Set(classes.map(c => c.name));
     const arrowDescs = [];     // { fromEl, toEl, ghostBoxEl, label, isField }
-    const seenPairs  = new Set();
+    const seenPairs = new Set();
 
     const _addDesc = (fromEl, toEl, ghostBoxEl, label, isField = false) => {
         const key = `${fromEl.id || fromEl.dataset?.svName || 'x'}|${toEl.id || toEl.dataset?.gcname || 'g'}`;
@@ -1202,8 +1215,8 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
             if (!match) return;
             const fi = pathToFi[match.info.path];
             if (fi === undefined) return;
-            const badge    = _findFieldBadge(boxEl, f.name);
-            const ghBadge  = _findGhostBadge(fi, match.cname) || ghostBoxEls[fi];
+            const badge = _findFieldBadge(boxEl, f.name);
+            const ghBadge = _findGhostBadge(fi, match.cname) || ghostBoxEls[fi];
             _addDesc(badge || boxEl, ghBadge, ghostBoxEls[fi], `${f.name} → ${match.cname}`, !!badge);
         });
         cls.inherits.forEach(parent => {
@@ -1212,7 +1225,7 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
             if (!match) return;
             const fi = pathToFi[match.info.path];
             if (fi === undefined) return;
-            const hdr     = boxEl.querySelector('.sv-class-hdr') || boxEl;
+            const hdr = boxEl.querySelector('.sv-class-hdr') || boxEl;
             const ghBadge = _findGhostBadge(fi, match.cname) || ghostBoxEls[fi];
             _addDesc(hdr, ghBadge, ghostBoxEls[fi], `extends ${parent}`, false);
         });
@@ -1261,7 +1274,7 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
     // ── 6. Persist descriptors in _sv for redraw-on-resize ─────────────────
     // Store everything needed so _svRedrawCrossFileArrows() can be called any time.
     _sv._crossArrowDescs = arrowDescs;
-    _sv._crossArrowSvg   = svg;
+    _sv._crossArrowSvg = svg;
     _sv._crossArrowScroll = scroll;
 
     // ── 7. Draw now, and wire ResizeObserver to redraw on layout change ─────
@@ -1322,7 +1335,7 @@ function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
         // ── Sourcetrail pivot-point algorithm ─────────────────────────────
         // 4 candidate exits/entries per element → pick closest same-axis pair
         const srcPts = _svGetPivots(fromEl, toSVG);
-        const dstPts = _svGetPivots(toEl,   toSVG);
+        const dstPts = _svGetPivots(toEl, toSVG);
         if (!srcPts || !dstPts) return;
 
         // Ghost column is always to the right → force horizontal routing
@@ -1417,7 +1430,7 @@ function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
  * Public: redraw cross-file arrows. Call from viz.js when code panel opens/closes.
  * Debounced internally — safe to call immediately after a layout change.
  */
-window.svRedrawArrows = function() {
+window.svRedrawArrows = function () {
     if (!_sv.active || !_sv._crossArrowDescs) return;
     clearTimeout(_sv._gridResizeTimer);
     _sv._gridResizeTimer = setTimeout(() => {
@@ -1434,12 +1447,12 @@ window.svRedrawArrows = function() {
  */
 function _svEdgeTypeColor(edgeType) {
     const map = {
-        import:    '#10b981',
-        include:   '#c084fc',
-        library:   '#a78bfa',
-        package:   '#00d4ff',
+        import: '#10b981',
+        include: '#c084fc',
+        library: '#a78bfa',
+        package: '#00d4ff',
         component: '#60a5fa',
-        inherit:   '#60a5fa',
+        inherit: '#60a5fa',
     };
     return map[edgeType] || '#64748b';
 }
@@ -1456,17 +1469,17 @@ function _svEdgeTypeColor(edgeType) {
 // ─── Symbol graph state (separate from file-based _sv state) ──────────────────
 const _svSym = {
     activeId: null,
-    history:  [],    // [{symId}] for back-stack
-    _token:   0,     // render token (stale fetches discarded)
+    history: [],    // [{symId}] for back-stack
+    _token: 0,     // render token (stale fetches discarded)
 };
 
 // ─── Kind icons / colours ─────────────────────────────────────────────────────
 const _SVKIND = {
-    class:    { icon: '🔷', color: '#4c6ef5', tag: 'class' },
-    method:   { icon: '🔹', color: '#20c997', tag: 'method' },
+    class: { icon: '🔷', color: '#4c6ef5', tag: 'class' },
+    method: { icon: '🔹', color: '#20c997', tag: 'method' },
     function: { icon: '🟢', color: '#37b24d', tag: 'fn' },
     variable: { icon: '🔶', color: '#9775fa', tag: 'var' },
-    file:     { icon: '📁', color: '#868e96', tag: 'file' },
+    file: { icon: '📁', color: '#868e96', tag: 'file' },
 };
 function _svkind(k) { return _SVKIND[k] || { icon: '⬡', color: '#64748b', tag: k }; }
 
@@ -1476,7 +1489,7 @@ function _svkind(k) { return _SVKIND[k] || { icon: '⬡', color: '#64748b', tag:
  * Show the Sourcetrail-style Symbol-Centric view for the given symId.
  * Opens the Structure panel (if not already open) and replaces its content.
  */
-window.svShowSymbol = async function(symId) {
+window.svShowSymbol = async function (symId) {
     if (!symId || !window.DATA?.symbol_index?.[symId]) return;
     if (!window.JOB_ID) return;
 
@@ -1537,7 +1550,7 @@ window.svShowSymbol = async function(symId) {
  * Convenience: activate by name (used from code panel click).
  * Picks the best match (exact class > function > any).
  */
-window.svShowSymbolByName = function(name) {
+window.svShowSymbolByName = function (name) {
     if (!window.DATA?.symbol_index) return false;
     const all = Object.values(window.DATA.symbol_index).filter(s => s.name === name);
     if (!all.length) return false;
@@ -1551,7 +1564,7 @@ window.svShowSymbolByName = function(name) {
 /**
  * Go back one step in the symbol pivot history.
  */
-window.svSymBack = function() {
+window.svSymBack = function () {
     const prev = _svSym.history.pop();
     if (prev) {
         _svSym.activeId = null;  // will be set by svShowSymbol
@@ -1611,7 +1624,7 @@ function _svSymRender(data, view) {
         </div>`;
     }
 
-    const inHtml  = incoming.length ? incoming.map(i => _colItem(i, 'in')).join('') : `<div class="sv-sym-empty">No incoming</div>`;
+    const inHtml = incoming.length ? incoming.map(i => _colItem(i, 'in')).join('') : `<div class="sv-sym-empty">No incoming</div>`;
     const outHtml = outgoing.length ? outgoing.map(i => _colItem(i, 'out')).join('') : `<div class="sv-sym-empty">No outgoing</div>`;
 
     const backBtn = _svSym.history.filter(Boolean).length > 0
@@ -1755,3 +1768,495 @@ function _svSymDrawArrows(view, incoming, outgoing) {
 }
 
 console.log('[VIZCODE] struct_view.js v3 (Sourcetrail Symbol Mode) loaded');
+
+// ─── Dedicated Cytoscape instance for symbol graph ───────────────────────────
+let svCy = null;
+
+// Extend _SVKIND with missing kinds (safe to re-add)
+Object.assign(_SVKIND, {
+    struct: { icon: '🔷', color: '#06b6d4', tag: 'struct' },
+    namespace: { icon: '◈', color: '#a78bfa', tag: 'ns' },
+    module: { icon: '📦', color: '#ec4899', tag: 'mod' },
+    field: { icon: '🔶', color: '#9775fa', tag: 'field' },
+    typedef: { icon: '⬡', color: '#64748b', tag: 'typedef' },
+});
+
+// ─── Helper: find the best "entry-point" symbol for a given file ─────────────
+//  Priority: class/struct first (lowest line#), then function/method.
+function _svFindPrimarySymbol(fileRel) {
+    const idx = window.DATA?.symbol_index;
+    if (!idx || !fileRel) return null;
+    let bestClass = null, bestFunc = null;
+    for (const [sid, sym] of Object.entries(idx)) {
+        if (sym.file !== fileRel) continue;
+        if (sym.parent) continue;          // top-level only, skip members
+        const line = sym.line || 0;
+        if (sym.kind === 'class' || sym.kind === 'struct') {
+            if (!bestClass || line < (idx[bestClass]?.line || 0)) bestClass = sid;
+        } else if (sym.kind === 'function' || sym.kind === 'method') {
+            if (!bestFunc || line < (idx[bestFunc]?.line || 0)) bestFunc = sid;
+        }
+    }
+    return bestClass || bestFunc;
+}
+window._svFindPrimarySymbol = _svFindPrimarySymbol;
+
+// ─── Patch svShowSvView to auto-launch Symbol mode ───────────────────────────
+//  We wrap the original and override the final render call.
+(function () {
+    const _origShowSvView = window.svShowSvView;
+    window.svShowSvView = function () {
+        // Run all the original setup (hide cy canvas, show panel, etc.)
+        _origShowSvView();
+
+        // If symbol mode was NOT triggered by the original (it renders via _svRender),
+        // check if we should upgrade to symbol mode instead.
+        const symId = _svFindPrimarySymbol(_sv._fileRel);
+        if (symId && window.DATA?.symbol_index?.[symId]) {
+            // Reset history and navigate to primary symbol
+            _svSym.history = [];
+            _svSym.activeId = null;
+            window.svShowSymbol(symId);
+        }
+        // If no symbol found, original _svRender fallback remains (nothing to do).
+    };
+})();
+
+// ─── Destroy svCy on sv-view hide ────────────────────────────────────────────
+(function () {
+    const _origHide = window.svHideSvView;
+    window.svHideSvView = function () {
+        if (svCy) {
+            try { svCy.destroy(); } catch (_) { }
+            svCy = null;
+        }
+        if (_origHide) _origHide();
+    };
+})();
+
+// ─── Initialize dedicated Cytoscape for symbol graph ─────────────────────────
+function _svCyInit(mountEl) {
+    if (svCy) { try { svCy.destroy(); } catch (_) { } svCy = null; }
+    if (typeof cytoscape === 'undefined') return null;
+
+    svCy = cytoscape({
+        container: mountEl,
+        style: [
+            // Ghost nodes: invisible point-anchors used only for edge routing
+            {
+                selector: 'node.ghost',
+                style: { opacity: 0, width: 2, height: 2, events: 'no' },
+            },
+            // ── Edges ─────────────────────────────────────────────────────────
+            {
+                selector: 'edge',
+                style: {
+                    'curve-style': 'bezier',
+                    'target-arrow-shape': 'triangle',
+                    'target-arrow-color': 'data(color)',
+                    'line-color': 'data(color)',
+                    'width': 'data(width)',
+                    'opacity': 0.75,
+                    'source-endpoint': 'outside-to-line',
+                    'target-endpoint': 'outside-to-line',
+                },
+            },
+            {
+                selector: 'edge.bundled',
+                style: {
+                    'label': 'data(countLabel)',
+                    'font-size': '10px',
+                    'color': 'data(color)',
+                    'text-background-color': '#0d1117',
+                    'text-background-opacity': 0.92,
+                    'text-background-shape': 'roundrectangle',
+                    'text-background-padding': '3px',
+                    'text-border-color': 'data(color)',
+                    'text-border-width': 1,
+                    'text-border-opacity': 0.5,
+                },
+            },
+            {
+                selector: 'edge.inheritance',
+                style: {
+                    'line-style': 'dashed',
+                    'target-arrow-shape': 'triangle-hollow',
+                },
+            },
+        ],
+        elements: [],
+        userZoomingEnabled: true,
+        userPanningEnabled: true,
+        boxSelectionEnabled: false,
+        autoungrabify: true,
+        minZoom: 0.08,
+        maxZoom: 4,
+        wheelSensitivity: 0.2,
+    });
+
+    return svCy;
+}
+
+// ─── Edge color helper ────────────────────────────────────────────────────────
+function _svEdgeColor(etype) {
+    return etype === 'inheritance' ? '#60a5fa' :
+        etype === 'call' ? '#f59e0b' :
+            etype === 'import' ? '#34d399' : '#94a3b8';
+}
+
+// ─── Core renderer (replaces the existing _svSymRender) ──────────────────────
+//  Called by window.svShowSymbol() after /symbol-graph fetch.
+function _svSymRender(data, view) {
+    const { center, incoming, outgoing } = data;
+    const ck = _svkind(center.kind);
+
+    // ── Collect center members from symbol_index ──────────────────────────────
+    const allSyms = window.DATA?.symbol_index || {};
+    const members = Object.values(allSyms).filter(
+        s => s.parent === center.name && s.file === center.file
+    );
+    const pubMethods = members.filter(s => s.kind === 'method' && s.is_public !== false);
+    const privMethods = members.filter(s => s.kind === 'method' && s.is_public === false);
+    const fields = members.filter(s => s.kind === 'variable' || s.kind === 'field');
+
+    // ── Layout constants ──────────────────────────────────────────────────────
+    const CARD_W_SIDE = 300;
+    const CARD_W_CTR = 320;
+    const CARD_GAP = 24;
+    const ROW_H_SIDE = 88;   // approx height of a collapsed side card
+
+    // Center card height (estimated)
+    const _rowCount = (arr, perRow) => Math.max(1, Math.ceil(arr.length / perRow));
+    const centerH = 72                                                             // header + stats
+        + (pubMethods.length > 0 ? 28 + _rowCount(pubMethods, 3) * 26 + 4 : 0)
+        + (privMethods.length > 0 ? 28 + _rowCount(privMethods, 3) * 26 + 4 : 0)
+        + (fields.length > 0 ? 28 + _rowCount(fields, 4) * 22 + 4 : 0)
+        + 16;
+
+    const sideCount = Math.max(incoming.length, outgoing.length, 1);
+    const totalH = Math.max(sideCount * (ROW_H_SIDE + CARD_GAP), centerH + 80);
+    const centerY = Math.round((totalH - centerH) / 2);
+
+    // Column x positions (card LEFT edge)
+    const COL_IN = 0;
+    const COL_CTR = CARD_W_SIDE + 80;
+    const COL_OUT = COL_CTR + CARD_W_CTR + 80;
+
+    // ── Build view DOM ────────────────────────────────────────────────────────
+    view.innerHTML = '';
+    view.classList.add('sv-sym-mode');
+
+    // — Toolbar —
+    const toolbar = document.createElement('div');
+    toolbar.id = 'sv-sym-toolbar';
+    toolbar.innerHTML = `
+        <button id="sv-sym-back-btn" class="sv-sym-tb-btn" ${_svSym.history.filter(Boolean).length === 0 ? 'disabled' : ''}>
+            ← Back
+        </button>
+        <div id="sv-sym-breadcrumb">
+            <span class="sv-sym-bc-icon" style="color:${ck.color}">${ck.icon}</span>
+            <span class="sv-sym-bc-file">${_svEsc(center.file.split('/').pop())}</span>
+            <span class="sv-sym-bc-sep">›</span>
+            <span class="sv-sym-bc-name">${_svEsc(center.name)}</span>
+            <span class="sv-sym-bc-kind" style="color:${ck.color}">${center.kind}</span>
+            <span class="sv-sym-bc-counts">
+                <span title="incoming">◀ ${data.total_in}</span>
+                <span title="outgoing">▶ ${data.total_out}</span>
+            </span>
+        </div>
+        <div class="sv-sym-search-wrap">
+            <input id="sv-sym-search" class="sv-sym-search" type="text"
+                   placeholder="⬡ Jump to symbol…" autocomplete="off" spellcheck="false">
+            <div id="sv-sym-sr" class="sv-sym-sr" style="display:none"></div>
+        </div>
+        <button id="sv-sym-fit-btn" class="sv-sym-tb-btn" title="Fit graph to screen">⊡</button>
+        <button id="sv-sym-grid-btn" class="sv-sym-tb-btn" title="Switch to File Structure view">≡ File</button>
+    `;
+    view.appendChild(toolbar);
+
+    // — Main area: Cytoscape mount + HTML cards layer —
+    const main = document.createElement('div');
+    main.id = 'sv-sym-main';
+
+    const cyMount = document.createElement('div');
+    cyMount.id = 'sv-cy-mount';
+
+    const cardsLayer = document.createElement('div');
+    cardsLayer.id = 'sv-cards-layer';
+
+    main.appendChild(cyMount);
+    main.appendChild(cardsLayer);
+    view.appendChild(main);
+
+    // ── Initialize Cytoscape ──────────────────────────────────────────────────
+    _svCyInit(cyMount);
+    if (!svCy) {
+        // Cytoscape not available — fallback: static HTML layout
+        _svSymRenderFallback(data, view, centerH, centerY, COL_IN, COL_CTR, COL_OUT,
+            CARD_W_SIDE, CARD_W_CTR, pubMethods, privMethods, fields);
+        return;
+    }
+
+    // ── Sync cards layer to svCy pan/zoom ─────────────────────────────────────
+    const _syncTransform = () => {
+        if (!svCy) return;
+        const { x, y } = svCy.pan();
+        const z = svCy.zoom();
+        cardsLayer.style.transform = `translate(${x}px,${y}px) scale(${z})`;
+    };
+    svCy.on('pan zoom', _syncTransform);
+
+    // ── Compute side card y-positions ─────────────────────────────────────────
+    const _sideY = (i, total) => {
+        if (total === 1) return centerY + (centerH - ROW_H_SIDE) / 2;
+        return Math.round(i * (totalH - ROW_H_SIDE) / (total - 1));
+    };
+
+    // ── Add ghost nodes + edges to Cytoscape ──────────────────────────────────
+    // Ghost node positions = card edge connection points (in model coordinates)
+    const ctrInX = COL_CTR;                      // left edge of center card
+    const ctrOutX = COL_CTR + CARD_W_CTR;         // right edge of center card
+    const ctrMidY = centerY + centerH / 2;
+
+    svCy.add({ data: { id: '_ci' }, position: { x: ctrInX, y: ctrMidY }, classes: 'ghost' });
+    svCy.add({ data: { id: '_co' }, position: { x: ctrOutX, y: ctrMidY }, classes: 'ghost' });
+
+    incoming.forEach((item, i) => {
+        const cy = _sideY(i, incoming.length) + ROW_H_SIDE / 2;
+        svCy.add({ data: { id: `_ig${i}` }, position: { x: COL_IN + CARD_W_SIDE, y: cy }, classes: 'ghost' });
+        const color = _svEdgeColor(item.edge_type);
+        const isBundled = item.count > 1;
+        svCy.add({
+            data: {
+                id: `_ie${i}`, source: `_ig${i}`, target: '_ci',
+                color, width: isBundled ? 3 : 1.5,
+                countLabel: isBundled ? `×${item.count}` : ''
+            },
+            classes: `${item.edge_type} ${isBundled ? 'bundled' : ''}`,
+        });
+    });
+
+    outgoing.forEach((item, i) => {
+        const cy = _sideY(i, outgoing.length) + ROW_H_SIDE / 2;
+        svCy.add({ data: { id: `_og${i}` }, position: { x: COL_OUT, y: cy }, classes: 'ghost' });
+        const color = _svEdgeColor(item.edge_type);
+        const isBundled = item.count > 1;
+        svCy.add({
+            data: {
+                id: `_oe${i}`, source: '_co', target: `_og${i}`,
+                color, width: isBundled ? 3 : 1.5,
+                countLabel: isBundled ? `×${item.count}` : ''
+            },
+            classes: `${item.edge_type} ${isBundled ? 'bundled' : ''}`,
+        });
+    });
+
+    // ── Render HTML cards (positioned in model space) ─────────────────────────
+    // Center card
+    const cCard = _svMakeCenterCard(center, pubMethods, privMethods, fields, data, ck);
+    cCard.style.cssText += `left:${COL_CTR}px;top:${centerY}px;width:${CARD_W_CTR}px;`;
+    cardsLayer.appendChild(cCard);
+
+    // Incoming (left column)
+    incoming.forEach((item, i) => {
+        const cardY = _sideY(i, incoming.length);
+        const card = _svMakeSideCard(item, 'in');
+        card.style.cssText += `left:${COL_IN}px;top:${cardY}px;width:${CARD_W_SIDE}px;`;
+        cardsLayer.appendChild(card);
+    });
+
+    // Outgoing (right column)
+    outgoing.forEach((item, i) => {
+        const cardY = _sideY(i, outgoing.length);
+        const card = _svMakeSideCard(item, 'out');
+        card.style.cssText += `left:${COL_OUT}px;top:${cardY}px;width:${CARD_W_SIDE}px;`;
+        cardsLayer.appendChild(card);
+    });
+
+    // ── Fit + apply initial transform ─────────────────────────────────────────
+    requestAnimationFrame(() => {
+        if (!svCy) return;
+        svCy.fit(undefined, 60);
+        _syncTransform();
+    });
+
+    // ── Wire toolbar buttons ──────────────────────────────────────────────────
+    document.getElementById('sv-sym-back-btn')?.addEventListener('click', window.svSymBack);
+
+    document.getElementById('sv-sym-fit-btn')?.addEventListener('click', () => {
+        svCy?.fit(undefined, 60);
+    });
+
+    document.getElementById('sv-sym-grid-btn')?.addEventListener('click', () => {
+        view.classList.remove('sv-sym-mode');
+        if (_sv._src) _svRender(_sv._src, _sv._ext, _sv._fname);
+        else window.svHideSvView();
+    });
+
+    // ── Symbol search ─────────────────────────────────────────────────────────
+    _svSymSearchBind(
+        document.getElementById('sv-sym-search'),
+        document.getElementById('sv-sym-sr')
+    );
+}
+
+// ─── Center card factory ──────────────────────────────────────────────────────
+function _svMakeCenterCard(center, pubMethods, privMethods, fields, graphData, ck) {
+    const card = document.createElement('div');
+    card.className = 'sv-sc-card sv-sc-center';
+    card.dataset.symId = center.id;
+
+    let html = `
+    <div class="sv-sc-hdr" style="border-color:${ck.color};background:${ck.color}14;">
+        <span class="sv-sc-icon">${ck.icon}</span>
+        <span class="sv-sc-name">${_svEsc(center.name)}</span>
+        <span class="sv-sc-tag" style="background:${ck.color}33;color:${ck.color}">${ck.tag}</span>
+    </div>
+    <div class="sv-sc-meta">
+        <span class="sv-sc-file" title="${_svEsc(center.file)}">${_svEsc(center.file.split('/').pop())}:${center.line || '?'}</span>
+        <span class="sv-sc-flow">◀ ${graphData.total_in}  ▶ ${graphData.total_out}</span>
+    </div>`;
+
+    const _section = (label, color, items, perRow, cls) => {
+        if (!items.length) return '';
+        const shown = items.slice(0, 15), extra = items.length - shown.length;
+        const badges = shown.map(m =>
+            `<span class="sv-sc-badge ${cls}" data-sym-id="${m.id}" data-line="${m.line}" data-file="${_svEsc(m.file)}" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`
+        ).join('');
+        return `<div class="sv-sc-section">
+            <div class="sv-sc-sec-hdr" style="color:${color}">${label}</div>
+            <div class="sv-sc-badges">${badges}${extra > 0 ? `<span class="sv-sc-more">+${extra}</span>` : ''}</div>
+        </div>`;
+    };
+
+    html += _section('◆ PUBLIC', '#20c997', pubMethods, 3, 'sv-pub');
+    html += _section('○ PRIVATE', '#cc5de8', privMethods, 3, 'sv-priv');
+    html += _section('● FIELDS', '#9775fa', fields, 4, 'sv-field');
+
+    card.innerHTML = html;
+
+    // Member badges → jump to code
+    card.querySelectorAll('.sv-sc-badge').forEach(b => {
+        b.addEventListener('click', e => {
+            e.stopPropagation();
+            const s = window.DATA?.symbol_index?.[b.dataset.symId];
+            if (s?.file && typeof loadFileInPanel === 'function') {
+                loadFileInPanel(s.file, s.name);
+            } else if (b.dataset.line) {
+                _svJumpCodeToLine(parseInt(b.dataset.line, 10));
+            }
+        });
+    });
+
+    // Header → open file at definition
+    card.querySelector('.sv-sc-hdr')?.addEventListener('click', () => {
+        if (center.file && typeof loadFileInPanel === 'function')
+            loadFileInPanel(center.file, center.name);
+    });
+
+    return card;
+}
+
+// ─── Side (caller / callee) card factory ─────────────────────────────────────
+function _svMakeSideCard(item, dir) {
+    const { sym, edge_type, count } = item;
+    const sk = _svkind(sym.kind);
+    const eColor = _svEdgeColor(edge_type);
+    const dirArrow = dir === 'in' ? '→' : '←';
+
+    const card = document.createElement('div');
+    card.className = `sv-sc-card sv-sc-side ${dir === 'in' ? 'sv-sc-caller' : 'sv-sc-callee'}`;
+    card.dataset.symId = sym.id;
+
+    card.innerHTML = `
+    <div class="sv-sc-side-hdr" style="border-color:${sk.color}">
+        <span class="sv-sc-icon" style="color:${sk.color}">${sk.icon}</span>
+        <span class="sv-sc-name">${sym.parent ? _svEsc(sym.parent) + '.<wbr>' : ''}${_svEsc(sym.name)}</span>
+    </div>
+    <div class="sv-sc-side-meta">
+        <span class="sv-sc-edge-pill" style="background:${eColor}18;color:${eColor};border-color:${eColor}44">
+            ${_svEsc(edge_type)}${count > 1 ? ' ×' + count : ''} ${dirArrow}
+        </span>
+        <span class="sv-sc-file sv-sc-side-file" title="${_svEsc(sym.file)}">${_svEsc(sym.file.split('/').pop())}</span>
+    </div>`;
+
+    // Click → pivot to this symbol
+    card.addEventListener('click', () => {
+        _svSym.history.push(_svSym.activeId);
+        _svSym.activeId = null;
+        window.svShowSymbol(sym.id);
+    });
+
+    return card;
+}
+
+// ─── Fallback renderer (when Cytoscape unavailable) ──────────────────────────
+function _svSymRenderFallback(data, view, centerH, centerY, COL_IN, COL_CTR, COL_OUT,
+    CARD_W_SIDE, CARD_W_CTR, pubMethods, privMethods, fields) {
+    const { center, incoming, outgoing } = data;
+    const ck = _svkind(center.kind);
+    const fallbackEl = document.createElement('div');
+    fallbackEl.id = 'sv-sym-fallback';
+    // Simple flex layout fallback
+    const cCard = _svMakeCenterCard(center, pubMethods, privMethods, fields, data, ck);
+    const inCol = document.createElement('div'); inCol.className = 'sv-sym-fb-col';
+    const outCol = document.createElement('div'); outCol.className = 'sv-sym-fb-col';
+    incoming.forEach(item => inCol.appendChild(_svMakeSideCard(item, 'in')));
+    outCol.appendChild(cCard);
+    outgoing.forEach(item => outCol.appendChild(_svMakeSideCard(item, 'out')));
+    fallbackEl.appendChild(inCol);
+    fallbackEl.appendChild(outCol);
+    view.appendChild(fallbackEl);
+}
+
+// ─── Symbol search ────────────────────────────────────────────────────────────
+function _svSymSearchBind(input, resultsEl) {
+    if (!input || !resultsEl) return;
+
+    const _search = () => {
+        const q = input.value.trim();
+        if (q.length < 2) { resultsEl.style.display = 'none'; return; }
+        const idx = window.DATA?.symbol_index;
+        if (!idx) return;
+        const ql = q.toLowerCase();
+        const results = [];
+        for (const [sid, sym] of Object.entries(idx)) {
+            if (sym.parent) continue;   // top-level symbols only
+            if (sym.name.toLowerCase().includes(ql)) {
+                results.push(sym);
+                if (results.length >= 12) break;
+            }
+        }
+        if (!results.length) { resultsEl.style.display = 'none'; return; }
+
+        resultsEl.innerHTML = results.map(sym => {
+            const k = _svkind(sym.kind);
+            return `<div class="sv-sr-item" data-sid="${sym.id}">
+                <span class="sv-sr-icon" style="color:${k.color}">${k.icon}</span>
+                <span class="sv-sr-name">${_svEsc(sym.name)}</span>
+                <span class="sv-sr-file">${_svEsc(sym.file.split('/').pop())}</span>
+                <span class="sv-sr-kind" style="color:${k.color}">${k.tag}</span>
+            </div>`;
+        }).join('');
+        resultsEl.style.display = 'block';
+
+        resultsEl.querySelectorAll('.sv-sr-item').forEach(item => {
+            item.addEventListener('mousedown', e => {
+                e.preventDefault();
+                const sid = item.dataset.sid;
+                resultsEl.style.display = 'none';
+                input.value = '';
+                _svSym.history.push(_svSym.activeId);
+                _svSym.activeId = null;
+                window.svShowSymbol(sid);
+            });
+        });
+    };
+
+    input.addEventListener('input', _search);
+    input.addEventListener('blur', () => setTimeout(() => { resultsEl.style.display = 'none'; }, 160));
+    input.addEventListener('focus', () => { if (input.value.trim().length >= 2) _search(); });
+}
+window._svSymSearchBind = _svSymSearchBind;
+
+console.log('[VIZCODE] sv_p2_additions.js loaded — Phase 2 Symbol-Centric Graph active');
