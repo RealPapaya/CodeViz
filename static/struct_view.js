@@ -20,8 +20,82 @@ const _sv = {
     _activeBadge: null,
     _renderToken: 0,  // incremented on each render — stale async results are dropped
     showExternal: false, // true to show external dependencies
+    _legendSnapshot: null,
 };
 window._sv = _sv;
+
+function _svLegendMarkup() {
+    const legendLabel = (typeof T === 'function' ? T('legendLabel') : 'Legend');
+    const edgeLabel = (typeof T === 'function' ? T('edgeTypes') : 'Edge Types');
+    return `
+<div class="legend-title" onclick="this.parentElement.classList.toggle('legend-collapsed')">
+  <span>⬡</span> ${legendLabel} <span class="legend-toggle">▾</span>
+</div>
+<div class="legend-body">
+  <div class="legend-section-label">${edgeLabel}</div>
+  <div class="legend-row">
+    <span class="sv-legend-line sv-legend-cross"></span>
+    <span class="legend-label">cross-class</span>
+  </div>
+  <div class="legend-row">
+    <span class="sv-legend-line sv-legend-inner"></span>
+    <span class="legend-label">pub→priv</span>
+  </div>
+  <div class="legend-row">
+    <span class="sv-legend-line sv-legend-inherit"></span>
+    <span class="legend-label">inherit</span>
+  </div>
+  <div class="legend-row">
+    <span class="sv-legend-line sv-legend-uses"></span>
+    <span class="legend-label">uses</span>
+  </div>
+</div>`;
+}
+
+function _svShowLegend() {
+    const wrap = document.getElementById('graph-wrap');
+    if (!wrap) return;
+    let leg = document.getElementById('graph-legend');
+
+    if (!_sv._legendSnapshot) {
+        _sv._legendSnapshot = {
+            existed: !!leg,
+            html: leg ? leg.innerHTML : '',
+            className: leg ? leg.className : '',
+            opacity: leg ? leg.style.opacity : '',
+            pointerEvents: leg ? leg.style.pointerEvents : '',
+        };
+    }
+
+    if (!leg) {
+        leg = document.createElement('div');
+        leg.id = 'graph-legend';
+        wrap.appendChild(leg);
+    }
+
+    leg.className = _sv._legendSnapshot.className || 'legend-collapsed';
+    leg.innerHTML = _svLegendMarkup();
+    leg.style.opacity = '';
+    leg.style.pointerEvents = '';
+}
+
+function _svRestoreLegend() {
+    const snap = _sv._legendSnapshot;
+    if (!snap) return;
+    const leg = document.getElementById('graph-legend');
+    if (!snap.existed) {
+        if (leg) leg.remove();
+        _sv._legendSnapshot = null;
+        return;
+    }
+    if (leg) {
+        leg.innerHTML = snap.html;
+        leg.className = snap.className;
+        leg.style.opacity = snap.opacity;
+        leg.style.pointerEvents = snap.pointerEvents;
+    }
+    _sv._legendSnapshot = null;
+}
 
 // -- Button lifecycle (called from viz.js) ----------------------------------------
 
@@ -88,13 +162,14 @@ window.svShowSvView = function () {
     if (fv) fv.classList.remove('active');
 
     // Hide irrelevant panels
-    ['l1-toolbar', 'l2-toolbar', 'layout-switcher', 'graph-legend', 'l2-legend'].forEach(id => {
+    ['l1-toolbar', 'l2-toolbar', 'layout-switcher', 'l2-legend'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.style.opacity = '0';
             el.style.pointerEvents = 'none';
         }
     });
+    _svShowLegend();
     // Turn off Call Graph button active state
     const cgBtn = document.getElementById('graph-toggle-btn');
     if (cgBtn) cgBtn.classList.remove('active');
@@ -110,7 +185,7 @@ window.svShowSvView = function () {
 // Hide the sv-view and restore cy
 window.svHideSvView = function () {
     _sv.active = false;
-    _svHideFocusPanel();      // close any open focus panel first
+
     const sv = document.getElementById('sv-view');
     if (sv) { sv.classList.remove('active'); sv.innerHTML = ''; }
 
@@ -130,13 +205,14 @@ window.svHideSvView = function () {
     }
 
     // Restore irrelevant panels (viz.js will handle display block/none logic, we just restore opacity)
-    ['l1-toolbar', 'l2-toolbar', 'layout-switcher', 'graph-legend', 'l2-legend'].forEach(id => {
+    ['l1-toolbar', 'l2-toolbar', 'layout-switcher', 'l2-legend'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.style.opacity = '';
             el.style.pointerEvents = '';
         }
     });
+    _svRestoreLegend();
 
     // Restore Call Graph button active state if we are in L2
     if (typeof state !== 'undefined' && state.level >= 2) {
@@ -149,6 +225,9 @@ window.svHideSvView = function () {
         _sv._localResizeObserver.disconnect();
     }
     clearTimeout(_sv._localArrowTimer);
+
+    // Clear structure-only code highlight
+    document.querySelectorAll('.sv-jump-highlight').forEach(el => el.classList.remove('sv-jump-highlight'));
 };
 
 // Toggle from button click
@@ -439,12 +518,6 @@ function _svRender(src, ext, fname) {
         <span class="sv-header-title" style="display:flex;align-items:center;gap:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="8" height="6" rx="1"></rect><path d="M12 9v4"></path><path d="M5 13h14"></path><path d="M5 13v3"></path><rect x="2" y="16" width="6" height="5" rx="1"></rect><path d="M19 13v3"></path><rect x="16" y="16" width="6" height="5" rx="1"></rect></svg>Structure<span style="color:var(--muted)">·</span><code>${_svEsc(fname)}</code></span>
         <span class="sv-header-count">${classes.length} class${classes.length !== 1 ? 'es' : ''}</span>
         <div class="sv-header-actions">
-            <div class="sv-legend">
-                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-cross"></span>cross-class</span>
-                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-inner"></span>pub→priv</span>
-                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-inherit"></span>inherit</span>
-                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-uses"></span>uses</span>
-            </div>
             <button class="sv-ext-btn ${_sv.showExternal ? 'active' : ''}" onclick="window._svToggleExternal && window._svToggleExternal(this)">
                 ↗ Ext.Deps ${_sv.showExternal ? 'On' : 'Off'}
             </button>
@@ -554,8 +627,8 @@ function _svRender(src, ext, fname) {
     // Any flex-wrap reflow (window resize, code panel open/close) re-triggers draw.
     // We store refs on _sv so the observer survives re-renders.
     _sv._localArrowClasses = classes;
-    _sv._localArrowSvg     = svg;
-    _sv._localArrowScroll  = scroll;
+    _sv._localArrowSvg = svg;
+    _sv._localArrowScroll = scroll;
 
     const _redrawLocal = () => {
         if (!_sv.active) return;
@@ -596,13 +669,7 @@ function _svAttachBadgeHandlers(container) {
         _svSelectBadge(badge, classIdx);
         _svJumpCodeToLine(lineIdx);
 
-        // Method badges (public or private) → show the callers/callees Focus Panel
-        if (badge.classList.contains('sv-method')) {
-            _svShowFocusPanel(name, lineIdx, classIdx);
-        } else {
-            // Field or class-header click — just jump, no panel
-            _svHideFocusPanel();
-        }
+        // Focus panel removed per user request
     });
 
     container.addEventListener('mouseover', (e) => {
@@ -628,8 +695,18 @@ function _svSelectBadge(badgeEl, classIdx) {
     if (box) box.classList.add('sv-active-box');
 }
 
+function _svHighlightLine(lineIdx) {
+    if (!_sv.active) return;
+    if (typeof lineIdx !== 'number' || Number.isNaN(lineIdx)) return;
+    const lineEl = document.getElementById(`cl-${lineIdx}`);
+    if (!lineEl) return;
+    document.querySelectorAll('.sv-jump-highlight').forEach(el => el.classList.remove('sv-jump-highlight'));
+    lineEl.classList.add('sv-jump-highlight');
+}
+
 // Jump to a line in the code panel (jumps to cp-code-wrap line if panel is open)
 function _svJumpCodeToLine(lineIdx) {
+    if (!_sv.active) return;
     if (typeof jumpToFunc === 'function') {
         // Prefer built-in jumpToFunc if it handles line-based jumping
     }
@@ -639,11 +716,13 @@ function _svJumpCodeToLine(lineIdx) {
     // Make sure code panel is visible
     if (typeof openCodePanel === 'function') openCodePanel();
     lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    
-    // Persistent highlight
-    document.querySelectorAll('.sv-jump-highlight').forEach(el => el.classList.remove('sv-jump-highlight'));
-    lineEl.classList.add('sv-jump-highlight');
+
+    _svHighlightLine(lineIdx);
 }
+
+window.svHighlightLine = function (lineIdx) {
+    _svHighlightLine(lineIdx);
+};
 
 
 // ── Sourcetrail-style pivot point system ──────────────────────────────────────
@@ -753,19 +832,19 @@ function _svTopoSort(classes) {
 
     const labelToCI = new Map();
     classes.forEach((cls, ci) => {
-        cls.public_methods.forEach(m  => labelToCI.set(m.name, ci));
+        cls.public_methods.forEach(m => labelToCI.set(m.name, ci));
         cls.private_methods.forEach(m => labelToCI.set(m.name, ci));
     });
 
     const classEdges = new Set();
     const inDeg = new Array(classes.length).fill(0);
-    const adj   = Array.from({ length: classes.length }, () => new Set());
+    const adj = Array.from({ length: classes.length }, () => new Set());
 
     allEdges.forEach(({ s, t }) => {
         const sf = allFuncs[s], tf = allFuncs[t];
         if (!sf || !tf) return;
         const fromCI = labelToCI.get(sf.label);
-        const toCI   = labelToCI.get(tf.label);
+        const toCI = labelToCI.get(tf.label);
         if (fromCI === undefined || toCI === undefined || fromCI === toCI) return;
         const key = `${fromCI}→${toCI}`;
         if (classEdges.has(key)) return;
@@ -825,15 +904,19 @@ function _svDrawArrows(classes, svg, scroll) {
     classes.forEach((cls, fi) => {
         cls.inherits.forEach(parent => {
             if (boxMap[parent] !== undefined)
-                arrows.push({ from: fi, to: boxMap[parent], type: 'inherit',
-                    targetLine: classes[boxMap[parent]].line, anchorName: null });
+                arrows.push({
+                    from: fi, to: boxMap[parent], type: 'inherit',
+                    targetLine: classes[boxMap[parent]].line, anchorName: null
+                });
         });
         cls.fields.forEach(f => {
             const clean = f.name.replace(/^_+|_+$/g, '');
             classes.forEach((other, ti) => {
                 if (ti !== fi && other.name.toLowerCase() === clean.toLowerCase())
-                    arrows.push({ from: fi, to: ti, type: 'uses',
-                        targetLine: f.line, anchorName: f.name });
+                    arrows.push({
+                        from: fi, to: ti, type: 'uses',
+                        targetLine: f.line, anchorName: f.name
+                    });
             });
         });
     });
@@ -903,7 +986,7 @@ function _svDrawCallArrows(svg) {
         let x = 0, y = 0, cur = el;
         while (cur && cur !== tGroup) {
             x += (cur.offsetLeft || 0);
-            y += (cur.offsetTop  || 0);
+            y += (cur.offsetTop || 0);
             cur = cur.offsetParent;
         }
         return { x, y, w: el.offsetWidth, h: el.offsetHeight };
@@ -914,10 +997,10 @@ function _svDrawCallArrows(svg) {
         if (!r.w && !r.h) return null;
         const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
         return [
-            { x: cx,        y: r.y },          // 0 top-center
+            { x: cx, y: r.y },          // 0 top-center
             { x: r.x + r.w, y: cy },            // 1 right-center
-            { x: cx,        y: r.y + r.h },     // 2 bottom-center
-            { x: r.x,       y: cy },            // 3 left-center
+            { x: cx, y: r.y + r.h },     // 2 bottom-center
+            { x: r.x, y: cy },            // 3 left-center
         ];
     }
 
@@ -927,9 +1010,9 @@ function _svDrawCallArrows(svg) {
         const name = badge.dataset.svName;
         if (!labelMap.has(name)) {
             labelMap.set(name, {
-                el:     badge,
+                el: badge,
                 access: badge.dataset.svAccess || (badge.classList.contains('sv-method-priv') ? 'private' : 'public'),
-                ci:     parseInt(badge.dataset.svClass, 10),
+                ci: parseInt(badge.dataset.svClass, 10),
             });
         }
     });
@@ -940,10 +1023,10 @@ function _svDrawCallArrows(svg) {
         if (!sf || !tf) return;
 
         const from = labelMap.get(sf.label);
-        const to   = labelMap.get(tf.label);
+        const to = labelMap.get(tf.label);
         if (!from || !to || from.el === to.el) return;
 
-        const isCross          = from.ci !== to.ci;
+        const isCross = from.ci !== to.ci;
         const isInnerPubToPriv = !isCross && from.access === 'public' && to.access === 'private';
         if (!isCross && !isInnerPubToPriv) return;
 
@@ -960,7 +1043,7 @@ function _svDrawCallArrows(svg) {
         const d = _svBezierPath(p1, si, p2, ti, _svTension(p1, p2));
 
         const arrowClass = isCross ? 'sv-arrow-call' : 'sv-arrow-call-inner';
-        const markerId   = isCross ? 'sv-ah-call'    : 'sv-ah-call-inner';
+        const markerId = isCross ? 'sv-ah-call' : 'sv-ah-call-inner';
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', d);
@@ -1006,150 +1089,7 @@ window._svToggleExternal = function (btn) {
     }
 };
 
-// ── Focus Panel — Callers / Callees inline view ────────────────────────────────
 
-/**
- * Show (or refresh) the Focus Panel at the bottom of sv-view.
- * Looks up window.DATA.funcs_by_file / func_edges_by_file so it works without
- * any new server endpoint.  Gracefully degrades if DATA isn't present.
- *
- * @param {string} methodName  — function label (as stored in DATA.funcs_by_file)
- * @param {number} lineIdx     — 0-based code line (fallback for code jump)
- * @param {number} classIdx    — sv-class-box index (for box highlight)
- */
-function _svShowFocusPanel(methodName, lineIdx, classIdx) {
-    _svHideFocusPanel(/* immediate */ true);
-
-    const view = document.getElementById('sv-view');
-    if (!view) return;
-
-    const fileRel = _sv._fileRel;
-    const allFuncs = (window.DATA?.funcs_by_file?.[fileRel]) || [];
-    const allEdges = (window.DATA?.func_edges_by_file?.[fileRel]) || [];
-
-    // Match by exact label; fallback: strip leading underscores
-    let funcIdx = allFuncs.findIndex(f => f.label === methodName);
-    if (funcIdx === -1) funcIdx = allFuncs.findIndex(f => f.label === methodName.replace(/^_+/, ''));
-
-    const panel = document.createElement('div');
-    panel.id = 'sv-focus-panel';
-    panel.className = 'sv-focus-panel';
-
-    if (funcIdx === -1 || allFuncs.length === 0) {
-        // No call-graph data available — show a minimal info strip
-        panel.innerHTML = `
-            <div class="sv-fp-header">
-                <span class="sv-fp-title">⬡ <code>${_svEsc(methodName)}</code></span>
-                <span class="sv-fp-hint">No call-graph data for this method</span>
-                <button class="sv-fp-close" title="Close">✕</button>
-            </div>`;
-    } else {
-        const center = allFuncs[funcIdx];
-
-        // Collect callers (edges where e.t === funcIdx → callers are e.s)
-        // and callees (edges where e.s === funcIdx → callees are e.t)
-        const _dedupe = (arr) => {
-            const seen = new Set();
-            return arr.filter(f => f && !seen.has(f.label) && seen.add(f.label));
-        };
-        const callers = _dedupe(
-            allEdges.filter(e => e.t === funcIdx).map(e => allFuncs[e.s])
-        ).slice(0, 7);
-        const callees = _dedupe(
-            allEdges.filter(e => e.s === funcIdx).map(e => allFuncs[e.t])
-        ).slice(0, 7);
-
-        const accessBadgeHtml = center.is_public
-            ? `<span class="sv-fp-access sv-fp-public">PUBLIC</span>`
-            : `<span class="sv-fp-access sv-fp-private">PRIVATE</span>`;
-
-        const _card = (f, dir) => {
-            const fi = allFuncs.indexOf(f);
-            const icon = dir === 'caller' ? '◀' : '▶';
-            return `<div class="sv-fp-card sv-fp-${dir}" data-fp-func-idx="${fi}" title="${_svEsc(f.label)}">
-                ${dir === 'caller' ? `<span class="sv-fp-card-icon">${icon}</span>` : ''}
-                <span class="sv-fp-card-name">${_svEsc(f.label)}</span>
-                ${dir === 'callee' ? `<span class="sv-fp-card-icon">${icon}</span>` : ''}
-            </div>`;
-        };
-
-        const callerHtml = callers.length
-            ? `<div class="sv-fp-cards">${callers.map(f => _card(f, 'caller')).join('')}</div>`
-            : `<div class="sv-fp-empty">No callers found</div>`;
-
-        const calleeHtml = callees.length
-            ? `<div class="sv-fp-cards">${callees.map(f => _card(f, 'callee')).join('')}</div>`
-            : `<div class="sv-fp-empty">No callees found</div>`;
-
-        panel.innerHTML = `
-            <div class="sv-fp-header">
-                <span class="sv-fp-title">⬡ <code>${_svEsc(methodName)}</code></span>
-                ${accessBadgeHtml}
-                <button class="sv-fp-close" title="Close">✕</button>
-            </div>
-            <div class="sv-fp-body">
-                <div class="sv-fp-col">
-                    <div class="sv-fp-col-label">◀ CALLERS <span class="sv-fp-count">${callers.length}</span></div>
-                    ${callerHtml}
-                </div>
-                <div class="sv-fp-divider"></div>
-                <div class="sv-fp-col">
-                    <div class="sv-fp-col-label">CALLEES <span class="sv-fp-count">${callees.length}</span> ▶</div>
-                    ${calleeHtml}
-                </div>
-            </div>`;
-    }
-
-    view.appendChild(panel);
-
-    // Slide in
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => panel.classList.add('sv-fp-visible'));
-    });
-
-    // ── Event bindings ────────────────────────────────────────────────────────
-
-    panel.querySelector('.sv-fp-close')?.addEventListener('click', () => _svHideFocusPanel());
-
-    panel.querySelectorAll('.sv-fp-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const fi = parseInt(card.dataset.fpFuncIdx, 10);
-            const f = allFuncs[fi];
-            if (!f) return;
-
-            // Jump the code panel to this function
-            if (typeof jumpToFunc === 'function') {
-                jumpToFunc(f.label);
-            } else {
-                // Fallback: scan funcLineMap or use lineIdx heuristic
-                const li = (typeof codeState !== 'undefined' && codeState.funcLineMap?.[f.label]);
-                if (li !== undefined) _svJumpCodeToLine(li);
-            }
-
-            // Highlight the matching badge in the structure grid (if visible)
-            _svHighlightBadgeByName(f.label);
-
-            // Recurse: show callers/callees for the clicked card's function
-            const li2 = (typeof codeState !== 'undefined' && codeState.funcLineMap?.[f.label]) ?? 0;
-            _svShowFocusPanel(f.label, li2, -1);
-        });
-    });
-}
-
-/**
- * Remove the focus panel.
- * @param {boolean} immediate  — skip the slide-out animation (used on sv-view close)
- */
-function _svHideFocusPanel(immediate) {
-    const existing = document.getElementById('sv-focus-panel');
-    if (!existing) return;
-    if (immediate) {
-        existing.remove();
-    } else {
-        existing.classList.remove('sv-fp-visible');
-        setTimeout(() => existing.remove(), 220);
-    }
-}
 
 /**
  * Highlight the badge matching `name` in the structure grid and scroll it into view.

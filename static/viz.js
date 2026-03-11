@@ -3131,6 +3131,14 @@ function renderCode(src, ext, fname, langHint) {
     wrap.style.display = '';
     
     wrap.onclick = (e) => {
+        if (window._sv && window._sv.active && typeof window.svHighlightLine === 'function') {
+            const lineEl = e.target.closest('.code-line');
+            if (lineEl && typeof lineEl.id === 'string' && lineEl.id.startsWith('cl-')) {
+                const lineIdx = parseInt(lineEl.id.slice(3), 10);
+                if (!Number.isNaN(lineIdx)) window.svHighlightLine(lineIdx);
+            }
+        }
+
         let range;
         if (document.caretRangeFromPoint) {
             range = document.caretRangeFromPoint(e.clientX, e.clientY);
@@ -6831,6 +6839,7 @@ function buildLegend() {
 // Call after any graph (re)render in L1. Reads cy elements and shows only the
 // edge types / node shapes that actually appear in the current view.
 function refreshLegend() {
+    if (window._sv && window._sv.active) return;
     // 1. Collect edge el-keys present in the graph
     const usedEdgeKeys = new Set();
     cy.edges().forEach(edge => {
