@@ -13,11 +13,11 @@ dependency/call-graph. Key files:
 
 | File | Role |
 |------|------|
-| `server.py` | HTTP server. Serves static files, handles `/file`, `/search`, `/analyze` API |
+| `server.py` | HTTP server. Serves static files, handles `/file`, `/search`, `/analyze`, `/structure` API |
 | `analyze_viz.py` | Walks the project, builds `DATA` (nodes + edges). Entry: `build_graph(root)` |
 | `viz.js` | Main frontend logic (~7600 lines). State, Cytoscape graph, code panel |
 | `viz.css` | Main stylesheet |
-| `struct_view.js` | Structure View plugin (~700 lines). Loaded as a separate `<script>` |
+| `struct_view.js` | Structure View plugin (~1100 lines). Loaded as a separate `<script>` |
 | `struct_view.css` | Structure View stylesheet. Loaded as a separate `<link>` |
 
 ---
@@ -62,6 +62,7 @@ _sv            // struct_view.js internal state (window._sv)
   ._fname      // filename
   .active      // true when sv-view is showing
   .classes     // last parsed class list
+  ._renderToken // increments on each render to cancel stale async fetches
 ```
 
 ---
@@ -90,108 +91,147 @@ window.svToggleStructView()                // button click handler
 // Internal
 _svRender(src, ext, fname)        // top-level renderer — parses + builds the grid
 _svParseClasses(src, ext)         // dispatches to _parsePython / _parseCpp / etc.
-_svShowFocusPanel(name, line, ci) // ← NEW (v2.1) — shows inline Callers/Callees panel
-_svHideFocusPanel(immediate?)     // ← NEW
-_svHighlightBadgeByName(name)     // ← NEW
+_svShowFocusPanel(name, line, ci) // shows inline Callers/Callees panel
+_svHideFocusPanel(immediate?)
+_svHighlightBadgeByName(name)
+_svFetchAndApplyCrossFile(token, classes, svg, scroll, grid)  // async, fetches /structure
+_svApplyCrossFileData(crossData, classes, svg, scroll, grid)  // renders ghost boxes + arrows
+_svDrawArrows(classes, svg, scroll)  // draws local class-to-class arrows
 ```
 
 ---
 
-## What Was Just Implemented (Diff #2 — Focus Panel)
+## What Was Implemented — Session 3 (Gap #1: Cross-file Arrows)
 
-### Problem (Gap #2)
-Clicking a method badge in Structure View only jumped the code panel to the line.
-There was no "who calls this / what does it call" information inline — the core
-Sourcetrail interaction was missing.
+### What works ✅
 
-### Solution
-When a **`.sv-method`** badge is clicked:
-1. Code panel jumps to line (existing).
-2. A **Focus Panel** slides up from the bottom of `#sv-view`.
+**`server.py` — new `/structure` endpoint**
 
-The Focus Panel shows:
-```
-┌──────────────────────────────────────────────────────────┐
-│ ⬡ methodName  [PUBLIC]                              [✕] │
-├─────────────────────────┬────────────────────────────────┤
-│ ◀ CALLERS  (N)          │ CALLEES ▶  (N)                 │
-│  ◀ callerFunc1          │ calleeFunc1 ▶                  │
-│  ◀ callerFunc2          │ calleeFunc2 ▶                  │
-└─────────────────────────┴────────────────────────────────┘
-```
-
-**Clicking a card** → jumps code panel to that function + recursively updates the
-Focus Panel to show *that* function's callers/callees (depth-first browse).
-
-The Focus Panel is **fully self-contained** inside Structure View. It does NOT touch
-`drillToFile`, `focusFunc`, or any L2/Call Graph state — those are completely separate.
-The existing Call Graph button in the breadcrumb toolbar remains the only entry point
-to the L2 call-graph view.
-
-**Graceful degradation**: if `window.DATA.funcs_by_file` is absent (no server, or
-file has no parsed functions) the panel shows an info strip instead of crashing.
-
-### Files Changed
-
-- **`struct_view.js`**: 3 surgical edits + ~130 lines appended
-  - `svUpdateStructureBtn` — now stores `_sv._fileRel = fileRel`
-  - `svHideSvView` — calls `_svHideFocusPanel(true)` before clearing innerHTML
-  - `_svAttachBadgeHandlers` — `.sv-method` clicks trigger `_svShowFocusPanel()`; field/class-header clicks only jump (no panel)
-  - Appended: `_svShowFocusPanel`, `_svHideFocusPanel`, `_svOpenInCallGraph`, `_svHighlightBadgeByName`
-
-- **`struct_view.css`**: ~130 lines appended
-  - All new selectors are prefixed `sv-fp-*`
-  - The existing `.sv-jump-highlight` / `.sv-active-badge` etc. are untouched
-
-No changes to `viz.js`, `server.py`, or `analyze_viz.py`.
-
----
-
-## Remaining Gaps (from original analysis)
-
-### Gap #1 — Cross-file arrows in Structure View (Priority ★★★)
-
-**Problem**: `struct_view.js` re-parses the current file with regex, completely ignoring
-the cross-file import/inheritance edges that `analyze_viz.py` already computed.
-
-**What to build**:
-1. Add `GET /structure?job=JOB_ID&file=REL_PATH` endpoint in `server.py`.
-   Query `JOBS[jid]['data']` for `funcs_by_file[file]`, `func_edges_by_file[file]`,
-   and any edges in `data['edges']` where source or target is this file.
-2. In `struct_view.js`, after opening sv-view, fetch this endpoint.
-   Merge the returned cross-file class references into the arrow-drawing pass
-   (`_svDrawArrows`), adding a new arrow type `sv-arrow-cross-file`.
-3. Add a `sv-arrow-cross-file` style in `struct_view.css` (e.g. orange dashed).
-
-**Data available in `JOBS[jid]['data']`** (produced by `build_graph`):
-```python
-data = {
-  'funcs_by_file': { rel_path: [{ 'label', 'is_public', ... }] },
-  'func_edges_by_file': { rel_path: [{ 's': int, 't': int }] },
-  'edges': [ { 'source': file_id, 'target': file_id, 'type': edge_type } ],
-  'files_by_module': { mod_id: [{ 'id', 'path', 'label', ... }] },
+`GET /structure?job=JID&file=rel/path.py` returns:
+```json
+{
+  "funcs": [...],
+  "func_edges": [...],
+  "imports":     [{ id, path, label, ext, edge_type, ... }],
+  "imported_by": [{ id, path, label, ext, edge_type, ... }],
+  "class_map":   { "ClassName": { path, label, edge_type, direction } }
 }
 ```
 
-### Gap #3 — Layer navigation breadcrumb in Structure View (Priority ★★)
+**Neighbour discovery — two strategies:**
+- **Strategy A**: pre-computed `file_edges_by_module` (works when Python dotted imports resolve)
+- **Strategy B**: cross-reference `func_calls_by_file[rel]` vs `funcs_by_file[other]` — counts how many function names in this file match functions defined in each other file. Accepts a neighbour only if `count >= MIN_CALLS` (default 2). **This is the main strategy for Python projects** because dotted imports (`from core.engine import Engine`) often fail to resolve in Strategy A.
 
-**Problem**: There's no way to navigate from a class box up to "which files import
-this file" or down to the file-level import graph.
+**Anti-false-positive filters:**
+- `is_public` fallback: Python parser marks all functions `is_public=False` (known `is_static` bug in `python_parser.py`). If a file has zero public funcs, the endpoint uses ALL its funcs instead.
+- Same-module filter: only files in the **same top-level module** as the current file are considered (uses `file_to_module` map). This prevents VIZCODE's own static files (`viz.js`, `analyze_viz.py`) from appearing as ghost boxes.
+- Reverse direction uses `MIN_CALLS_REVERSE = 3` (higher threshold) to reduce noise.
 
-**What to build**: A mini breadcrumb in `.sv-header` showing
-`project → filename → [selected class]`. Clicking `filename` fires
-`loadFileInPanel(fileRel)` to re-sync the code panel. No new API needed.
+**Class detection regex** (scans neighbour source files):
+```python
+_CLASS_RE = re.compile(
+    r'^[ \t]*(?:export\s+)?(?:abstract\s+)?(?:default\s+)?class\s+(\w+)'  # JS/TS
+    r'|^class\s+(\w+)'                                                      # Python
+    r'|^[ \t]*(?:class|struct)\s+(\w+)\b'                                  # C/C++
+    r'|^type\s+(\w+)\s+struct\b',                                           # Go
+    re.MULTILINE,
+)
+```
+
+**`struct_view.js` — ghost boxes + cross-file arrows**
+
+- After local render, fetches `/structure` async (with `_renderToken` race protection).
+- Shows pulse loading pill in sv-header during fetch.
+- Renders "↗ External Dependencies" separator + ghost boxes below the local class grid.
+- Ghost box shows: direction badge (`→ imports` / `← imported by`), filename, detected class badges, `↗ open file` button.
+- `open file` button calls `loadFileInPanel(path)` + `openCodePanel()` — does NOT call `drillToFile` (which would exit Structure View).
+
+**Arrow geometry:**
+- Field badge → ghost box (same row): horizontal S-curve from badge right-center
+- Field badge → ghost box (different row): elbow curve down then across
+- Box → ghost box: vertical waterfall curve (bottom-center → top-center)
+
+**`struct_view.css`** — new selectors (all prefixed `sv-ghost-` or `sv-cf-`):
+- `.sv-cf-loading` — pulse pill during fetch
+- `.sv-ghost-separator` — "↗ External Dependencies" divider
+- `.sv-ghost-box` — orange dashed ghost file box
+- `.sv-ghost-hdr`, `.sv-ghost-dir-badge`, `.sv-ghost-class-badge`, `.sv-ghost-nav-btn`
+- `.sv-arrow-cross-file` — orange dashed SVG path
+
+---
+
+### What does NOT work yet ⚠️
+
+**Cross-file arrow precision (Sourcetrail-style field-badge origins)**
+
+The goal was: arrow starts from the specific **field badge** whose name matches the
+ghost class (e.g. `cache` field → `LRUCache` ghost box).
+
+**The matching logic is implemented** in `_svApplyCrossFileData` using fuzzy substring
+matching (`_findClassMatch`):
+- Exact: `cache == cache`
+- Class contains field: `LRUCache`.includes(`cache`) ✅
+- Field contains class: `scheduler_instance`.includes(`scheduler`)
+
+**But the arrows are still drawing from the box bottom-center, not from field badges.**
+
+Root cause not yet confirmed. Two likely suspects:
+
+1. **`data-sv-name` attribute mismatch** — the field badge query is:
+   ```js
+   boxEl.querySelector(`.sv-field[data-sv-name="${esc}"]`)
+   ```
+   The field name stored in `cls.fields[].name` might differ from what was rendered
+   (e.g. `_cache` vs `cache` after stripping, or HTML-escaped vs raw).
+   **Debug step**: `console.log` the `f.name` values from `cls.fields` and check
+   what `data-sv-name` values actually exist in the DOM.
+
+2. **`isField` flag not propagating** — `_addArrow` stores `isField`, but the arrow
+   drawing code branches on it. If `fieldBadge` querySelector returns null, `isField`
+   is `false` and it falls back to box geometry.
+
+**To verify**: open browser DevTools → Console, add after the ghost box render:
+```js
+document.querySelectorAll('.sv-field').forEach(b => console.log(b.dataset.svName));
+```
+Compare those values to `cls.fields[].name` from `_sv.classes`.
+
+---
+
+## Remaining Gaps
+
+### Gap #1 — Cross-file arrow precision (Partially done, arrow origin not from badge)
+See "What does NOT work yet" above. Core logic is correct, debug needed on DOM selector.
+
+### Gap #2 — Focus Panel ✅ DONE (previous session)
+Clicking `.sv-method` badge opens inline Callers/Callees panel at bottom of sv-view.
+
+### Gap #3 — Breadcrumb navigation in Structure View (Priority ★★)
+
+**Problem**: No way to navigate from class box → file-level import graph.
+
+**What to build**: Mini breadcrumb in `.sv-header`:
+`project → module → filename → [selected class]`
+Clicking `filename` fires `loadFileInPanel(fileRel)`. No new API needed.
 
 ### Gap #4 — Clickable symbols in code panel → highlight badge (Priority ★★)
 
-**Problem**: The reverse direction (Code → Structure) only works at the line level.
-Identifiers in the rendered code aren't individually clickable.
+**Problem**: Code → Structure direction only works at line level. Individual identifiers
+in the rendered code are not clickable.
 
 **What to build**:
-1. After `renderCode()` runs, iterate `codeState.funcList` and wrap each
-   matching identifier `<span>` in the code with `data-sym-name`.
-2. Add a delegated `click` listener on `#cp-code-wrap` that calls
-   `svHighlightBadgeByName(name)` (already exists in struct_view.js).
+1. After `renderCode()`, iterate `codeState.funcList`, wrap matching `<span>` with `data-sym-name`.
+2. Delegated click on `#cp-code-wrap` → `svHighlightBadgeByName(name)`.
+
+---
+
+## Known Bugs / Tech Debt
+
+| Bug | File | Notes |
+|-----|------|-------|
+| `is_public` always `false` for Python | `python_parser.py` | `is_static=True` for all Python funcs → `is_public = not is_static = False`. Workaround in `/structure`: use all funcs if none are public. Real fix: patch `python_parser.py` |
+| Dotted import resolution fails | `analyze_viz.py` / parsers | `from core.engine import Engine` → `file_edges_by_module` empty. Strategy B works around this but is heuristic. |
+| `file_to_module` may not exist | `server.py` | `/structure` endpoint uses `graph_data.get('file_to_module', {})`. If this key is absent, same-module filter is skipped (silent degradation). Verify key exists in `build_graph` output. |
 
 ---
 
@@ -208,7 +248,7 @@ struct_view.js  ──calls──►  viz.js globals (checked with typeof guard)
     jumpToFunc(name)                     // jumps code panel
     openCodePanel()                      // ensures panel is open
     focusFunc(fileRel, idx)              // shows func-view
-    drillToFile(fileRel)                 // navigates to L2
+    drillToFile(fileRel)                 // navigates to L2  ← NOT used by ghost open-file
     state.level                          // read-only navigation level check
     l2State.activeFile                   // read-only
     DATA.funcs_by_file[fileRel]          // function list for focus panel
@@ -234,17 +274,17 @@ python vizcode.py /path/to/your/project
 
 ```
 vizcode.py          CLI launcher + TUI animation
-server.py           HTTP server (stdlib only, no Flask)
+server.py           HTTP server (stdlib only, no Flask)  ← modified session 3
 analyze_viz.py      Graph builder — dispatches to parsers/
 parsers/
   bios_parser.py    C/C++/UEFI parser
-  python_parser.py  Python parser
+  python_parser.py  Python parser  ← is_public bug lives here
   js_parser.py      JS/TS parser
   go_parser.py      Go parser
 detector.py         Project type auto-detection
 viz.js              Main frontend (~7600 lines)
 viz.css             Main stylesheet (~3000 lines)
-struct_view.js      Structure View plugin (~700 lines)  ← recently modified
-struct_view.css     Structure View styles (~250 lines)  ← recently modified
+struct_view.js      Structure View plugin (~1100 lines)  ← modified session 3
+struct_view.css     Structure View styles (~380 lines)   ← modified session 3
 launcher.html       Shell HTML that injects DATA + loads all scripts
 ```

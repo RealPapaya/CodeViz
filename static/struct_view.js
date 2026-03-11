@@ -18,6 +18,7 @@ const _sv = {
     _fname: '',       // cached filename
     _fileRel: '',     // current file rel path
     _activeBadge: null,
+    _renderToken: 0,  // incremented on each render — stale async results are dropped
 };
 window._sv = _sv;
 
@@ -412,8 +413,9 @@ function _svRender(src, ext, fname) {
     svg.id = 'sv-arrows';
     svg.setAttribute('aria-hidden', 'true');
     svg.innerHTML = `<defs>
-        <marker id="sv-ah-uses"    markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f59e0baa"/></marker>
-        <marker id="sv-ah-inherit" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#60a5faaa"/></marker>
+        <marker id="sv-ah-uses"       markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f59e0baa"/></marker>
+        <marker id="sv-ah-inherit"    markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#60a5faaa"/></marker>
+        <marker id="sv-ah-cross-file" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f97316cc"/></marker>
     </defs>`;
 
     const grid = document.createElement('div');
@@ -468,6 +470,9 @@ function _svRender(src, ext, fname) {
 
     _svAttachBadgeHandlers(scroll);
     requestAnimationFrame(() => _svDrawArrows(classes, svg, scroll));
+
+    // ── Async: fetch cross-file data from /structure endpoint ─────────────
+    _svFetchAndApplyCrossFile(++_sv._renderToken, classes, svg, scroll, grid);
 }
 
 // -- Badge click/hover → code panel sync ----------------------------------------
@@ -538,17 +543,26 @@ function _svDrawArrows(classes, svg, scroll) {
     const boxMap = {};
     classes.forEach((cls, i) => { boxMap[cls.name] = i; });
 
+    // arrows now carry optional anchorName so we can find the badge element
     const arrows = [];
     classes.forEach((cls, fi) => {
         cls.inherits.forEach(parent => {
             if (boxMap[parent] !== undefined)
-                arrows.push({ from: fi, to: boxMap[parent], type: 'inherit', targetLine: classes[boxMap[parent]].line });
+                arrows.push({
+                    from: fi, to: boxMap[parent], type: 'inherit',
+                    targetLine: classes[boxMap[parent]].line,
+                    anchorName: null,   // from class header (no specific badge)
+                });
         });
         cls.fields.forEach(f => {
             const clean = f.name.replace(/^_+|_+$/g, '');
             classes.forEach((other, ti) => {
                 if (ti !== fi && other.name.toLowerCase() === clean.toLowerCase())
-                    arrows.push({ from: fi, to: ti, type: 'uses', targetLine: f.line });
+                    arrows.push({
+                        from: fi, to: ti, type: 'uses',
+                        targetLine: f.line,
+                        anchorName: f.name,   // ← start from this specific field badge
+                    });
             });
         });
     });
@@ -559,17 +573,30 @@ function _svDrawArrows(classes, svg, scroll) {
     svg.style.width = scroll.scrollWidth + 'px';
     svg.style.height = scroll.scrollHeight + 'px';
 
-    arrows.forEach(({ from, to, type, targetLine }) => {
+    arrows.forEach(({ from, to, type, targetLine, anchorName }) => {
         const fe = document.getElementById(`sv-cls-${from}`);
         const te = document.getElementById(`sv-cls-${to}`);
         if (!fe || !te) return;
 
-        const fr = fe.getBoundingClientRect();
+        // Try to find the specific field badge as the arrow start point
+        let startEl = fe;
+        if (anchorName) {
+            const esc = anchorName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const badge = fe.querySelector(`.sv-field[data-sv-name="${esc}"]`);
+            if (badge) startEl = badge;
+        }
+
+        const sr = startEl.getBoundingClientRect();
         const tr = te.getBoundingClientRect();
-        const x1 = fr.right - scrollRect.left + scroll.scrollLeft;
-        const y1 = fr.top + fr.height / 2 - scrollRect.top + scroll.scrollTop;
-        const x2 = tr.left - scrollRect.left + scroll.scrollLeft;
-        const y2 = tr.top + tr.height / 2 - scrollRect.top + scroll.scrollTop;
+
+        // Start from right-center of the badge (or box)
+        const x1 = sr.right  - scrollRect.left + scroll.scrollLeft;
+        const y1 = sr.top + sr.height / 2 - scrollRect.top + scroll.scrollTop;
+        // End at left-center of target box header
+        const hdr = te.querySelector('.sv-class-hdr') || te;
+        const hr = hdr.getBoundingClientRect();
+        const x2 = hr.left  - scrollRect.left + scroll.scrollLeft;
+        const y2 = hr.top + hr.height / 2 - scrollRect.top + scroll.scrollTop;
         const cx = (x1 + x2) / 2;
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -584,9 +611,14 @@ function _svDrawArrows(classes, svg, scroll) {
             document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
             path.classList.add('sv-arrow-active');
             const fromBox = document.getElementById(`sv-cls-${from}`);
-            const toBox = document.getElementById(`sv-cls-${to}`);
+            const toBox   = document.getElementById(`sv-cls-${to}`);
             if (fromBox) fromBox.classList.add('sv-active-box');
-            if (toBox) toBox.classList.add('sv-active-box');
+            if (toBox)   toBox.classList.add('sv-active-box');
+            if (anchorName) {
+                const esc = anchorName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                const badge = fromBox?.querySelector(`.sv-field[data-sv-name="${esc}"]`);
+                if (badge) badge.classList.add('sv-active-badge');
+            }
             _svJumpCodeToLine(targetLine);
         });
 
@@ -768,6 +800,340 @@ function _svHighlightBadgeByName(name) {
     const classIdx = parseInt(badge.dataset.svClass, 10);
     const box = document.getElementById(`sv-cls-${classIdx}`);
     if (box) box.classList.add('sv-active-box');
+}
+
+// ── Cross-file arrows — Gap #1 ─────────────────────────────────────────────────
+
+/**
+ * Fetch /structure endpoint and apply ghost boxes + cross-file arrows.
+ * @param {number} token      — render token; stale fetches are discarded.
+ * @param {Array}  classes    — locally parsed class list from _svParseClasses.
+ * @param {SVGElement} svg    — the #sv-arrows SVG element.
+ * @param {HTMLElement} scroll — the .sv-scroll container.
+ * @param {HTMLElement} grid  — the #sv-grid element.
+ */
+async function _svFetchAndApplyCrossFile(token, classes, svg, scroll, grid) {
+    const jid = window.JOB_ID;
+    const fileRel = _sv._fileRel;
+    if (!jid || !fileRel) return;
+
+    // Show a subtle loading pill in the sv-header while fetching
+    const hdr = document.querySelector('#sv-view .sv-header');
+    let pill = null;
+    if (hdr) {
+        pill = document.createElement('span');
+        pill.className = 'sv-cf-loading';
+        pill.textContent = '↗ loading cross-file…';
+        hdr.appendChild(pill);
+    }
+
+    let crossData = null;
+    try {
+        const r = await fetch(
+            `/structure?job=${encodeURIComponent(jid)}&file=${encodeURIComponent(fileRel)}`
+        );
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        crossData = await r.json();
+    } catch (e) {
+        console.warn('[VIZCODE] /structure fetch failed:', e.message);
+    } finally {
+        pill && pill.remove();
+    }
+
+    // Check token: discard if the user navigated to another file
+    if (token !== _sv._renderToken) return;
+    if (!crossData || crossData.error) return;
+
+    _svApplyCrossFileData(crossData, classes, svg, scroll, grid);
+}
+
+/**
+ * Given cross-file data from /structure, inject ghost boxes into the grid and
+ * draw sv-arrow-cross-file SVG paths connecting local class boxes to ghost boxes.
+ *
+ * Ghost boxes are placed in a clearly labelled "External Dependencies" section
+ * appended after all local class boxes.
+ *
+ * @param {Object}     crossData — { funcs, func_edges, imports, imported_by, class_map }
+ * @param {Array}      classes   — locally parsed class array (index = box id)
+ * @param {SVGElement} svg
+ * @param {HTMLElement} scroll
+ * @param {HTMLElement} grid
+ */
+function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
+    const { class_map = {}, imports = [], imported_by = [] } = crossData;
+
+    // ── 1. Build ghost file map from ALL neighbours ────────────────────────
+    // Key insight: we draw arrows for EVERY imported/imported-by file,
+    // not just inheritance — because Python/JS uses composition, not just inherit.
+    const ghostFileMap = {}; // path → ghostFile record
+
+    // Helper: add or merge a file into ghostFileMap
+    const _addGhost = (f, direction) => {
+        if (!ghostFileMap[f.path]) {
+            ghostFileMap[f.path] = {
+                path: f.path, label: f.label,
+                edge_type: f.edge_type, direction,
+                classes: [],
+            };
+        }
+    };
+    imports.forEach(f => _addGhost(f, 'import'));
+    imported_by.forEach(f => _addGhost(f, 'imported_by'));
+
+    // Attach class names found via class_map
+    Object.entries(class_map).forEach(([cname, info]) => {
+        if (ghostFileMap[info.path]) {
+            const gf = ghostFileMap[info.path];
+            if (!gf.classes.find(c => c.name === cname)) {
+                gf.classes.push({ name: cname, edge_type: info.edge_type });
+            }
+        }
+    });
+
+    const ghostFiles = Object.values(ghostFileMap);
+    if (ghostFiles.length === 0) return;
+
+    // ── 2. Render separator + ghost boxes ─────────────────────────────────
+    const sep = document.createElement('div');
+    sep.className = 'sv-ghost-separator';
+    sep.innerHTML = `<span class="sv-ghost-sep-line"></span>
+        <span class="sv-ghost-sep-label">↗ External Dependencies</span>
+        <span class="sv-ghost-sep-line"></span>`;
+    grid.appendChild(sep);
+
+    const ghostBoxEls = {}; // fi → DOM element (for arrow drawing)
+
+    ghostFiles.forEach((gf, fi) => {
+        const dirIcon  = gf.direction === 'import' ? '→' : '←';
+        const dirLabel = gf.direction === 'import' ? 'imports' : 'imported by';
+
+        const box = document.createElement('div');
+        box.className = 'sv-ghost-box';
+        box.id = `sv-ghost-${fi}`;
+        ghostBoxEls[fi] = box;
+
+        let html = `
+        <div class="sv-ghost-hdr" title="${_svEsc(gf.path)}">
+            <span class="sv-ghost-dir-badge">${dirIcon} ${dirLabel}</span>
+            <span class="sv-ghost-fname">${_svEsc(gf.label)}</span>
+            ${gf.classes.length > 0 ? `<span class="sv-ghost-count">${gf.classes.length}</span>` : ''}
+        </div>`;
+
+        if (gf.classes.length > 0) {
+            html += `<div class="sv-ghost-classes">
+                ${gf.classes.map(gc =>
+                    `<span class="sv-ghost-class-badge" title="${_svEsc(gf.path)}">${_svEsc(gc.name)}</span>`
+                ).join('')}
+            </div>`;
+        } else {
+            html += `<div class="sv-ghost-no-classes">no classes detected</div>`;
+        }
+
+        // "open file" button — uses loadFileInPanel (code panel only, no nav change)
+        html += `<button class="sv-ghost-nav-btn" data-gpath="${_svEsc(gf.path)}"
+            title="Open in code panel">↗ open file</button>`;
+
+        box.innerHTML = html;
+        grid.appendChild(box);
+    });
+
+    // ── 3. Attach open-file handlers ───────────────────────────────────────
+    // Use loadFileInPanel to open in code panel without changing navigation level.
+    // Falls back to openCodePanel + fetch if loadFileInPanel not available.
+    grid.querySelectorAll('.sv-ghost-nav-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const p = btn.dataset.gpath;
+            if (!p) return;
+            if (typeof loadFileInPanel === 'function') {
+                loadFileInPanel(p);
+                if (typeof openCodePanel === 'function') openCodePanel();
+            } else if (typeof openCodePanel === 'function') {
+                openCodePanel();
+            }
+            // Visual feedback
+            btn.textContent = '✓ opened';
+            setTimeout(() => { btn.textContent = '↗ open file'; }, 1500);
+        });
+    });
+
+    // ── 4. Build precise cross-file arrows from field badges ──────────────
+    //
+    // Strategy (Sourcetrail-style):
+    //   a) Check each local class field — if its name (stripped of _) matches
+    //      a class name in class_map → draw arrow FROM that field badge
+    //   b) Check cls.inherits against class_map → draw from class header badge
+    //   c) Fallback: one arrow from last local class box to each import ghost
+    //      (only used if (a) and (b) produce nothing)
+
+    const pathToFi = {};
+    ghostFiles.forEach((gf, fi) => { pathToFi[gf.path] = fi; });
+
+    const localNames = new Set(classes.map(c => c.name));
+    const crossArrows = []; // { fromEl, toEl, label, isField }
+    const seenPairs   = new Set(); // "fromElId|toElId" dedup
+
+    const localBoxEls = {};
+    classes.forEach((_, i) => {
+        const el = document.getElementById(`sv-cls-${i}`);
+        if (el) localBoxEls[i] = el;
+    });
+
+    // Helper: add arrow deduped
+    const _addArrow = (fromEl, toEl, label, isField = false) => {
+        const key = `${fromEl.id || fromEl.dataset?.svName}|${toEl.id}`;
+        if (seenPairs.has(key)) return;
+        seenPairs.add(key);
+        crossArrows.push({ fromEl, toEl, label, isField });
+    };
+
+    // Build case-insensitive class_map lookup array for fuzzy matching
+    const classMapEntries = Object.entries(class_map).map(([cname, info]) => ({
+        cname, info, lower: cname.toLowerCase()
+    }));
+
+    // Find best ghost class match for a field name:
+    // Priority: 1) exact, 2) class contains field, 3) field contains class
+    const _findClassMatch = (fieldClean) => {
+        const fl = fieldClean.toLowerCase();
+        let exact = null, classContains = null, fieldContains = null;
+        for (const entry of classMapEntries) {
+            if (entry.lower === fl) { exact = entry; break; }
+            if (!classContains && entry.lower.includes(fl)) classContains = entry;
+            if (!fieldContains && fl.includes(entry.lower) && entry.lower.length > 2) fieldContains = entry;
+        }
+        return exact || classContains || fieldContains || null;
+    };
+
+    classes.forEach((cls, ci) => {
+        const boxEl = localBoxEls[ci];
+        if (!boxEl) return;
+
+        // (a) Field badges → ghost class (fuzzy: cache → LRUCache, scheduler → TaskScheduler)
+        cls.fields.forEach(f => {
+            const clean = f.name.replace(/^_+|_+$/g, '');
+            if (clean.length < 2) return;
+            const match = _findClassMatch(clean);
+            if (!match) return;
+            const fi = pathToFi[match.info.path];
+            if (fi === undefined) return;
+            const toEl = ghostBoxEls[fi];
+            if (!toEl) return;
+
+            // Find the specific field badge element
+            const esc = f.name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const fieldBadge = boxEl.querySelector(`.sv-field[data-sv-name="${esc}"]`);
+            const fromEl = fieldBadge || boxEl;
+            _addArrow(fromEl, toEl, `${f.name} → ${match.cname}`, !!fieldBadge);
+        });
+
+        // (b) Inheritance → ghost class
+        cls.inherits.forEach(parent => {
+            if (localNames.has(parent)) return;
+            const match = _findClassMatch(parent);
+            if (!match) return;
+            const fi = pathToFi[match.info.path];
+            if (fi === undefined) return;
+            const toEl = ghostBoxEls[fi];
+            if (!toEl) return;
+            const hdr = boxEl.querySelector('.sv-class-hdr') || boxEl;
+            _addArrow(hdr, toEl, `extends ${parent}`, false);
+        });
+    });
+
+    // (c) Fallback: if no field/inherit matches found, one arrow per import ghost
+    if (crossArrows.length === 0) {
+        ghostFiles.forEach((gf, fi) => {
+            if (gf.direction !== 'import') return;
+            const toEl = ghostBoxEls[fi];
+            if (!toEl) return;
+            const lastIdx = classes.length - 1;
+            const fromEl = localBoxEls[lastIdx] || localBoxEls[0];
+            if (fromEl) _addArrow(fromEl, toEl, 'uses', false);
+        });
+    }
+
+    if (crossArrows.length === 0) return;
+
+    // ── 5. Draw arrows after layout ────────────────────────────────────────
+    requestAnimationFrame(() => {
+        svg.style.width  = scroll.scrollWidth  + 'px';
+        svg.style.height = scroll.scrollHeight + 'px';
+        const scrollRect = scroll.getBoundingClientRect();
+
+        crossArrows.forEach(({ fromEl, toEl, label, isField }) => {
+            const fr = fromEl.getBoundingClientRect();
+            const tr = toEl.getBoundingClientRect();
+
+            let x1, y1, x2, y2, d;
+
+            if (isField) {
+                // Field badge → ghost box: right-center → left-center (horizontal)
+                x1 = fr.right  - scrollRect.left + scroll.scrollLeft;
+                y1 = fr.top + fr.height / 2 - scrollRect.top + scroll.scrollTop;
+                x2 = tr.left   - scrollRect.left + scroll.scrollLeft;
+                y2 = tr.top + tr.height / 2 - scrollRect.top + scroll.scrollTop;
+                // If target is below: curve down; if same row: horizontal S-curve
+                const dy = y2 - y1;
+                const dx = x2 - x1;
+                if (Math.abs(dy) < 40) {
+                    // Same row — simple horizontal bezier
+                    const cx = (x1 + x2) / 2;
+                    d = `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+                } else {
+                    // Different row — elbow down then across
+                    const cx1 = x1 + Math.min(dx * 0.4, 80);
+                    const cy1 = y1 + dy * 0.5;
+                    const cx2 = x2 - 20;
+                    const cy2 = y2;
+                    d = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
+                }
+            } else {
+                // Box/header → ghost box: bottom-center → top-center (vertical)
+                x1 = fr.left + fr.width  / 2 - scrollRect.left + scroll.scrollLeft;
+                y1 = fr.bottom              - scrollRect.top  + scroll.scrollTop;
+                x2 = tr.left + tr.width  / 2 - scrollRect.left + scroll.scrollLeft;
+                y2 = tr.top                   - scrollRect.top  + scroll.scrollTop;
+                const dy = Math.abs(y2 - y1);
+                d = `M${x1},${y1} C${x1},${y1 + dy * 0.5} ${x2},${y2 - dy * 0.3} ${x2},${y2}`;
+            }
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            path.classList.add('sv-arrow', 'sv-arrow-cross-file');
+            path.setAttribute('marker-end', 'url(#sv-ah-cross-file)');
+            path.style.pointerEvents = 'stroke';
+            path.style.cursor = 'pointer';
+            path.setAttribute('title', label);
+
+            path.addEventListener('click', e => {
+                e.stopPropagation();
+                document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
+                path.classList.add('sv-arrow-active');
+                // Highlight origin badge (field) and target box
+                fromEl.classList.add(isField ? 'sv-active-badge' : 'sv-active-box');
+                toEl.classList.add('sv-active-box');
+            });
+
+            svg.appendChild(path);
+        });
+    });
+}
+
+/**
+ * Map edge_type string to a representative colour for ghost box styling.
+ */
+function _svEdgeTypeColor(edgeType) {
+    const map = {
+        import:    '#10b981',
+        include:   '#c084fc',
+        library:   '#a78bfa',
+        package:   '#00d4ff',
+        component: '#60a5fa',
+        inherit:   '#60a5fa',
+    };
+    return map[edgeType] || '#64748b';
 }
 
 console.log('[VIZCODE] struct_view.js v2 loaded');

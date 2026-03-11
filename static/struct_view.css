@@ -584,3 +584,205 @@
 #struct-toggle-btn.active {
     background: rgba(245, 158, 11, .08);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Gap #1 — Cross-file arrows & Ghost boxes  (v3 addition)
+   Ghost boxes represent classes/files from neighbouring (imported/imported-by)
+   files.  They are rendered in a separate "External Dependencies" section below
+   the local class grid.  Cross-file inheritance arrows connect local class boxes
+   to ghost boxes using the sv-arrow-cross-file path style.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Loading pill shown in sv-header while /structure fetches ─────────────── */
+.sv-cf-loading {
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    padding: 2px 8px;
+    border: 1px solid var(--border, #2a2d3a);
+    border-radius: 10px;
+    animation: sv-cf-pulse 1.4s ease-in-out infinite;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+@keyframes sv-cf-pulse {
+    0%, 100% { opacity: .45; }
+    50%       { opacity: 1;   }
+}
+
+/* ── Separator between local and ghost sections ───────────────────────────── */
+.sv-ghost-separator {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 0 8px;
+    flex-basis: 100%;   /* force it onto its own row in the flex grid */
+}
+
+.sv-ghost-sep-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border, #2a2d3a);
+    opacity: .6;
+}
+
+.sv-ghost-sep-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #f97316bb;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* ── Ghost class box ─────────────────────────────────────────────────────── */
+.sv-ghost-box {
+    background: rgba(249, 115, 22, .04);
+    border: 1px dashed rgba(249, 115, 22, .35);
+    border-radius: 10px;
+    min-width: 180px;
+    max-width: 260px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, .25);
+    flex-shrink: 0;
+    opacity: .85;
+    transition: opacity .2s, border-color .2s, box-shadow .2s;
+}
+
+.sv-ghost-box:hover {
+    opacity: 1;
+    border-color: rgba(249, 115, 22, .65);
+    box-shadow: 0 4px 20px rgba(249, 115, 22, .12);
+}
+
+/* Header row inside ghost box */
+.sv-ghost-hdr {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    background: rgba(249, 115, 22, .07);
+    border-bottom: 1px dashed rgba(249, 115, 22, .2);
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.sv-ghost-dir-badge {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #f97316cc;
+    background: rgba(249, 115, 22, .12);
+    border: 1px solid rgba(249, 115, 22, .3);
+    border-radius: 8px;
+    padding: 1px 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.sv-ghost-fname {
+    font-family: var(--code-font, 'JetBrains Mono', monospace);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg, #e2e8f0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    opacity: .75;
+}
+
+.sv-ghost-count {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    color: #f97316cc;
+    background: rgba(249, 115, 22, .12);
+    border: 1px solid rgba(249, 115, 22, .3);
+    border-radius: 8px;
+    padding: 1px 6px;
+}
+
+/* Class badges inside ghost box */
+.sv-ghost-classes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 12px;
+}
+
+.sv-ghost-class-badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 20px;
+    border: 1px solid rgba(249, 115, 22, .45);
+    background: rgba(249, 115, 22, .10);
+    color: #fb923c;
+    font-size: 11px;
+    font-family: var(--code-font, monospace);
+    white-space: nowrap;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+    transition: background .15s;
+}
+
+.sv-ghost-class-badge:hover {
+    background: rgba(249, 115, 22, .18);
+}
+
+/* Empty hint when no classes parsed from neighbour file */
+.sv-ghost-no-classes {
+    padding: 6px 12px 8px;
+    font-size: 10px;
+    color: var(--muted, #64748b);
+    font-style: italic;
+}
+
+/* "open file" nav button at bottom of ghost box */
+.sv-ghost-nav-btn {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 4px 12px 10px;
+    padding: 4px 0;
+    background: none;
+    border: 1px solid rgba(249, 115, 22, .25);
+    border-radius: 6px;
+    color: #f97316aa;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    text-align: center;
+    transition: background .15s, color .15s, border-color .15s;
+}
+
+.sv-ghost-nav-btn:hover {
+    background: rgba(249, 115, 22, .1);
+    color: #fb923c;
+    border-color: rgba(249, 115, 22, .5);
+}
+
+/* ── Cross-file arrow path style ─────────────────────────────────────────── */
+.sv-arrow-cross-file {
+    stroke: #f9731688;
+    stroke-dasharray: 7 4;
+    stroke-width: 1.5px;
+}
+
+.sv-arrow-cross-file:hover {
+    stroke: #f97316cc;
+    stroke-width: 2.5px;
+}
+
+/* Active cross-file arrow */
+.sv-arrow-cross-file.sv-arrow-active {
+    stroke: #f97316ee !important;
+    stroke-width: 3px !important;
+    filter: drop-shadow(0 0 5px #f9731688);
+}

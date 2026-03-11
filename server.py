@@ -736,6 +736,172 @@ class Handler(BaseHTTPRequestHandler):
             _sse({'done': True, 'total_matches': total_matches,
                   'total_files': total_files, 'indexed': using_index})
 
+        elif p == '/structure':
+            # ── Structure View cross-file data ────────────────────────────────
+            # GET /structure?job=JID&file=rel/path.py
+            MIN_CALLS = 2   # minimum function matches to accept a neighbour
+
+            jid = qs.get('job', [''])[0]
+            rel = qs.get('file', [''])[0]
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+            graph_data = job.get('data')
+            root_dir   = job.get('root', '')
+
+            if not graph_data or not root_dir or not rel:
+                self.json_resp({'error': 'Missing job, file, or data not ready'}, 400)
+                return
+
+            # ── Build id↔rel maps ─────────────────────────────────────────────
+            id_to_file: dict = {}
+            rel_to_id_map: dict = {}
+            this_file_id = None
+            for mod_files in graph_data.get('files_by_module', {}).values():
+                for f in mod_files:
+                    id_to_file[f['id']] = f
+                    rel_to_id_map[f.get('path', '')] = f['id']
+                    if f.get('path') == rel:
+                        this_file_id = f['id']
+
+            if this_file_id is None:
+                self.json_resp({
+                    'funcs': [], 'func_edges': [],
+                    'imports': [], 'imported_by': [], 'class_map': {},
+                })
+                return
+
+            # ── Strategy A: pre-computed file-level edges ──────────────────────
+            seen_tgt: set = set()
+            seen_src: set = set()
+            neighbor_edge_type: dict = {}
+
+            for mod_edges in graph_data.get('file_edges_by_module', {}).values():
+                for e in mod_edges:
+                    if e['s'] == this_file_id and e['t'] not in seen_tgt:
+                        seen_tgt.add(e['t'])
+                        neighbor_edge_type[e['t']] = e.get('type', 'import')
+                    elif e['t'] == this_file_id and e['s'] not in seen_src:
+                        seen_src.add(e['s'])
+                        neighbor_edge_type[e['s']] = e.get('type', 'import')
+
+            # ── Strategy B: function-call cross-file detection ─────────────────
+            # Build per-file function sets.
+            # NOTE: Python parser marks everything is_public=False (is_static bug).
+            # Fallback: if a file has NO public funcs, use ALL its funcs instead.
+            funcs_by_file_data = graph_data.get('funcs_by_file', {})
+
+            def _func_set(f_rel):
+                funcs = funcs_by_file_data.get(f_rel, [])
+                pub = {f['label'] for f in funcs if f.get('is_public', False)}
+                return pub if pub else {f['label'] for f in funcs}
+
+            # Build rel → module map for filtering
+            file_to_module = graph_data.get('file_to_module', {})
+            this_module = file_to_module.get(rel, '')
+
+            func_calls_by_file_data = graph_data.get('func_calls_by_file', {})
+
+            # Forward: which files does THIS file call into?
+            # Only consider files in the SAME project module tree (share a top-level dir)
+            # to avoid matching VIZCODE's own static files (viz.js, analyze_viz.py, etc.)
+            call_counts: dict = {}   # other_rel → match count
+            for call_list in func_calls_by_file_data.get(rel, []):
+                if not isinstance(call_list, list):
+                    continue
+                for call_name in call_list:
+                    for other_rel, func_set in (
+                        (r, _func_set(r)) for r in funcs_by_file_data if r != rel
+                    ):
+                        # Skip files from unrelated top-level modules
+                        other_mod = file_to_module.get(other_rel, '')
+                        if this_module and other_mod and other_mod != this_module:
+                            continue
+                        if call_name in func_set:
+                            call_counts[other_rel] = call_counts.get(other_rel, 0) + 1
+
+            for other_rel, cnt in call_counts.items():
+                if cnt < MIN_CALLS:
+                    continue
+                other_id = rel_to_id_map.get(other_rel)
+                if other_id is None or other_id in seen_tgt:
+                    continue
+                seen_tgt.add(other_id)
+                neighbor_edge_type[other_id] = 'calls'
+
+            # Reverse: which files call INTO this file?
+            # Use a higher threshold (3) for reverse direction to reduce noise —
+            # many files might incidentally call 2 generic functions.
+            MIN_CALLS_REVERSE = max(MIN_CALLS, 3)
+            this_funcs = _func_set(rel)
+            if this_funcs:
+                for other_rel, call_lists in func_calls_by_file_data.items():
+                    if other_rel == rel:
+                        continue
+                    other_id = rel_to_id_map.get(other_rel)
+                    if other_id is None or other_id in seen_src:
+                        continue
+                    # Same-module filter for reverse direction
+                    other_mod = file_to_module.get(other_rel, '')
+                    if this_module and other_mod and other_mod != this_module:
+                        continue
+                    cnt = sum(
+                        len(this_funcs.intersection(cl))
+                        for cl in call_lists if isinstance(cl, list)
+                    )
+                    if cnt >= MIN_CALLS_REVERSE:
+                        seen_src.add(other_id)
+                        neighbor_edge_type.setdefault(other_id, 'calls')
+
+            # ── Assemble lists ─────────────────────────────────────────────────
+            imports = [
+                dict(**id_to_file[nid], edge_type=neighbor_edge_type.get(nid, 'import'))
+                for nid in seen_tgt if nid in id_to_file
+            ]
+            imported_by = [
+                dict(**id_to_file[nid], edge_type=neighbor_edge_type.get(nid, 'import'))
+                for nid in seen_src if nid in id_to_file
+            ]
+
+            # ── Scan neighbour sources for class definitions ────────────────────
+            import re as _re
+            _CLASS_RE = _re.compile(
+                r'^[ \t]*(?:export\s+)?(?:abstract\s+)?(?:default\s+)?class\s+(\w+)'
+                r'|^class\s+(\w+)'
+                r'|^[ \t]*(?:class|struct)\s+(\w+)\b'
+                r'|^type\s+(\w+)\s+struct\b',
+                _re.MULTILINE,
+            )
+
+            class_map: dict = {}
+            for nid in (seen_tgt | seen_src):
+                nf = id_to_file.get(nid)
+                if not nf:
+                    continue
+                npath = nf.get('path', '')
+                abs_path = os.path.normpath(os.path.join(root_dir, npath))
+                direction = 'import' if nid in seen_tgt else 'imported_by'
+                try:
+                    src_txt = Path(abs_path).read_text(encoding='utf-8', errors='replace')
+                    for m in _CLASS_RE.finditer(src_txt):
+                        cname = m.group(1) or m.group(2) or m.group(3) or m.group(4)
+                        if cname and cname not in class_map:
+                            class_map[cname] = {
+                                'path':      npath,
+                                'label':     nf.get('label', npath),
+                                'edge_type': neighbor_edge_type.get(nid, 'import'),
+                                'direction': direction,
+                            }
+                except Exception:
+                    pass
+
+            self.json_resp({
+                'funcs':       graph_data.get('funcs_by_file',      {}).get(rel, []),
+                'func_edges':  graph_data.get('func_edges_by_file', {}).get(rel, []),
+                'imports':     imports,
+                'imported_by': imported_by,
+                'class_map':   class_map,
+            })
+
         elif p == '/jobs':
             with JOBS_LOCK:
                 snapshot = [(k, {kk: vv for kk, vv in v.items() if kk != 'data'})
@@ -887,5 +1053,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
