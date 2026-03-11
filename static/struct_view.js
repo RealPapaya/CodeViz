@@ -68,9 +68,12 @@ window.svShowSvView = function () {
     if (fv) fv.classList.remove('active');
 
     // Hide irrelevant panels
-    ['l1-toolbar', 'l2-toolbar', 'layout-selector', 'legend'].forEach(id => {
+    ['l1-toolbar', 'l2-toolbar', 'layout-switcher', 'graph-legend', 'l2-legend'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.style.opacity = '0';
+        if (el) {
+            el.style.opacity = '0';
+            el.style.pointerEvents = 'none';
+        }
     });
     // Turn off Call Graph button active state
     const cgBtn = document.getElementById('graph-toggle-btn');
@@ -94,9 +97,12 @@ window.svHideSvView = function () {
     document.getElementById('cy').style.display = '';
 
     // Restore irrelevant panels (viz.js will handle display block/none logic, we just restore opacity)
-    ['l1-toolbar', 'l2-toolbar', 'layout-selector', 'legend'].forEach(id => {
+    ['l1-toolbar', 'l2-toolbar', 'layout-switcher', 'graph-legend', 'l2-legend'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.style.opacity = '';
+        if (el) {
+            el.style.opacity = '';
+            el.style.pointerEvents = '';
+        }
     });
 
     // Restore Call Graph button active state if we are in L2
@@ -471,9 +477,9 @@ function _svAttachBadgeHandlers(container) {
         const badge = e.target.closest('[data-sv-line]');
         if (!badge) return;
         e.stopPropagation();
-        const lineIdx  = parseInt(badge.dataset.svLine,  10);
+        const lineIdx = parseInt(badge.dataset.svLine, 10);
         const classIdx = parseInt(badge.dataset.svClass, 10);
-        const name     = badge.dataset.svName || '';
+        const name = badge.dataset.svName || '';
 
         _svSelectBadge(badge, classIdx);
         _svJumpCodeToLine(lineIdx);
@@ -706,7 +712,7 @@ function _svShowFocusPanel(methodName, lineIdx, classIdx) {
     panel.querySelectorAll('.sv-fp-card').forEach(card => {
         card.addEventListener('click', () => {
             const fi = parseInt(card.dataset.fpFuncIdx, 10);
-            const f  = allFuncs[fi];
+            const f = allFuncs[fi];
             if (!f) return;
 
             // Jump the code panel to this function
