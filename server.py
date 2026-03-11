@@ -1037,6 +1037,77 @@ class Handler(BaseHTTPRequestHandler):
                 'references':  references,
             })
 
+        elif p == '/symbol-graph':
+            # ── Symbol-centric graph ───────────────────────────────────────────
+            # GET /symbol-graph?job=JID&sym=sym_0_3
+            jid    = qs.get('job', [''])[0]
+            sym_id = qs.get('sym', [''])[0].strip()
+
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+            graph_data = job.get('data')
+            if not graph_data or not sym_id:
+                self.json_resp({'error': 'Missing job or sym'}, 400)
+                return
+
+            sym_index = graph_data.get('symbol_index', {})
+            sym_edges = graph_data.get('symbol_edges', [])
+            center = sym_index.get(sym_id)
+            if not center:
+                self.json_resp({'error': 'Symbol not found'}, 404)
+                return
+
+            # Bundle: aggregate edges by (from_id, to_id, type) → count
+            from collections import defaultdict as _dd
+            # incoming: edges where to == sym_id
+            in_bundles  = _dd(int)  # (from_id, type) → count
+            out_bundles = _dd(int)  # (to_id,   type) → count
+
+            for e in sym_edges:
+                if e['to'] == sym_id:
+                    in_bundles[(e['from'], e['type'])] += 1
+                elif e['from'] == sym_id:
+                    out_bundles[(e['to'],  e['type'])] += 1
+
+            def _sym_summary(sid):
+                s = sym_index.get(sid)
+                if not s:
+                    return None
+                return {
+                    'id':        s['id'],
+                    'name':      s['name'],
+                    'kind':      s['kind'],
+                    'file':      s['file'],
+                    'line':      s['line'],
+                    'is_public': s['is_public'],
+                    'module':    s['module'],
+                    'parent':    s['parent'],
+                }
+
+            incoming = []
+            for (fid, etype), count in in_bundles.items():
+                sym = _sym_summary(fid)
+                if sym:
+                    incoming.append({'sym': sym, 'edge_type': etype, 'count': count})
+
+            outgoing = []
+            for (tid, etype), count in out_bundles.items():
+                sym = _sym_summary(tid)
+                if sym:
+                    outgoing.append({'sym': sym, 'edge_type': etype, 'count': count})
+
+            # Sort by count desc
+            incoming.sort(key=lambda x: -x['count'])
+            outgoing.sort(key=lambda x: -x['count'])
+
+            self.json_resp({
+                'center':    center,
+                'incoming':  incoming[:50],
+                'outgoing':  outgoing[:50],
+                'total_in':  len(incoming),
+                'total_out': len(outgoing),
+            })
+
         elif p == '/jobs':
             with JOBS_LOCK:
                 snapshot = [(k, {kk: vv for kk, vv in v.items() if kk != 'data'})

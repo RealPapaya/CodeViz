@@ -216,32 +216,28 @@ GET /symbol-refs?job=JID&sym=sym_0
 
 ### Phase 2：Symbol-Centric Graph ★★★★★
 
-> **核心目標**：點擊任何 symbol，Graph 以該 symbol 為中心重新繪製。
+> **核心目標**：點擊任何 symbol，Graph 以該 symbol 為中心重新繪製，並呈現真正的「節點與連線（Spline Edges）」互動圖表。
 
-#### 2.1 前端 — Graph Mode 重構
+#### 2.1 前端 — 獨立的 Cytoscape Canvas
 
-新增 **L3 Symbol Graph** 層級 (`state.level = 3`)：
+在現有 Structure View 面板（`#sv-view`）內部，放棄靜態的 3-column HTML，改為初始一個全新的、獨立的 Cytoscape 實例（例如綁定在 `<div id="sv-cy">`）：
 
 ```
-選中 symbol → fetch /symbol-graph → 渲染 Cytoscape:
-  - 中央大節點 = active symbol
-  - 左側 = incoming edges (callers, base classes, importers)
-  - 右側 = outgoing edges (callees, derived classes, imported)
-  - Edge label = edge type (call, import, inherit...)
+選中 symbol → fetch /symbol-graph → 渲染 svCy:
+  - 中央大節點（Compound Node） = active class，內部包含 Methods/Fields
+  - 左側 = incoming nodes (callers, base classes)
+  - 右側 = outgoing nodes (callees, derived classes)
+  - Edge = 支援 Bezier / Taxi 等平滑曲線，標籤顯示 edge type + count
 ```
 
-**節點外觀區分**：
-- `class` → 矩形 + 可展開 member list
-- `function/method` → 圓角矩形
-- `file` → 六角形
-- `variable` → 菱形
-- `namespace/module` → 虛線邊框包圍
+**節點外觀與佈局**：
+- **Compound Nodes**：Sourcetrail 的 Class 本質上是包含多個 member 節點的容器。使用 Cytoscape 的 `parent` 屬性將 methods/fields 包在 Class node 裡面。
+- 只有被點擊為中心的 Class Node 會展開所有的 members；周圍的 Callers/Callees 預設收合，只呈現與中心有直接關係的 member 節點。
+- 佈局引擎：使用 `fcose` 或 constraint-based `cola` / `dagre (LR)`，讓圖表自動將 incoming 排在左邊，outgoing 排在右邊。
 
 **互動**：
-- Single click node → activate (成為新的中心，graph 重新佈局)
-- Double click class node → toggle expand/collapse members
-- Hover edge → tooltip 顯示 edge type + count
-- Right click → context menu (Go to definition, Find all references, Show in code)
+- 單擊任意 node → 把該 node 變成新的中心，觸發 pivot，畫布重新飛行動畫佈局。
+- 支援拖曳節點、平移縮放畫布（原生 Cytoscape 優勢）。
 
 #### 2.2 Bundled Edges
 

@@ -1444,4 +1444,314 @@ function _svEdgeTypeColor(edgeType) {
     return map[edgeType] || '#64748b';
 }
 
-console.log('[VIZCODE] struct_view.js v2 loaded');
+// ══════════════════════════════════════════════════════════════════════════════
+// SOURCETRAIL-STYLE SYMBOL-CENTRIC VIEW
+// Entry point: window.svShowSymbol(symId) — shows a 3-column layout inside
+// the existing #sv-view:
+//   [ Incoming column ] [ Center class box ] [ Outgoing column ]
+// Arrows are drawn via SVG beziers with bundled-edge ×N labels.
+// Clicking any neighbour box pivots the view to that symbol.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─── Symbol graph state (separate from file-based _sv state) ──────────────────
+const _svSym = {
+    activeId: null,
+    history:  [],    // [{symId}] for back-stack
+    _token:   0,     // render token (stale fetches discarded)
+};
+
+// ─── Kind icons / colours ─────────────────────────────────────────────────────
+const _SVKIND = {
+    class:    { icon: '🔷', color: '#4c6ef5', tag: 'class' },
+    method:   { icon: '🔹', color: '#20c997', tag: 'method' },
+    function: { icon: '🟢', color: '#37b24d', tag: 'fn' },
+    variable: { icon: '🔶', color: '#9775fa', tag: 'var' },
+    file:     { icon: '📁', color: '#868e96', tag: 'file' },
+};
+function _svkind(k) { return _SVKIND[k] || { icon: '⬡', color: '#64748b', tag: k }; }
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Show the Sourcetrail-style Symbol-Centric view for the given symId.
+ * Opens the Structure panel (if not already open) and replaces its content.
+ */
+window.svShowSymbol = async function(symId) {
+    if (!symId || !window.DATA?.symbol_index?.[symId]) return;
+    if (!window.JOB_ID) return;
+
+    // Push to history (before changing activeId)
+    _svSym.history.push(_svSym.activeId);
+    _svSym.activeId = symId;
+    const token = ++_svSym._token;
+
+    // Make sure sv-view is visible
+    if (!_sv.active) {
+        // Show sv-view without requiring _sv._src
+        const cyEl = document.getElementById('cy');
+        if (cyEl) { cyEl.style.opacity = '0'; cyEl.style.pointerEvents = 'none'; }
+        const funcView = document.getElementById('func-view');
+        if (funcView) funcView.style.display = 'none';
+        const svView = document.getElementById('sv-view');
+        if (svView) svView.style.display = 'flex';
+        _sv.active = true;
+        const btn = document.getElementById('struct-toggle-btn');
+        if (btn) btn.classList.add('active');
+    }
+
+    const view = document.getElementById('sv-view');
+    if (!view) return;
+
+    // Show loading state
+    view.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px;gap:10px">
+        <span class="spinner" style="width:16px;height:16px;border-width:2px"></span>
+        Loading symbol graph…
+    </div>`;
+
+    let data = null;
+    try {
+        const r = await fetch(`/symbol-graph?job=${encodeURIComponent(window.JOB_ID)}&sym=${encodeURIComponent(symId)}`);
+        data = await r.json();
+    } catch (e) {
+        if (token !== _svSym._token) return;
+        view.innerHTML = `<div style="padding:20px;color:#f87171">Failed to load symbol graph: ${e.message}</div>`;
+        return;
+    }
+
+    if (token !== _svSym._token) return;   // stale
+    if (data?.error) {
+        view.innerHTML = `<div style="padding:20px;color:#f87171">Error: ${data.error}</div>`;
+        return;
+    }
+
+    _svSymRender(data, view);
+
+    // Sync code panel to definition
+    const sym = data.center;
+    if (sym?.file && typeof loadFileInPanel === 'function') {
+        loadFileInPanel(sym.file, sym.name);
+    }
+};
+
+/**
+ * Convenience: activate by name (used from code panel click).
+ * Picks the best match (exact class > function > any).
+ */
+window.svShowSymbolByName = function(name) {
+    if (!window.DATA?.symbol_index) return false;
+    const all = Object.values(window.DATA.symbol_index).filter(s => s.name === name);
+    if (!all.length) return false;
+    const pick = all.find(s => s.kind === 'class')
+        || all.find(s => s.kind === 'function')
+        || all[0];
+    window.svShowSymbol(pick.id);
+    return true;
+};
+
+/**
+ * Go back one step in the symbol pivot history.
+ */
+window.svSymBack = function() {
+    const prev = _svSym.history.pop();
+    if (prev) {
+        _svSym.activeId = null;  // will be set by svShowSymbol
+        window.svShowSymbol(prev);
+    } else {
+        // Nothing in history → return to file-based structure view or close
+        if (_sv._src) {
+            _svRender(_sv._src, _sv._ext, _sv._fname);
+        } else {
+            window.svHideSvView();
+        }
+    }
+};
+
+// ─── Core renderer ────────────────────────────────────────────────────────────
+
+function _svSymRender(data, view) {
+    const { center, incoming, outgoing } = data;
+    const ck = _svkind(center.kind);
+
+    // ── Build center members HTML (using symbol_index parent link to find siblings)
+    const allSyms = window.DATA?.symbol_index || {};
+    const members = Object.values(allSyms).filter(s =>
+        s.parent === center.name && s.file === center.file
+    );
+    const pubMethods = members.filter(s => s.kind === 'method' && s.is_public);
+    const privMethods = members.filter(s => s.kind === 'method' && !s.is_public);
+    const fields = members.filter(s => s.kind === 'variable');
+
+    function _memberBadge(m, type) {
+        const icon = type === 'field' ? '●' : (m.is_public === false ? '○' : '◆');
+        const cls = type === 'field' ? 'sv-field' : (m.is_public === false ? 'sv-priv' : 'sv-badge');
+        return `<span class="${cls} sv-sym-member" data-sym-id="${m.id}" data-line="${m.line}"
+            title="${_svEsc(m.name)} : line ${m.line}">${icon} ${_svEsc(m.name)}</span>`;
+    }
+
+    const membersHtml = [
+        ...(pubMethods.length ? [`<div class="sv-section-label">PUBLIC</div>`, ...pubMethods.map(m => _memberBadge(m, 'method'))] : []),
+        ...(privMethods.length ? [`<div class="sv-section-label sv-private-label">PRIVATE</div>`, ...privMethods.map(m => _memberBadge(m, 'method'))] : []),
+        ...(fields.length ? [`<div class="sv-section-label">FIELDS</div>`, ...fields.map(m => _memberBadge(m, 'field'))] : []),
+    ].join('');
+
+    // ── Column helper
+    function _colItem(item, dir) {
+        const sk = _svkind(item.sym.kind);
+        const bundleTag = item.count > 1 ? `<span class="sv-sym-bundle">×${item.count}</span>` : '';
+        const edgeTag = `<span class="sv-sym-edge-type">${item.edge_type}</span>`;
+        const parentTag = item.sym.parent ? `<span class="sv-sym-parent">${_svEsc(item.sym.parent)}.</span>` : '';
+        const arrow = dir === 'in' ? '→' : '←';
+        return `<div class="sv-sym-nbr-box" data-sym-id="${item.sym.id}" title="${_svEsc(item.sym.file)}:${item.sym.line}">
+            <div class="sv-sym-nbr-hdr">
+                <span class="sv-sym-nbr-icon" style="color:${sk.color}">${sk.icon}</span>
+                <span class="sv-sym-nbr-name">${parentTag}<strong>${_svEsc(item.sym.name)}</strong></span>
+                ${bundleTag}
+            </div>
+            <div class="sv-sym-nbr-meta">${edgeTag} <span>${_svEsc(item.sym.file.split('/').pop())}</span></div>
+        </div>`;
+    }
+
+    const inHtml  = incoming.length ? incoming.map(i => _colItem(i, 'in')).join('') : `<div class="sv-sym-empty">No incoming</div>`;
+    const outHtml = outgoing.length ? outgoing.map(i => _colItem(i, 'out')).join('') : `<div class="sv-sym-empty">No outgoing</div>`;
+
+    const backBtn = _svSym.history.filter(Boolean).length > 0
+        ? `<button class="sv-sym-back-btn" id="sv-sym-back">← Back</button>`
+        : '';
+
+    // ── Full layout
+    view.innerHTML = `
+    <div class="sv-sym-root">
+        <div class="sv-sym-topbar">
+            ${backBtn}
+            <span class="sv-sym-title-icon" style="color:${ck.color}">${ck.icon}</span>
+            <span class="sv-sym-title-name">${_svEsc(center.name)}</span>
+            <span class="sv-sym-title-kind">${center.kind}</span>
+            <span class="sv-sym-title-file" title="${_svEsc(center.file)}">${_svEsc(center.file.split('/').pop())}:${center.line}</span>
+            <span class="sv-sym-count in">◀ ${data.total_in}</span>
+            <span class="sv-sym-count out">▶ ${data.total_out}</span>
+        </div>
+        <div class="sv-sym-layout" id="sv-sym-layout">
+            <div class="sv-sym-col sv-sym-in-col" id="sv-sym-in-col">
+                <div class="sv-sym-col-hdr" style="color:#20c997">◀ CALLERS / INCOMING</div>
+                ${inHtml}
+            </div>
+            <div class="sv-sym-center-col" id="sv-sym-center">
+                <div class="sv-class-box sv-sym-center-box" id="sv-sym-center-box">
+                    <div class="sv-class-hdr" style="background:${ck.color}22;border-color:${ck.color}">
+                        <span class="sv-class-icon">${ck.icon}</span>
+                        <span class="sv-class-name">${_svEsc(center.name)}</span>
+                        <span class="sv-class-tag" style="background:${ck.color}">${ck.tag}</span>
+                    </div>
+                    <div class="sv-class-body">
+                        ${membersHtml || '<div class="sv-sym-empty" style="font-size:11px">No members found in local file</div>'}
+                    </div>
+                </div>
+            </div>
+            <div class="sv-sym-col sv-sym-out-col" id="sv-sym-out-col">
+                <div class="sv-sym-col-hdr" style="color:#cc5de8">CALLEES / OUTGOING ▶</div>
+                ${outHtml}
+            </div>
+        </div>
+        <svg class="sv-sym-arrows" id="sv-sym-arrows" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible">
+            <defs>
+                <marker id="sv-sym-ah-in" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L8,3 z" fill="#20c997" opacity="0.85"/>
+                </marker>
+                <marker id="sv-sym-ah-out" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L8,3 z" fill="#cc5de8" opacity="0.85"/>
+                </marker>
+            </defs>
+        </svg>
+    </div>`;
+
+    // ── Event: back button
+    document.getElementById('sv-sym-back')?.addEventListener('click', window.svSymBack);
+
+    // ── Event: click neighbour box → pivot
+    view.querySelectorAll('.sv-sym-nbr-box').forEach(box => {
+        box.addEventListener('click', e => {
+            e.stopPropagation();
+            const sid = box.dataset.symId;
+            if (sid) window.svShowSymbol(sid);
+        });
+    });
+
+    // ── Event: click member badge → jump code
+    view.querySelectorAll('.sv-sym-member').forEach(badge => {
+        badge.addEventListener('click', e => {
+            e.stopPropagation();
+            const sid = badge.dataset.symId;
+            const line = parseInt(badge.dataset.line, 10);
+            if (sid) {
+                const s = window.DATA?.symbol_index?.[sid];
+                if (s?.file && typeof loadFileInPanel === 'function') {
+                    loadFileInPanel(s.file, s.name);
+                }
+            }
+        });
+    });
+
+    // ── Draw bezier arrows after DOM settles
+    requestAnimationFrame(() => requestAnimationFrame(() => _svSymDrawArrows(view, incoming, outgoing)));
+}
+
+// ─── Bezier arrow drawing (reuses _svGetPivots / _svBezierPath) ───────────────
+
+function _svSymDrawArrows(view, incoming, outgoing) {
+    const svg = document.getElementById('sv-sym-arrows');
+    if (!svg) return;
+    svg.querySelectorAll('.sv-sym-arrow').forEach(p => p.remove());
+
+    const centerBox = document.getElementById('sv-sym-center-box');
+    if (!centerBox) return;
+
+    const svgRect = svg.getBoundingClientRect();
+    const toLocal = (vpX, vpY) => ({ x: vpX - svgRect.left, y: vpY - svgRect.top });
+
+    function _pivots(el) {
+        const r = el.getBoundingClientRect();
+        if (!r.width && !r.height) return null;
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        return [
+            toLocal(cx, r.top),    // 0 top
+            toLocal(r.right, cy),  // 1 right
+            toLocal(cx, r.bottom), // 2 bottom
+            toLocal(r.left, cy),   // 3 left
+        ];
+    }
+
+    function _drawArrow(fromEl, toEl, color, markerId) {
+        if (!fromEl || !toEl) return;
+        const sp = _pivots(fromEl), dp = _pivots(toEl);
+        if (!sp || !dp) return;
+
+        // Force horizontal routing: right of source → left of target
+        const p1 = sp[1], p2 = dp[3];  // right → left
+        const tension = Math.max(30, Math.min(Math.abs(p2.x - p1.x) * 0.4, 120));
+        const d = `M${p1.x},${p1.y} C${p1.x + tension},${p1.y} ${p2.x - tension},${p2.y} ${p2.x},${p2.y}`;
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('stroke', color);
+        path.setAttribute('stroke-width', '1.5');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke-opacity', '0.7');
+        path.setAttribute('marker-end', `url(#${markerId})`);
+        path.classList.add('sv-sym-arrow');
+        svg.appendChild(path);
+    }
+
+    // incoming: neighbour.right → center.left
+    incoming.forEach(item => {
+        const nbrEl = view.querySelector(`.sv-sym-nbr-box[data-sym-id="${item.sym.id}"]`);
+        _drawArrow(nbrEl, centerBox, '#20c997', 'sv-sym-ah-in');
+    });
+
+    // outgoing: center.right → neighbour.left
+    outgoing.forEach(item => {
+        const nbrEl = view.querySelector(`.sv-sym-nbr-box[data-sym-id="${item.sym.id}"]`);
+        _drawArrow(centerBox, nbrEl, '#cc5de8', 'sv-sym-ah-out');
+    });
+}
+
+console.log('[VIZCODE] struct_view.js v3 (Sourcetrail Symbol Mode) loaded');
