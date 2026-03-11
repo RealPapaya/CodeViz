@@ -1026,7 +1026,7 @@ async function _svFetchAndApplyCrossFile(token, classes, svg, scroll, grid) {
     } catch (e) {
         console.warn('[VIZCODE] /structure fetch failed:', e.message);
     } finally {
-        pill && pill.remove();
+        document.getElementById('sv-loading-pill')?.remove();
     }
 
     // Check token: discard if the user navigated to another file

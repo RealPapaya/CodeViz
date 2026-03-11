@@ -7,6 +7,7 @@ Extracts:
   funcdefs       → function declarations (top-level, methods, closures)
   funccalls      → all call expressions
   func_calls_by_func → per-function call lists (body-scoped via brace matching)
+  symbol_defs    → structured symbol table [{kind, name, line, bases, parent}, ...]
 
 Go naming convention:
   UpperCase = exported (public)
@@ -45,6 +46,12 @@ RE_GO_FUNCDEF = re.compile(
 
 # Call sites
 RE_GO_CALL = re.compile(r'\b([A-Za-z_]\w*)\s*\(')
+
+# Struct / interface declarations
+RE_GO_STRUCT    = re.compile(r'^type\s+(\w+)\s+struct\s*\{', re.MULTILINE)
+RE_GO_INTERFACE = re.compile(r'^type\s+(\w+)\s+interface\s*\{', re.MULTILINE)
+# Method with receiver: func (r *Receiver) Method(
+RE_GO_METHOD    = re.compile(r'^func\s+\(\w+\s*\*?(\w+)\)\s+(\w+)\s*\(', re.MULTILINE)
 
 # Strip // and /* */ comments
 RE_GO_LINE_CMT  = re.compile(r'//[^\n]*')
@@ -99,11 +106,72 @@ def _extract_calls(text: str) -> list:
     ]
 
 
+def _parse_symbol_defs(src: str, clean: str) -> list:
+    """Extract struct, interface, and function symbols from Go source."""
+    symbols = []
+    for m in RE_GO_STRUCT.finditer(clean):
+        name = m.group(1)
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'class',   # treat struct as class
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': name[0].isupper(),
+        })
+    for m in RE_GO_INTERFACE.finditer(clean):
+        name = m.group(1)
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'class',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': name[0].isupper(),
+        })
+    # Methods with receivers
+    for m in RE_GO_METHOD.finditer(clean):
+        receiver = m.group(1)
+        mname    = m.group(2)
+        if mname in GO_KEYWORDS:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'method',
+            'name':      mname,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    receiver,
+            'is_public': mname[0].isupper(),
+        })
+    # Package-level functions (non-method)
+    for m in RE_GO_FUNCDEF.finditer(clean):
+        name = m.group(1)
+        if name in GO_KEYWORDS:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'function',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': name[0].isupper(),
+        })
+    return symbols
+
+
 def scan_go(src: str) -> tuple:
     """
     Go file analysis.
 
-    Returns: (imports, funcdefs, all_calls, extra_dict, func_calls_by_func)
+    Returns: (imports, funcdefs, all_calls, extra_dict, func_calls_by_func, symbol_defs)
     """
     clean = _strip_comments(src)
     imports = _parse_imports(clean)
@@ -133,13 +201,14 @@ def scan_go(src: str) -> tuple:
         func_calls_by_func.append(_extract_calls(body))
 
     all_calls = _extract_calls(clean)
+    symbol_defs = _parse_symbol_defs(src, clean)
 
     extra = {
         'imports': imports,
         'lang':    'go',
         'package': _parse_package(src),
     }
-    return imports, funcdefs, all_calls, extra, func_calls_by_func
+    return imports, funcdefs, all_calls, extra, func_calls_by_func, symbol_defs
 
 
 def _parse_package(src: str) -> str:

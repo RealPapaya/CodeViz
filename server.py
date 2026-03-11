@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 server.py — VIZCODE Local Server V4
 Serves launcher.html and runs analyze_viz.py on demand.
@@ -902,6 +902,141 @@ class Handler(BaseHTTPRequestHandler):
                 'class_map':   class_map,
             })
 
+        elif p == '/symbols':
+            # ── Symbol search ─────────────────────────────────────────────────
+            # GET /symbols?job=JID&q=foo&kind=function&limit=50
+            import re as _re
+            jid   = qs.get('job',   [''])[0]
+            q     = qs.get('q',     [''])[0].strip()
+            kind  = qs.get('kind',  [''])[0].strip()  # optional filter: class|function|method
+            limit = int(qs.get('limit', ['50'])[0])
+
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+            graph_data = job.get('data')
+            if not graph_data or not q:
+                self.json_resp({'results': [], 'total': 0})
+                return
+
+            sym_index = graph_data.get('symbol_index', {})
+
+            # Build fuzzy pattern: split camelCase + underscores, accept partial match
+            # e.g. "EngConn" matches "EngineConnection"
+            def _fuzzy_match(name: str, pattern: str) -> bool:
+                if not pattern:
+                    return True
+                pl = pattern.lower()
+                nl = name.lower()
+                # Direct substring match (fast path)
+                if pl in nl:
+                    return True
+                # Subsequence match (all chars of pattern appear in order in name)
+                pi = 0
+                for c in nl:
+                    if pi < len(pl) and c == pl[pi]:
+                        pi += 1
+                return pi == len(pl)
+
+            results = []
+            for sid, sym in sym_index.items():
+                if kind and sym['kind'] != kind:
+                    continue
+                if not _fuzzy_match(sym['name'], q):
+                    continue
+                results.append({
+                    'id':        sid,
+                    'name':      sym['name'],
+                    'kind':      sym['kind'],
+                    'file':      sym['file'],
+                    'line':      sym['line'],
+                    'is_public': sym['is_public'],
+                    'module':    sym['module'],
+                    'parent':    sym['parent'],
+                })
+                if len(results) >= limit * 3:  # over-fetch for dedup
+                    break
+
+            # Sort: exact match first, then alphabetical
+            ql = q.lower()
+            results.sort(key=lambda s: (
+                0 if s['name'].lower() == ql else
+                1 if s['name'].lower().startswith(ql) else 2,
+                s['name'],
+            ))
+            results = results[:limit]
+            self.json_resp({'results': results, 'total': len(sym_index)})
+
+        elif p == '/symbol-refs':
+            # ── Symbol references (definition + all call sites) ───────────────
+            # GET /symbol-refs?job=JID&sym=sym_0_3
+            jid    = qs.get('job', [''])[0]
+            sym_id = qs.get('sym', [''])[0].strip()
+
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+            graph_data = job.get('data')
+            root_dir   = job.get('root', '')
+            if not graph_data or not sym_id or not root_dir:
+                self.json_resp({'definitions': [], 'references': []})
+                return
+
+            sym_index = graph_data.get('symbol_index', {})
+            sym = sym_index.get(sym_id)
+            if not sym:
+                self.json_resp({'definitions': [], 'references': [], 'error': 'Symbol not found'})
+                return
+
+            sym_name = sym['name']
+            CONTEXT  = 3   # lines of context around each match
+
+            def _read_snippet(rel_path: str, target_line: int) -> dict | None:
+                try:
+                    abs_path = os.path.normpath(os.path.join(root_dir, rel_path))
+                    lines = Path(abs_path).read_text(encoding='utf-8', errors='replace').splitlines()
+                    start = max(0, target_line - 1 - CONTEXT)
+                    end   = min(len(lines), target_line + CONTEXT)
+                    snippet_lines = lines[start:end]
+                    return {
+                        'file':        rel_path,
+                        'line':        target_line,
+                        'start_line':  start + 1,
+                        'end_line':    end,
+                        'snippet':     '\n'.join(snippet_lines),
+                        'highlight':   target_line - start - 1,  # 0-based offset into snippet
+                    }
+                except Exception:
+                    return None
+
+            # Definition snippet
+            definitions = []
+            defn = _read_snippet(sym['file'], sym['line'])
+            if defn:
+                definitions.append(defn)
+
+            # References: scan all files in search_index for occurrences of sym_name
+            search_index = job.get('search_index', {})
+            import re as _re
+            pattern = _re.compile(r'\b' + _re.escape(sym_name) + r'\b')
+            references = []
+            for rel_path, content in (search_index.items() if search_index else {}.items()):
+                if rel_path == sym['file']:
+                    continue  # definition file already handled
+                for lineno, line in enumerate(content.split('\n'), 1):
+                    if pattern.search(line):
+                        snip = _read_snippet(rel_path, lineno)
+                        if snip:
+                            references.append(snip)
+                        if len(references) >= 100:
+                            break
+                if len(references) >= 100:
+                    break
+
+            self.json_resp({
+                'symbol':      sym,
+                'definitions': definitions,
+                'references':  references,
+            })
+
         elif p == '/jobs':
             with JOBS_LOCK:
                 snapshot = [(k, {kk: vv for kk, vv in v.items() if kk != 'data'})
@@ -910,6 +1045,7 @@ class Handler(BaseHTTPRequestHandler):
 
         else:
             self.json_resp({'error': 'Not found'}, 404)
+
 
     # ── POST ──────────────────────────────────────────────────────────────────
     def do_POST(self):

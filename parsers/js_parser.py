@@ -7,6 +7,7 @@ Extracts:
   funcdefs       → named function declarations, arrow functions, class methods
   funccalls      → all call expressions
   func_calls_by_func → per-function call lists (body-scoped via brace matching)
+  symbol_defs    → structured symbol table [{kind, name, line, bases, parent}, ...]
 """
 
 import re
@@ -60,6 +61,13 @@ RE_JS_METHOD = re.compile(
 
 # Call sites
 RE_JS_CALL = re.compile(r'\b([A-Za-z_$][\w$]*)\s*\(')
+
+# Class declarations
+RE_JS_CLASS = re.compile(
+    r'(?:^|\s)(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)'
+    r'(?:\s+extends\s+([\w.]+))?(?:\s+implements\s+([\w,\s.]+))?\s*\{',
+    re.MULTILINE
+)
 
 # Strip // and /* */ comments (very rough, ignores strings — adequate for import/def extraction)
 RE_LINE_COMMENT   = re.compile(r'//[^\n]*')
@@ -118,11 +126,76 @@ def _extract_calls(text: str) -> list:
     ]
 
 
+def _parse_symbol_defs(src: str, clean: str) -> list:
+    """Extract class + method symbols from JS/TS source."""
+    symbols = []
+    # Classes
+    for m in RE_JS_CLASS.finditer(clean):
+        name = m.group(1)
+        extends = m.group(2)
+        implements_raw = m.group(3) or ''
+        line_no = src[:m.start()].count('\n') + 1
+        bases = []
+        if extends:
+            bases.append(extends.strip())
+        for iface in implements_raw.split(','):
+            iface = iface.strip()
+            if iface:
+                bases.append(iface)
+        symbols.append({
+            'kind':      'class',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,  # rough; full end-detection is complex in JS
+            'bases':     bases,
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        # Methods inside the class body
+        open_idx = clean.find('{', m.end() - 1)
+        body = _brace_body(clean, open_idx) if open_idx != -1 else ''
+        for mm in RE_JS_METHOD.finditer(body):
+            mname = mm.group(1)
+            if mname in JS_KEYWORDS:
+                continue
+            mline = line_no + body[:mm.start()].count('\n')
+            symbols.append({
+                'kind':      'method',
+                'name':      mname,
+                'line':      mline,
+                'end_line':  mline,
+                'bases':     [],
+                'parent':    name,
+                'is_public': not mname.startswith('_'),
+            })
+    # Top-level functions not inside a class
+    class_ranges = set()
+    for s in symbols:
+        if s['kind'] == 'class':
+            # Mark approximate line range as class-owned
+            class_ranges.add(s['line'])
+    for m in RE_JS_FUNC_DECL.finditer(clean):
+        fname = m.group(1)
+        if fname in JS_KEYWORDS:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'function',
+            'name':      fname,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not fname.startswith('_'),
+        })
+    return symbols
+
+
 def scan_js(src: str) -> tuple:
     """
     JavaScript file analysis.
 
-    Returns: (imports, funcdefs, all_calls, extra_dict, func_calls_by_func)
+    Returns: (imports, funcdefs, all_calls, extra_dict, func_calls_by_func, symbol_defs)
     """
     clean = _strip_comments(src)
     imports = _parse_imports(clean)
@@ -170,13 +243,14 @@ def scan_js(src: str) -> tuple:
         func_calls_by_func.append(_extract_calls(body))
 
     all_calls = _extract_calls(clean)
+    symbol_defs = _parse_symbol_defs(src, clean)
 
     extra = {'imports': imports, 'lang': 'javascript'}
-    return imports, funcdefs, all_calls, extra, func_calls_by_func
+    return imports, funcdefs, all_calls, extra, func_calls_by_func, symbol_defs
 
 
 def scan_ts(src: str) -> tuple:
     """TypeScript — delegate to JS scanner (TS is a superset)."""
-    imports, funcdefs, calls, extra, fcbf = scan_js(src)
+    imports, funcdefs, calls, extra, fcbf, sym_defs = scan_js(src)
     extra['lang'] = 'typescript'
-    return imports, funcdefs, calls, extra, fcbf
+    return imports, funcdefs, calls, extra, fcbf, sym_defs

@@ -476,38 +476,51 @@ KNOWN_SYS_FUNCS: Dict[str, str] = {
 # ─── scan_file ────────────────────────────────────────────────────────────────
 def scan_file(filepath: str, root: str):
     """
-    Returns (includes_or_refs, funcdefs, funccalls, bios_extra_dict, func_calls_by_func)
+    Returns (includes_or_refs, funcdefs, funccalls, bios_extra_dict, func_calls_by_func, symbol_defs)
     bios_extra_dict varies by file type; None for C/H/ASM.
+    symbol_defs is a list of {kind, name, line, end_line, bases, parent, is_public} — may be [] for BIOS/C.
     """
     try:
         src = Path(filepath).read_text(encoding='utf-8', errors='replace')
     except Exception:
-        return [], [], [], None, []
+        return [], [], [], None, [], []
 
     ext = Path(filepath).suffix.lower()
 
     # ── BIOS / UEFI / AMI / C / ASM ──────────────────────────────────────────
     if ext in _BIOS_EXTENSIONS and _PARSERS_LOADED:
-        return scan_bios(src, ext)
+        result = scan_bios(src, ext)
+        # bios_parser returns 5-tuple — pad with empty symbol_defs
+        if len(result) == 5:
+            return (*result, [])
+        return result
 
     # ── Python ───────────────────────────────────────────────────────────────
     if ext == '.py' and _PARSERS_LOADED:
-        imports, funcdefs, calls, extra, fcbf = scan_python(src)
-        return imports, funcdefs, calls, extra, fcbf
+        result = scan_python(src)
+        if len(result) == 5:
+            return (*result, [])
+        return result
 
     # ── JavaScript / TypeScript ───────────────────────────────────────────────
     if ext in ('.js', '.mjs', '.cjs', '.jsx') and _PARSERS_LOADED:
-        imports, funcdefs, calls, extra, fcbf = scan_js(src)
-        return imports, funcdefs, calls, extra, fcbf
+        result = scan_js(src)
+        if len(result) == 5:
+            return (*result, [])
+        return result
 
     if ext in ('.ts', '.tsx') and _PARSERS_LOADED:
-        imports, funcdefs, calls, extra, fcbf = scan_ts(src)
-        return imports, funcdefs, calls, extra, fcbf
+        result = scan_ts(src)
+        if len(result) == 5:
+            return (*result, [])
+        return result
 
     # ── Go ────────────────────────────────────────────────────────────────────
     if ext == '.go' and _PARSERS_LOADED:
-        imports, funcdefs, calls, extra, fcbf = scan_go(src)
-        return imports, funcdefs, calls, extra, fcbf
+        result = scan_go(src)
+        if len(result) == 5:
+            return (*result, [])
+        return result
 
     # Remaining: .c, .cpp, .h, .hpp → C-like analysis
     clean = strip_comments(src)
@@ -540,7 +553,7 @@ def scan_file(filepath: str, root: str):
         if name not in C_KEYWORDS and len(name) >= 2:
             funccalls.append(name)
 
-    return includes, funcdefs, funccalls, None, func_calls_by_func
+    return includes, funcdefs, funccalls, None, func_calls_by_func, []
 
 
 # ─── get_module ───────────────────────────────────────────────────────────────
@@ -617,6 +630,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
     file_defs   = {}  # rel_path → [{label, is_efiapi, is_static}]
     file_calls  = {}  # rel_path → [call names]
     file_extra  = {}  # rel_path → bios_extra dict (for .inf/.sdl/.cif etc.)
+    file_symdefs = {} # rel_path → [{kind, name, line, end_line, bases, parent, is_public}]
 
     file_func_calls = {}
 
@@ -631,7 +645,7 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
                 total_files=total,
             )
         rel = os.path.relpath(fp, root).replace('\\', '/')
-        inc, defs, calls, extra, func_calls_by_func = scan_file(fp, root)
+        inc, defs, calls, extra, func_calls_by_func, sym_defs = scan_file(fp, root)
         ext = Path(fp).suffix.lower()
         bios_meta = {}
         if extra and 'meta' in extra:
@@ -649,7 +663,8 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         file_defs[rel]  = defs
         file_calls[rel] = calls
         file_func_calls[rel] = func_calls_by_func
-        file_extra[rel] = extra
+        file_extra[rel]  = extra
+        file_symdefs[rel] = sym_defs
 
     # ── Phase X: Collect ALL other files + count skipped dirs + total dirs ───────
     # Other files are not analysed for deps but shown in UI for full codebase picture.
@@ -1002,6 +1017,58 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
 
     resolved_func_edges = sum(len(v) for v in func_edges_by_file.values())
 
+    # ── Phase F: Build Symbol Index ───────────────────────────────────────────
+    _cb(93, 'Building symbol index...', stage='finalize', analyzed_files=total, total_files=total)
+    symbol_index: dict = {}
+    symbol_edges: list = []
+    _sym_name_to_ids: dict = defaultdict(list)
+    _file_sym_key: dict = {}
+
+    file_list = sorted(file_meta.keys())
+    for f_idx, rel in enumerate(file_list):
+        syms = file_symdefs.get(rel, []) or []
+        for s_idx, sym in enumerate(syms):
+            sid = f'sym_{f_idx}_{s_idx}'
+            symbol_index[sid] = {
+                'id':        sid,
+                'name':      sym['name'],
+                'kind':      sym['kind'],
+                'file':      rel,
+                'line':      sym.get('line', 0),
+                'end_line':  sym.get('end_line', 0),
+                'bases':     sym.get('bases', []),
+                'parent':    sym.get('parent'),
+                'is_public': sym.get('is_public', True),
+                'module':    file_meta[rel]['module'],
+            }
+            _sym_name_to_ids[sym['name']].append(sid)
+            _file_sym_key[(rel, sym['name'])] = sid
+
+    # Inheritance edges
+    for sid, sym in symbol_index.items():
+        for base_name in sym.get('bases', []):
+            tgt = (_file_sym_key.get((sym['file'], base_name))
+                   or (_sym_name_to_ids[base_name][0] if _sym_name_to_ids[base_name] else None))
+            if tgt and tgt != sid:
+                symbol_edges.append({'from': sid, 'to': tgt, 'type': 'inheritance'})
+
+    # Call edges (cross-file using func_name lookup)
+    for rel, func_list in funcs_by_file.items():
+        calls_by_func = file_func_calls.get(rel, [])
+        for caller_idx, func in enumerate(func_list):
+            caller_id = _file_sym_key.get((rel, func['label']))
+            if not caller_id:
+                continue
+            callee_names = calls_by_func[caller_idx] if caller_idx < len(calls_by_func) else []
+            seen_callee: set = set()
+            for callee_name in callee_names:
+                callee_id = (_file_sym_key.get((rel, callee_name))
+                             or (_sym_name_to_ids[callee_name][0]
+                                 if _sym_name_to_ids[callee_name] else None))
+                if callee_id and callee_id != caller_id and callee_id not in seen_callee:
+                    seen_callee.add(callee_id)
+                    symbol_edges.append({'from': caller_id, 'to': callee_id, 'type': 'call'})
+
     _cb(
         95,
         'Assembling output...',
@@ -1082,6 +1149,8 @@ def build_graph(root_dir: str, progress_cb=None, include_build=False, include_di
         'func_known_categories': KNOWN_SYS_FUNCS,
         'edge_types':           EDGE_TYPES,
         'project_type':         project_type,
+        'symbol_index':         symbol_index,
+        'symbol_edges':         symbol_edges,
         'stats': {
             # ── Analysed (shown in graph) ──
             'files':              total,          # SCAN_EXT files actually analysed
