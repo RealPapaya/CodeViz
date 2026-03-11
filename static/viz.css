@@ -913,6 +913,13 @@ body {
     white-space: pre
 }
 
+/* Clickable code tokens in code panel */
+#cp-code-wrap .line-content span:hover {
+    outline: 1px solid white;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
 /* Line numbers + gutter */
 .code-line {
     display: flex;

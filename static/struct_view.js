@@ -639,9 +639,10 @@ function _svJumpCodeToLine(lineIdx) {
     // Make sure code panel is visible
     if (typeof openCodePanel === 'function') openCodePanel();
     lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    // Flash highlight
+    
+    // Persistent highlight
+    document.querySelectorAll('.sv-jump-highlight').forEach(el => el.classList.remove('sv-jump-highlight'));
     lineEl.classList.add('sv-jump-highlight');
-    setTimeout(() => lineEl.classList.remove('sv-jump-highlight'), 1500);
 }
 
 

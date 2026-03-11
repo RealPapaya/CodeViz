@@ -366,30 +366,51 @@
 }
 
 /* Field-usage (composition): golden yellow */
-.sv-arrow-uses { stroke: #fbbf2499; }
-.sv-arrow-uses:hover { stroke: #fbbf24ee; }
+.sv-arrow-uses {
+    stroke: #fbbf2499;
+}
+
+.sv-arrow-uses:hover {
+    stroke: #fbbf24ee;
+}
 
 /* Inheritance: blue dashed */
 .sv-arrow-inherit {
     stroke: #60a5fa99;
     stroke-dasharray: 6 3;
 }
-.sv-arrow-inherit:hover { stroke: #60a5faee; }
+
+.sv-arrow-inherit:hover {
+    stroke: #60a5faee;
+}
 
 /* Cross-class method call: orange solid */
-.sv-arrow-call { stroke: #fb923cbb; }
-.sv-arrow-call:hover { stroke: #fb923cff; }
+.sv-arrow-call {
+    stroke: #fb923cbb;
+}
+
+.sv-arrow-call:hover {
+    stroke: #fb923cff;
+}
 
 /* Same-class PUBLIC→PRIVATE: violet dashed */
 .sv-arrow-call-inner {
     stroke: #a78bfabb;
     stroke-dasharray: 4 2;
 }
-.sv-arrow-call-inner:hover { stroke: #a78bfaff; }
+
+.sv-arrow-call-inner:hover {
+    stroke: #a78bfaff;
+}
 
 /* Cross-file: coral */
-.sv-arrow-cross-file { stroke: #f9731699; }
-.sv-arrow-cross-file:hover { stroke: #f97316ee; }
+.sv-arrow-cross-file {
+    stroke: #f9731699;
+}
+
+.sv-arrow-cross-file:hover {
+    stroke: #f97316ee;
+}
 
 .sv-arrow-active {
     stroke-width: 3px !important;
@@ -421,10 +442,21 @@
     flex-shrink: 0;
 }
 
-.sv-legend-cross   { background: #fb923c; }
-.sv-legend-inner   { background: #a78bfa; }
-.sv-legend-inherit { background: #60a5fa; }
-.sv-legend-uses    { background: #fbbf24; }
+.sv-legend-cross {
+    background: #fb923c;
+}
+
+.sv-legend-inner {
+    background: #a78bfa;
+}
+
+.sv-legend-inherit {
+    background: #60a5fa;
+}
+
+.sv-legend-uses {
+    background: #fbbf24;
+}
 
 /* ── Empty state ──────────────────────────────────────────────────────────────── */
 .sv-empty {
@@ -459,23 +491,29 @@
 
 /* Active badge in structure graph */
 .sv-active-badge {
-    box-shadow: 0 0 10px rgba(251, 191, 36, .5), 0 0 20px rgba(251, 191, 36, .25) !important;
+    box-shadow: 0 0 0 2px #f97316 !important;
     transform: scale(1.12) !important;
     z-index: 10;
     position: relative;
+}
+
+/* 標頭被選取時：不放大、不加外框，改為變換背景色 */
+.sv-class-hdr.sv-active-badge {
+    transform: none !important;
+    box-shadow: none !important;
+    background: rgba(249, 115, 22, 0.2) !important;
+    /* 橘色微透明背景 */
 }
 
 /* Hover-preview badge */
 .sv-hover-badge {
     box-shadow: 0 0 8px rgba(251, 191, 36, .3) !important;
     transform: scale(1.06) !important;
+    outline: 1px solid white !important;
+    outline-offset: 1px;
 }
 
-/* Active class box border glow */
-.sv-active-box {
-    border-color: var(--accent, #fbbf24) !important;
-    box-shadow: 0 0 16px rgba(251, 191, 36, .25), 0 4px 20px rgba(0, 0, 0, .4) !important;
-}
+
 
 /* Jump-to-line highlight in code panel */
 .sv-jump-highlight {
