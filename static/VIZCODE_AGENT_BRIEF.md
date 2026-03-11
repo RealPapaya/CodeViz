@@ -119,8 +119,8 @@ _svFetchAndApplyCrossFile(...)      // async 取 /structure 資料
 
 | # | 功能 | 現狀 |
 |---|------|------|
-| P1 | **Cross-file Dependencies** | Structure View 有 ghost box + 跨檔箭頭，但精度不足（箭頭起點不從 field badge 出發） |
-| P2 | **Navigation History** | Structure View 有 Prev/Next 按鈕，但只限 sv-view 內部，不跨 L0/L1/L2 |
+| P1 | **Cross-class Call Arrows** | ✅ **已修復（本 session）**。`_svDrawCallArrows()` 使用 `offsetLeft/offsetTop` 鏈追蹤，從具體 method badge 出發畫 bezier 曲線連線到目標 badge。SVG z-index 提升至 10，箭頭顯示在卡片之上。 |
+| P2 | **Navigation History** | Structure View 的 Prev/Next 按鈕已移除（本 session 簡化）。全局 back/forward 尚未實作（屬 Phase 6）。 |
 | P3 | **External Dependencies Toggle** | Structure View 有 toggle，但未整合到主圖 |
 
 ### ✅ 已完備
@@ -131,7 +131,7 @@ _svFetchAndApplyCrossFile(...)      // async 取 /structure 資料
 | D2 | 模組→檔案→函式三層 Cytoscape 圖 |
 | D3 | 全文搜尋 + SSE 串流 |
 | D4 | Code Panel 語法高亮 |
-| D5 | Structure View (class/method/field badge grid) |
+| D5 | Structure View — 單一畫面 grid（無第二畫面）。所有 class 的 PUBLIC/PRIVATE/FIELDS badge 全部顯示。**本 session 新增**：跨 class method call 箭頭（橘色 bezier）從 badge 精確出發，SVG 圖層在卡片之上 |
 | D6 | Focus Panel (Callers/Callees inline) |
 | D7 | i18n 中英切換 |
 
@@ -383,11 +383,61 @@ Graph toolbar 增加 edge type filter checkboxes：
 | `is_public` 永遠 `false` (Python) | `python_parser.py` | `is_static=True` for all → `is_public = not is_static = False`。Workaround 在 `/structure` 使用全部 funcs |
 | Dotted import 解析失敗 | `analyze_viz.py` / parsers | `from core.engine import Engine` → `file_edges_by_module` 空。Strategy B workaround |
 | `file_to_module` 可能不存在 | `server.py` | `/structure` endpoint 使用 `graph_data.get('file_to_module', {})`。需確認 `build_graph` 有輸出 |
-| Cross-file 箭頭起點不精確 | `struct_view.js` | 箭頭應從 field badge 出發，但落回 box bottom-center。`data-sv-name` DOM selector mismatch |
+| ~~Cross-file 箭頭起點不精確~~ | ~~`struct_view.js`~~ | ✅ **已修復（本 session）**：改用 `offsetLeft/offsetTop` 鏈追蹤計算 SVG 座標，箭頭從 method badge 精確出發 |
+| ~~SVG 圖層在卡片後面~~ | ~~`struct_view.css`~~ | ✅ **已修復（本 session）**：`#sv-arrows { z-index: 10 }`，高於 `#sv-grid { z-index: 2 }` |
+| Structure View 重新渲染後箭頭不更新 | `struct_view.js` | 視窗 resize / scroll 後箭頭位置未重新計算。目前只在 render 時畫一次，需要監聽 ResizeObserver |
 
 ---
 
-## 六、Integration Points
+## 五・五、本 Session 變更記錄 (最新在上)
+
+### 🔧 Session：Structure View 單一畫面 + 跨 class 箭頭修復
+
+**修改檔案：`static/struct_view.js`、`static/struct_view.css`**
+
+#### 需求
+使用者確認：Structure View 只需要一個畫面。點檔案 → Structure 按鈕後，應顯示該檔案所有 class（PUBLIC/PRIVATE/FIELDS）並用箭頭串連，類似 Sourcetrail 截圖的模式。不需要第二畫面（Symbol-Centric Pivot 模式）。
+
+#### 完成的修改
+
+**1. 移除自動切換到 Symbol-Centric 模式（`struct_view.js`）**
+- 刪除 `svShowSvView()` 內的 Phase 2 auto-switch 程式碼（`_svFindPrimarySymbol` + `svShowSymbol` 分支）
+- 刪除末尾包裹 `svShowSvView` 的 IIFE patch
+- 現在永遠執行 `_svRender(src, ext, fname)`，即全檔案 grid 視圖
+
+**2. 新增跨 class method call 箭頭（`_svDrawCallArrows(svg)`）**
+- 讀取 `DATA.funcs_by_file[fileRel]` + `DATA.func_edges_by_file[fileRel]`
+- 為每條跨不同 class 的 caller→callee edge 繪製橘色 bezier 箭頭
+- 箭頭從 method badge DOM 元素精確出發（不是 class box 中心）
+- 每個 unique `callerLabel→calleeLabel` pair 只畫一條（deduped）
+- 點擊箭頭：高亮兩端 badge + 兩個 class box，並跳到 callee 定義行
+
+**3. 修復箭頭座標系統（`_svDrawCallArrows` 使用 `offsetLeft/offsetTop` 鏈）**
+- 舊問題：`getBoundingClientRect() + _svMakeCoordMapper()` 在 SVG 嵌套於 tGroup 內部時座標偏移
+- 新做法：`offsetLeft/offsetTop/offsetParent` 向上遍歷到 `tGroup`，直接得到 tGroup layout 空間座標（= SVG 座標系）
+- 不受 scroll、viewport 位置、CSS transform 影響
+
+**4. 修復 SVG z-index（`struct_view.css`）**
+- `#sv-arrows { z-index: 1 }` → `z-index: 10`
+- 確保箭頭繪製在 class card（`#sv-grid z-index: 2`）之上
+
+**5. 改用 double `requestAnimationFrame`**
+- `requestAnimationFrame(() => _svDrawArrows(...))` → `requestAnimationFrame(() => requestAnimationFrame(() => ...))`
+- 確保 flex 佈局完全 paint 後才量測 badge 位置
+
+**6. 新增 SVG marker 與 CSS**
+- `#sv-ah-call` marker（橘色實心三角）
+- `.sv-arrow-call` 樣式（`stroke: #fb923c99`，hover 加粗）
+
+**7. 簡化 header**
+- 移除 Prev/Next 按鈕（對應移除 Prev/Next 導航按鈕，保持 UI 簡潔）
+
+#### 注意事項（給下一位 AI）
+- `svShowSymbol()` 和相關的 Phase 2 Symbol-Centric 代碼**仍保留在檔案中**（約第 1500–2200 行），只是不再自動觸發。若未來要恢復，取消 IIFE 或手動呼叫即可。
+- `_svDrawCallArrows` 依賴 `DATA.funcs_by_file` + `DATA.func_edges_by_file`，如果後端沒有這兩個 key（例如分析失敗），箭頭不會出現但不會報錯。
+- 箭頭在視窗 resize 後不會自動重繪（已列入 Tech Debt）。
+
+---
 
 ```
 viz.js  ──calls──►  struct_view.js exposed globals:
@@ -463,7 +513,7 @@ detector.py         專案類型自動偵測
 static/
   viz.js            主前端 (~7600 行)
   viz.css           主 stylesheet (~3000 行)
-  struct_view.js    Structure View plugin (~1100 行)
+  struct_view.js    Structure View plugin (~2300 行，含 Phase 2 Symbol 模式殘留代碼)
   struct_view.css   Structure View styles
   i18n.js           中英翻譯
   themes.css        主題樣式

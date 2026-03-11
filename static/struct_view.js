@@ -103,15 +103,8 @@ window.svShowSvView = function () {
     if (sv) sv.classList.add('active');
     const btn = document.getElementById('struct-toggle-btn');
     if (btn) btn.classList.add('active');
-    // Phase 2: try symbol-centric mode first
-    const _p2sym = _svFindPrimarySymbol(_sv._fileRel);
-    if (_p2sym && window.DATA?.symbol_index?.[_p2sym]) {
-        _svSym.history = [];
-        _svSym.activeId = null;
-        window.svShowSymbol(_p2sym);
-    } else {
-        _svRender(_sv._src, _sv._ext, _sv._fname);
-    }
+    // Always render the full-file grid (all classes, PUBLIC/PRIVATE, cross-class arrows)
+    _svRender(_sv._src, _sv._ext, _sv._fname);
 };
 
 // Hide the sv-view and restore cy
@@ -150,6 +143,12 @@ window.svHideSvView = function () {
         const cgBtn = document.getElementById('graph-toggle-btn');
         if (cgBtn) cgBtn.classList.add('active');
     }
+
+    // Stop local arrow ResizeObserver
+    if (_sv._localResizeObserver) {
+        _sv._localResizeObserver.disconnect();
+    }
+    clearTimeout(_sv._localArrowTimer);
 };
 
 // Toggle from button click
@@ -440,10 +439,14 @@ function _svRender(src, ext, fname) {
         <span class="sv-header-title" style="display:flex;align-items:center;gap:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="8" height="6" rx="1"></rect><path d="M12 9v4"></path><path d="M5 13h14"></path><path d="M5 13v3"></path><rect x="2" y="16" width="6" height="5" rx="1"></rect><path d="M19 13v3"></path><rect x="16" y="16" width="6" height="5" rx="1"></rect></svg>Structure<span style="color:var(--muted)">·</span><code>${_svEsc(fname)}</code></span>
         <span class="sv-header-count">${classes.length} class${classes.length !== 1 ? 'es' : ''}</span>
         <div class="sv-header-actions">
-            <button class="sv-nav-btn" onclick="typeof goL2Prev === 'function' && goL2Prev()" title="Previous">&#x21A9;</button>
-            <button class="sv-nav-btn" onclick="typeof goL2Next === 'function' && goL2Next()" title="Next">&#x21AA;</button>
+            <div class="sv-legend">
+                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-cross"></span>cross-class</span>
+                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-inner"></span>pub→priv</span>
+                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-inherit"></span>inherit</span>
+                <span class="sv-legend-item"><span class="sv-legend-line sv-legend-uses"></span>uses</span>
+            </div>
             <button class="sv-ext-btn ${_sv.showExternal ? 'active' : ''}" onclick="window._svToggleExternal && window._svToggleExternal(this)">
-                External Dependencies: ${_sv.showExternal ? 'On' : 'Off'}
+                ↗ Ext.Deps ${_sv.showExternal ? 'On' : 'Off'}
             </button>
             <button class="sv-close-btn" onclick="svToggleStructView()" title="Close Structure View">✕</button>
         </div>`;
@@ -459,9 +462,11 @@ function _svRender(src, ext, fname) {
     svg.id = 'sv-arrows';
     svg.setAttribute('aria-hidden', 'true');
     svg.innerHTML = `<defs>
-        <marker id="sv-ah-uses"       markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f59e0baa"/></marker>
+        <marker id="sv-ah-uses"       markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fbbf24bb"/></marker>
         <marker id="sv-ah-inherit"    markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#60a5faaa"/></marker>
         <marker id="sv-ah-cross-file" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f97316cc"/></marker>
+        <marker id="sv-ah-call"       markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fb923ccc"/></marker>
+        <marker id="sv-ah-call-inner" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a78bfacc"/></marker>
     </defs>`;
 
     const grid = document.createElement('div');
@@ -489,12 +494,16 @@ function _svRender(src, ext, fname) {
         applyTransform();
     }
 
-    // Local classes go into a flex-wrap sub-area; ghost column added later alongside
+    // ── Topological sort: callers on left, callees on right ───────────────────
+    const _sortedClasses = _svTopoSort(classes);
+
+    // Local classes go into a flex-wrap sub-area; ghost column added later
     const localArea = document.createElement('div');
     localArea.className = 'sv-local-area';
     grid.appendChild(localArea);
 
-    classes.forEach((cls, ci) => {
+    _sortedClasses.forEach((cls) => {
+        const ci = classes.indexOf(cls);
         const box = document.createElement('div');
         box.className = 'sv-class-box';
         box.id = `sv-cls-${ci}`;
@@ -523,7 +532,7 @@ function _svRender(src, ext, fname) {
             html += `<div class="sv-section"><div class="sv-section-hdr"><span>🌐</span> PUBLIC</div><div class="sv-items">
             ${show.map((m, mi) => {
                 const col = _SV_COLORS[(ci * 5 + mi) % _SV_COLORS.length];
-                return `<span class="sv-method" style="background:${col}1a;border-color:${col}88;color:${col}" data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`;
+                return `<span class="sv-method" style="background:${col}1a;border-color:${col}88;color:${col}" data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}" data-sv-access="public" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`;
             }).join('')}
             ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}</div></div>`;
         }
@@ -531,7 +540,7 @@ function _svRender(src, ext, fname) {
         if (cls.private_methods.length > 0) {
             const show = cls.private_methods.slice(0, 14), extra = cls.private_methods.length - show.length;
             html += `<div class="sv-section"><div class="sv-section-hdr"><span>🏠</span> PRIVATE</div><div class="sv-items">
-            ${show.map(m => `<span class="sv-method sv-method-priv" data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`).join('')}
+            ${show.map(m => `<span class="sv-method sv-method-priv" data-sv-class="${ci}" data-sv-line="${m.line}" data-sv-name="${_svEsc(m.name)}" data-sv-access="private" title="${_svEsc(m.name)}">${_svEsc(m.name)}</span>`).join('')}
             ${extra > 0 ? `<span class="sv-more">+${extra}</span>` : ''}</div></div>`;
         }
 
@@ -540,7 +549,34 @@ function _svRender(src, ext, fname) {
     });
 
     _svAttachBadgeHandlers(scroll);
-    requestAnimationFrame(() => _svDrawArrows(classes, svg, scroll));
+
+    // ── Wire a ResizeObserver so arrows always stick to their badges ──────────
+    // Any flex-wrap reflow (window resize, code panel open/close) re-triggers draw.
+    // We store refs on _sv so the observer survives re-renders.
+    _sv._localArrowClasses = classes;
+    _sv._localArrowSvg     = svg;
+    _sv._localArrowScroll  = scroll;
+
+    const _redrawLocal = () => {
+        if (!_sv.active) return;
+        clearTimeout(_sv._localArrowTimer);
+        _sv._localArrowTimer = setTimeout(() => {
+            _svDrawArrows(_sv._localArrowClasses, _sv._localArrowSvg, _sv._localArrowScroll);
+        }, 30);
+    };
+
+    if (!_sv._localResizeObserver) {
+        _sv._localResizeObserver = new ResizeObserver(_redrawLocal);
+    }
+    _sv._localResizeObserver.disconnect();
+    _sv._localResizeObserver.observe(localArea);
+    const svView = document.getElementById('sv-view');
+    if (svView) _sv._localResizeObserver.observe(svView);
+
+    // Initial draw — double rAF ensures flex layout is fully painted first
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+        _svDrawArrows(classes, svg, scroll)
+    ));
 
     // ── Async: fetch cross-file data from /structure endpoint ─────────────
     _svFetchAndApplyCrossFile(++_sv._renderToken, classes, svg, scroll, grid);
@@ -708,6 +744,76 @@ function _svTension(p1, p2) {
 
 // -- Arrow drawing with click handlers -----------------------------------------
 
+// ── Topological sort: left = callers (root), right = callees (leaves) ─────────
+function _svTopoSort(classes) {
+    const fileRel = _sv._fileRel;
+    const allFuncs = window.DATA?.funcs_by_file?.[fileRel] || [];
+    const allEdges = window.DATA?.func_edges_by_file?.[fileRel] || [];
+
+    const labelToCI = new Map();
+    classes.forEach((cls, ci) => {
+        cls.public_methods.forEach(m  => labelToCI.set(m.name, ci));
+        cls.private_methods.forEach(m => labelToCI.set(m.name, ci));
+    });
+
+    const classEdges = new Set();
+    const inDeg = new Array(classes.length).fill(0);
+    const adj   = Array.from({ length: classes.length }, () => new Set());
+
+    allEdges.forEach(({ s, t }) => {
+        const sf = allFuncs[s], tf = allFuncs[t];
+        if (!sf || !tf) return;
+        const fromCI = labelToCI.get(sf.label);
+        const toCI   = labelToCI.get(tf.label);
+        if (fromCI === undefined || toCI === undefined || fromCI === toCI) return;
+        const key = `${fromCI}→${toCI}`;
+        if (classEdges.has(key)) return;
+        classEdges.add(key);
+        adj[fromCI].add(toCI);
+        inDeg[toCI]++;
+    });
+
+    // Inheritance: parent left of child
+    const boxMap = {};
+    classes.forEach((cls, i) => { boxMap[cls.name] = i; });
+    classes.forEach((cls, ci) => {
+        cls.inherits.forEach(parent => {
+            const pi = boxMap[parent];
+            if (pi !== undefined && pi !== ci) {
+                const key = `${pi}→${ci}`;
+                if (!classEdges.has(key)) {
+                    classEdges.add(key);
+                    adj[pi].add(ci);
+                    inDeg[ci]++;
+                }
+            }
+        });
+    });
+
+    // BFS Kahn's — assign column depth
+    const col = new Array(classes.length).fill(0);
+    const queue = [];
+    for (let i = 0; i < classes.length; i++) {
+        if (inDeg[i] === 0) queue.push(i);
+    }
+    const visited = new Set();
+    while (queue.length) {
+        const ci = queue.shift();
+        if (visited.has(ci)) continue;
+        visited.add(ci);
+        adj[ci].forEach(nxt => {
+            col[nxt] = Math.max(col[nxt], col[ci] + 1);
+            inDeg[nxt]--;
+            if (inDeg[nxt] <= 0 && !visited.has(nxt)) queue.push(nxt);
+        });
+    }
+
+    return [...classes].sort((a, b) => {
+        const ia = classes.indexOf(a), ib = classes.indexOf(b);
+        return col[ia] - col[ib] || a.name.localeCompare(b.name);
+    });
+}
+
 function _svDrawArrows(classes, svg, scroll) {
     svg.querySelectorAll('.sv-local-arrow').forEach(p => p.remove());
 
@@ -718,68 +824,162 @@ function _svDrawArrows(classes, svg, scroll) {
     classes.forEach((cls, fi) => {
         cls.inherits.forEach(parent => {
             if (boxMap[parent] !== undefined)
-                arrows.push({
-                    from: fi, to: boxMap[parent], type: 'inherit',
-                    targetLine: classes[boxMap[parent]].line, anchorName: null
-                });
+                arrows.push({ from: fi, to: boxMap[parent], type: 'inherit',
+                    targetLine: classes[boxMap[parent]].line, anchorName: null });
         });
         cls.fields.forEach(f => {
             const clean = f.name.replace(/^_+|_+$/g, '');
             classes.forEach((other, ti) => {
                 if (ti !== fi && other.name.toLowerCase() === clean.toLowerCase())
-                    arrows.push({
-                        from: fi, to: ti, type: 'uses',
-                        targetLine: f.line, anchorName: f.name
-                    });
+                    arrows.push({ from: fi, to: ti, type: 'uses',
+                        targetLine: f.line, anchorName: f.name });
             });
         });
     });
 
-    if (arrows.length === 0) return;
+    // Inheritance + field-usage arrows (viewport mapper is fine for box-level)
+    if (arrows.length > 0) {
+        const toSVG = _svMakeCoordMapper(scroll);
+        arrows.forEach(({ from, to, type, targetLine, anchorName }) => {
+            const fe = document.getElementById(`sv-cls-${from}`);
+            const te = document.getElementById(`sv-cls-${to}`);
+            if (!fe || !te) return;
 
-    // Build coordinate mapper ONCE (parses tGroup transform, measures its rect)
-    const toSVG = _svMakeCoordMapper(scroll);
+            let startEl = fe;
+            if (anchorName)
+                for (const b of fe.querySelectorAll('.sv-field'))
+                    if (b.dataset.svName === anchorName) { startEl = b; break; }
 
-    arrows.forEach(({ from, to, type, targetLine, anchorName }) => {
-        const fe = document.getElementById(`sv-cls-${from}`);
-        const te = document.getElementById(`sv-cls-${to}`);
-        if (!fe || !te) return;
+            const targetEl = te.querySelector('.sv-class-hdr') || te;
+            const srcPts = _svGetPivots(startEl, toSVG);
+            const dstPts = _svGetPivots(targetEl, toSVG);
+            if (!srcPts || !dstPts) return;
 
-        // Source: specific field badge if available, else class box
-        let startEl = fe;
-        if (anchorName)
-            for (const b of fe.querySelectorAll('.sv-field'))
-                if (b.dataset.svName === anchorName) { startEl = b; break; }
+            const { si, ti } = _svBestPair(srcPts, dstPts, 'H');
+            const p1 = srcPts[si], p2 = dstPts[ti];
+            const d = _svBezierPath(p1, si, p2, ti, _svTension(p1, p2));
 
-        const targetEl = te.querySelector('.sv-class-hdr') || te;
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            path.classList.add('sv-arrow', 'sv-local-arrow', `sv-arrow-${type}`);
+            path.setAttribute('marker-end', `url(#sv-ah-${type})`);
+            path.style.pointerEvents = 'stroke';
+            path.style.cursor = 'pointer';
+            path.addEventListener('click', (e) => {
+                e.stopPropagation();
+                document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
+                path.classList.add('sv-arrow-active');
+                document.getElementById(`sv-cls-${from}`)?.classList.add('sv-active-box');
+                document.getElementById(`sv-cls-${to}`)?.classList.add('sv-active-box');
+                if (anchorName)
+                    for (const b of (document.getElementById(`sv-cls-${from}`)?.querySelectorAll('.sv-field') || []))
+                        if (b.dataset.svName === anchorName) { b.classList.add('sv-active-badge'); break; }
+                _svJumpCodeToLine(targetLine);
+            });
+            svg.appendChild(path);
+        });
+    }
 
-        const srcPts = _svGetPivots(startEl, toSVG);
-        const dstPts = _svGetPivots(targetEl, toSVG);
+    // Call arrows: cross-class (orange) and same-class pub→priv (violet)
+    _svDrawCallArrows(svg);
+}
+
+
+// ── Call-graph arrows ──────────────────────────────────────────────────────────
+// Uses offsetLeft/offsetTop traversal (= tGroup layout space = SVG coords).
+// This is re-called by ResizeObserver on every reflow, so arrows always stick.
+function _svDrawCallArrows(svg) {
+    const tGroup = svg.parentElement;
+    if (!tGroup) return;
+
+    const fileRel = _sv._fileRel;
+    const allFuncs = window.DATA?.funcs_by_file?.[fileRel] || [];
+    const allEdges = window.DATA?.func_edges_by_file?.[fileRel] || [];
+    if (!allFuncs.length || !allEdges.length) return;
+
+    // Compute element rect in tGroup layout space (= SVG coord space)
+    function _localRect(el) {
+        let x = 0, y = 0, cur = el;
+        while (cur && cur !== tGroup) {
+            x += (cur.offsetLeft || 0);
+            y += (cur.offsetTop  || 0);
+            cur = cur.offsetParent;
+        }
+        return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+    }
+
+    function _pivots(el) {
+        const r = _localRect(el);
+        if (!r.w && !r.h) return null;
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        return [
+            { x: cx,        y: r.y },          // 0 top-center
+            { x: r.x + r.w, y: cy },            // 1 right-center
+            { x: cx,        y: r.y + r.h },     // 2 bottom-center
+            { x: r.x,       y: cy },            // 3 left-center
+        ];
+    }
+
+    // Build label → {el, access, ci} map
+    const labelMap = new Map();
+    document.querySelectorAll('#sv-grid .sv-method[data-sv-name]').forEach(badge => {
+        const name = badge.dataset.svName;
+        if (!labelMap.has(name)) {
+            labelMap.set(name, {
+                el:     badge,
+                access: badge.dataset.svAccess || (badge.classList.contains('sv-method-priv') ? 'private' : 'public'),
+                ci:     parseInt(badge.dataset.svClass, 10),
+            });
+        }
+    });
+
+    const seen = new Set();
+    allEdges.forEach(({ s, t }) => {
+        const sf = allFuncs[s], tf = allFuncs[t];
+        if (!sf || !tf) return;
+
+        const from = labelMap.get(sf.label);
+        const to   = labelMap.get(tf.label);
+        if (!from || !to || from.el === to.el) return;
+
+        const isCross          = from.ci !== to.ci;
+        const isInnerPubToPriv = !isCross && from.access === 'public' && to.access === 'private';
+        if (!isCross && !isInnerPubToPriv) return;
+
+        const key = `${sf.label}→${tf.label}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const srcPts = _pivots(from.el);
+        const dstPts = _pivots(to.el);
         if (!srcPts || !dstPts) return;
 
-        const { si, ti } = _svBestPair(srcPts, dstPts, 'H');
+        const { si, ti } = _svBestPair(srcPts, dstPts, isCross ? 'H' : '');
         const p1 = srcPts[si], p2 = dstPts[ti];
         const d = _svBezierPath(p1, si, p2, ti, _svTension(p1, p2));
 
+        const arrowClass = isCross ? 'sv-arrow-call' : 'sv-arrow-call-inner';
+        const markerId   = isCross ? 'sv-ah-call'    : 'sv-ah-call-inner';
+
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', d);
-        path.classList.add('sv-arrow', 'sv-local-arrow', `sv-arrow-${type}`);
-        path.setAttribute('marker-end', `url(#sv-ah-${type})`);
+        path.classList.add('sv-arrow', 'sv-local-arrow', arrowClass);
+        path.setAttribute('marker-end', `url(#${markerId})`);
         path.style.pointerEvents = 'stroke';
         path.style.cursor = 'pointer';
-
-        path.addEventListener('click', (e) => {
+        path.addEventListener('click', e => {
             e.stopPropagation();
             document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
+            document.querySelectorAll('.sv-active-badge').forEach(b => b.classList.remove('sv-active-badge'));
+            document.querySelectorAll('.sv-active-box').forEach(b => b.classList.remove('sv-active-box'));
             path.classList.add('sv-arrow-active');
-            document.getElementById(`sv-cls-${from}`)?.classList.add('sv-active-box');
-            document.getElementById(`sv-cls-${to}`)?.classList.add('sv-active-box');
-            if (anchorName)
-                for (const b of (document.getElementById(`sv-cls-${from}`)?.querySelectorAll('.sv-field') || []))
-                    if (b.dataset.svName === anchorName) { b.classList.add('sv-active-badge'); break; }
-            _svJumpCodeToLine(targetLine);
+            from.el.classList.add('sv-active-badge');
+            to.el.classList.add('sv-active-badge');
+            document.getElementById(`sv-cls-${from.ci}`)?.classList.add('sv-active-box');
+            document.getElementById(`sv-cls-${to.ci}`)?.classList.add('sv-active-box');
+            const lineIdx = parseInt(to.el.dataset.svLine, 10);
+            if (!isNaN(lineIdx)) _svJumpCodeToLine(lineIdx);
         });
-
         svg.appendChild(path);
     });
 }
@@ -1801,26 +2001,8 @@ function _svFindPrimarySymbol(fileRel) {
 }
 window._svFindPrimarySymbol = _svFindPrimarySymbol;
 
-// ─── Patch svShowSvView to auto-launch Symbol mode ───────────────────────────
-//  We wrap the original and override the final render call.
-(function () {
-    const _origShowSvView = window.svShowSvView;
-    window.svShowSvView = function () {
-        // Run all the original setup (hide cy canvas, show panel, etc.)
-        _origShowSvView();
-
-        // If symbol mode was NOT triggered by the original (it renders via _svRender),
-        // check if we should upgrade to symbol mode instead.
-        const symId = _svFindPrimarySymbol(_sv._fileRel);
-        if (symId && window.DATA?.symbol_index?.[symId]) {
-            // Reset history and navigate to primary symbol
-            _svSym.history = [];
-            _svSym.activeId = null;
-            window.svShowSymbol(symId);
-        }
-        // If no symbol found, original _svRender fallback remains (nothing to do).
-    };
-})();
+// ─── Auto-launch Symbol mode DISABLED ────────────────────────────────────────
+//  Structure view always uses _svRender (full-file grid).
 
 // ─── Destroy svCy on sv-view hide ────────────────────────────────────────────
 (function () {
