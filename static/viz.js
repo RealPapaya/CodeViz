@@ -1,4 +1,4 @@
-﻿/* viz.js — BIOSVIZ Visualization Logic v3
+/* viz.js — BIOSVIZ Visualization Logic v3
    Sourcetrail-style: graph on left, live source code on right.
    Uses cytoscape.js (canvas). No D3. No SVG renderer.
 */
@@ -3122,12 +3122,51 @@ function renderCode(src, ext, fname, langHint) {
     }
 
     const wrap = document.getElementById('cp-code-wrap');
+
     const lineDivs = highlightedLines.map((hl, i) =>
         `<div class="code-line" id="cl-${i}"><span class="line-num">${i + 1}</span><span class="line-content">${hl}</span></div>`
     ).join('');
 
     wrap.innerHTML = `<pre><code class="hljs language-${lang}">${lineDivs}</code></pre>`;
     wrap.style.display = '';
+    
+    wrap.onclick = (e) => {
+        let range;
+        if (document.caretRangeFromPoint) {
+            range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        } else if (document.caretPositionFromPoint) {
+            const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+            if (pos) {
+                range = document.createRange();
+                range.setStart(pos.offsetNode, pos.offset);
+            }
+        }
+        if (!range) return;
+        const node = range.startContainer;
+        if (node.nodeType !== 3) return; // Node.TEXT_NODE
+        
+        const offset = range.startOffset;
+        const text = node.textContent;
+        let start = offset, end = offset;
+        
+        // Adjust if clicking precisely around word boundaries
+        if (start > 0 && start === text.length && /[A-Za-z0-9_$#]/.test(text[start - 1])) {
+            start--; end--;
+        } else if (start > 0 && !/[A-Za-z0-9_$#]/.test(text[start]) && /[A-Za-z0-9_$#]/.test(text[start - 1])) {
+            start--; end--;
+        }
+
+        while (start > 0 && /[A-Za-z0-9_$#]/.test(text[start - 1])) start--;
+        while (end < text.length && /[A-Za-z0-9_$#]/.test(text[end])) end++;
+        
+        if (start < end) {
+            const word = text.slice(start, end);
+            if (window.svHighlightBadgeByName) {
+                svHighlightBadgeByName(word);
+            }
+        }
+    };
+
     // ── Structure View hook ──────────────────────────────────────────────────
     if (window.svAfterRenderCode) svAfterRenderCode(src, ext, fname);
 }

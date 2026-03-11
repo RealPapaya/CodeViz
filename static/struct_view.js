@@ -19,7 +19,7 @@ const _sv = {
     _fileRel: '',     // current file rel path
     _activeBadge: null,
     _renderToken: 0,  // incremented on each render — stale async results are dropped
-    showExternal: true, // true to show external dependencies
+    showExternal: false, // true to show external dependencies
 };
 window._sv = _sv;
 
@@ -66,6 +66,15 @@ window.svShowSvView = function () {
     if (!_sv._src) { svHideSvView(); return; }
     _sv.active = true;
     
+    // Switch to structure mode if not already active to align other UI states
+    if (typeof state !== 'undefined' && state.level >= 1) {
+        const structBtn = document.getElementById('struct-toggle-btn');
+        if (structBtn && !structBtn.classList.contains('active')) {
+             if (typeof window.switchMode === 'function') {
+                 window.switchMode('structure');
+             }
+        }
+    }
     const cyEl = document.getElementById('cy');
     if (cyEl) {
         cyEl.style.opacity = '0';
@@ -155,6 +164,7 @@ window.svAfterRenderCode = function (src, ext, fname) {
     _sv._src = src;
     _sv._ext = ext || '';
     _sv._fname = fname || '';
+    _sv.classes = _svParseClasses(src, ext);
 
     // If structure was active, re-render live
     if (_sv.active) {
@@ -589,9 +599,109 @@ function _svJumpCodeToLine(lineIdx) {
     setTimeout(() => lineEl.classList.remove('sv-jump-highlight'), 1500);
 }
 
+
+// ── Sourcetrail-style pivot point system ──────────────────────────────────────
+// Ported from QtLineItemBase::getPivotPoints + getPath().
+//
+// KEY FIX: getScreenCTM() does NOT include CSS transforms on parent HTML divs.
+// tGroup is an HTML element (not SVG), so we parse its transform string directly.
+// We set it as "translate(Xpx, Ypx) scale(Z)" — so extraction is exact.
+
+/**
+ * Build a viewport→SVG coordinate converter from the tGroup's CSS transform.
+ *
+ * SVG is at position:absolute top:0 left:0 inside tGroup (transformOrigin:'0 0').
+ * Therefore SVG(0,0) renders at the tGroup's getBoundingClientRect() top-left.
+ * And scale comes directly from the transform string we wrote ourselves.
+ *
+ *   svgX = (viewportX - tGroupRect.left) / scale
+ *   svgY = (viewportY - tGroupRect.top)  / scale
+ */
+function _svMakeCoordMapper(scroll) {
+    const tGroup = scroll?.querySelector('.sv-transform-group');
+    if (!tGroup) return (vpX, vpY) => ({ x: vpX, y: vpY });
+    const tgR   = tGroup.getBoundingClientRect();
+    const sm    = (tGroup.style.transform || '').match(/scale\((-?[\d.]+)\)/);
+    const scale = sm ? parseFloat(sm[1]) : 1;
+    return (vpX, vpY) => ({
+        x: (vpX - tgR.left) / scale,
+        y: (vpY - tgR.top)  / scale,
+    });
+}
+
+/**
+ * Compute 4 candidate connection points for a DOM element, in SVG coords.
+ *   [0] top-center  [1] right-center  [2] bottom-center  [3] left-center
+ *
+ * @param {Element}  el      DOM element
+ * @param {Function} toSVG   (vpX, vpY) → {x, y}  from _svMakeCoordMapper
+ */
+function _svGetPivots(el, toSVG) {
+    const r = el.getBoundingClientRect();
+    if (r.width + r.height === 0) return null;
+    const cx = r.left + r.width  / 2;
+    const cy = r.top  + r.height / 2;
+    return [
+        toSVG(cx,      r.top),     // [0] top-center
+        toSVG(r.right, cy),        // [1] right-center
+        toSVG(cx,      r.bottom),  // [2] bottom-center
+        toSVG(r.left,  cy),        // [3] left-center
+    ];
+}
+
+// Outward direction unit vectors for each side (used for bezier control arms)
+const _SV_SIDE_DIR = [
+    { x:  0, y: -1 },  // [0] top    → exit upward
+    { x:  1, y:  0 },  // [1] right  → exit rightward
+    { x:  0, y:  1 },  // [2] bottom → exit downward
+    { x: -1, y:  0 },  // [3] left   → exit leftward
+];
+
+/**
+ * Find the closest same-axis (source side, target side) pair.
+ * Same-axis: horizontal pair (sides 1,3) or vertical pair (sides 0,2).
+ * This ensures arrows exit/enter perpendicular to the element surface.
+ *
+ * @param {Array}  srcPts  4 SVG points for source
+ * @param {Array}  dstPts  4 SVG points for target
+ * @param {string} route   'H'=prefer horizontal  'V'=prefer vertical  ''=any
+ */
+function _svBestPair(srcPts, dstPts, route) {
+    let best = { si: 1, ti: 3, dist: Infinity };
+    for (let si = 0; si < 4; si++) {
+        for (let ti = 0; ti < 4; ti++) {
+            if ((si % 2) !== (ti % 2)) continue;          // same-axis only
+            if (route === 'H' && si % 2 === 0) continue;  // skip vertical pairs
+            if (route === 'V' && si % 2 === 1) continue;  // skip horizontal pairs
+            const dx = srcPts[si].x - dstPts[ti].x;
+            const dy = srcPts[si].y - dstPts[ti].y;
+            const d  = dx * dx + dy * dy;
+            if (d < best.dist) best = { si, ti, dist: d };
+        }
+    }
+    return best;
+}
+
+/**
+ * Build cubic bezier SVG path string (Sourcetrail pull-out style).
+ * Control points extend outward from each endpoint perpendicular to its surface.
+ */
+function _svBezierPath(p1, si, p2, ti, tension) {
+    const d1 = _SV_SIDE_DIR[si], d2 = _SV_SIDE_DIR[ti];
+    return `M${p1.x},${p1.y} C${p1.x + d1.x * tension},${p1.y + d1.y * tension} ${p2.x + d2.x * tension},${p2.y + d2.y * tension} ${p2.x},${p2.y}`;
+}
+
+// Adaptive bezier arm length (in SVG-space pixels)
+function _svTension(p1, p2) {
+    const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    return Math.max(30, Math.min(d * 0.38, 110));
+}
+
 // -- Arrow drawing with click handlers -----------------------------------------
 
 function _svDrawArrows(classes, svg, scroll) {
+    svg.querySelectorAll('.sv-local-arrow').forEach(p => p.remove());
+
     const boxMap = {};
     classes.forEach((cls, i) => { boxMap[cls.name] = i; });
 
@@ -599,47 +709,48 @@ function _svDrawArrows(classes, svg, scroll) {
     classes.forEach((cls, fi) => {
         cls.inherits.forEach(parent => {
             if (boxMap[parent] !== undefined)
-                arrows.push({ from: fi, to: boxMap[parent], type: 'inherit', targetLine: classes[boxMap[parent]].line, anchorName: null });
+                arrows.push({ from: fi, to: boxMap[parent], type: 'inherit',
+                              targetLine: classes[boxMap[parent]].line, anchorName: null });
         });
         cls.fields.forEach(f => {
             const clean = f.name.replace(/^_+|_+$/g, '');
             classes.forEach((other, ti) => {
                 if (ti !== fi && other.name.toLowerCase() === clean.toLowerCase())
-                    arrows.push({ from: fi, to: ti, type: 'uses', targetLine: f.line, anchorName: f.name });
+                    arrows.push({ from: fi, to: ti, type: 'uses',
+                                  targetLine: f.line, anchorName: f.name });
             });
         });
     });
 
     if (arrows.length === 0) return;
 
-    // Use getScreenCTM for coordinate conversion — no transform removal needed
-    const ctmInv = svg.getScreenCTM()?.inverse();
-    if (!ctmInv) return;
-    const toSVG = (px, py) => { const pt = svg.createSVGPoint(); pt.x = px; pt.y = py; return pt.matrixTransform(ctmInv); };
+    // Build coordinate mapper ONCE (parses tGroup transform, measures its rect)
+    const toSVG = _svMakeCoordMapper(scroll);
 
     arrows.forEach(({ from, to, type, targetLine, anchorName }) => {
         const fe = document.getElementById(`sv-cls-${from}`);
         const te = document.getElementById(`sv-cls-${to}`);
         if (!fe || !te) return;
 
-        // Use dataset.svName comparison — no CSS selector escaping issues
+        // Source: specific field badge if available, else class box
         let startEl = fe;
-        if (anchorName) {
+        if (anchorName)
             for (const b of fe.querySelectorAll('.sv-field'))
                 if (b.dataset.svName === anchorName) { startEl = b; break; }
-        }
 
-        const sr  = startEl.getBoundingClientRect();
-        const hdr = te.querySelector('.sv-class-hdr') || te;
-        const hr  = hdr.getBoundingClientRect();
+        const targetEl = te.querySelector('.sv-class-hdr') || te;
 
-        const p1 = toSVG(sr.right, sr.top + sr.height / 2);
-        const p2 = toSVG(hr.left,  hr.top  + hr.height  / 2);
-        const cx = (p1.x + p2.x) / 2;
+        const srcPts = _svGetPivots(startEl, toSVG);
+        const dstPts = _svGetPivots(targetEl, toSVG);
+        if (!srcPts || !dstPts) return;
+
+        const { si, ti } = _svBestPair(srcPts, dstPts, 'H');
+        const p1 = srcPts[si], p2 = dstPts[ti];
+        const d = _svBezierPath(p1, si, p2, ti, _svTension(p1, p2));
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', `M${p1.x},${p1.y} C${cx},${p1.y} ${cx},${p2.y} ${p2.x},${p2.y}`);
-        path.classList.add('sv-arrow', `sv-arrow-${type}`);
+        path.setAttribute('d', d);
+        path.classList.add('sv-arrow', 'sv-local-arrow', `sv-arrow-${type}`);
         path.setAttribute('marker-end', `url(#sv-ah-${type})`);
         path.style.pointerEvents = 'stroke';
         path.style.cursor = 'pointer';
@@ -648,20 +759,18 @@ function _svDrawArrows(classes, svg, scroll) {
             e.stopPropagation();
             document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
             path.classList.add('sv-arrow-active');
-            const fromBox = document.getElementById(`sv-cls-${from}`);
-            const toBox   = document.getElementById(`sv-cls-${to}`);
-            if (fromBox) fromBox.classList.add('sv-active-box');
-            if (toBox)   toBox.classList.add('sv-active-box');
-            if (anchorName) {
-                for (const b of (fromBox?.querySelectorAll('.sv-field') || []))
+            document.getElementById(`sv-cls-${from}`)?.classList.add('sv-active-box');
+            document.getElementById(`sv-cls-${to}`)?.classList.add('sv-active-box');
+            if (anchorName)
+                for (const b of (document.getElementById(`sv-cls-${from}`)?.querySelectorAll('.sv-field') || []))
                     if (b.dataset.svName === anchorName) { b.classList.add('sv-active-badge'); break; }
-            }
             _svJumpCodeToLine(targetLine);
         });
 
         svg.appendChild(path);
     });
 }
+
 
 // -- Helpers --------------------------------------------------------------------
 
@@ -835,19 +944,60 @@ function _svHighlightBadgeByName(name) {
     document.querySelectorAll('.sv-active-badge').forEach(b => b.classList.remove('sv-active-badge'));
     document.querySelectorAll('.sv-active-box').forEach(b => b.classList.remove('sv-active-box'));
 
-    // querySelector with escaped name attribute
     const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const badge = document.querySelector(`.sv-method[data-sv-name="${escaped}"]`);
-    if (!badge) return;
+    let badge = document.querySelector(`[data-sv-name="${escaped}"]`);
+    let classBox = null;
 
-    badge.classList.add('sv-active-badge');
-    badge.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    _sv._activeBadge = badge;
+    if (!badge) {
+        const headers = document.querySelectorAll('.sv-class-hdr .sv-class-name');
+        for (const h of headers) {
+            if (h.textContent === name) {
+                badge = h.closest('.sv-class-hdr');
+                classBox = badge.closest('.sv-class-box');
+                break;
+            }
+        }
+    } else {
+        const classIdx = parseInt(badge.dataset.svClass, 10);
+        classBox = document.getElementById(`sv-cls-${classIdx}`);
+    }
 
-    const classIdx = parseInt(badge.dataset.svClass, 10);
-    const box = document.getElementById(`sv-cls-${classIdx}`);
-    if (box) box.classList.add('sv-active-box');
+    if (!badge && !classBox) return;
+
+    if (badge) {
+        badge.classList.add('sv-active-badge');
+        badge.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        _sv._activeBadge = badge;
+    }
+    if (classBox) {
+        classBox.classList.add('sv-active-box');
+        if (!badge) {
+            classBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
 }
+
+window.svHighlightBadgeByName = function(name) {
+    if (_sv.classes) {
+        const exists = _sv.classes.some(cls => 
+            cls.name === name ||
+            cls.public_methods.some(m => m.name === name) ||
+            cls.private_methods.some(m => m.name === name) ||
+            cls.fields.some(f => f.name === name)
+        );
+        if (!exists) return; // Silent ignore if the word clicked is not in the structure
+    }
+
+    if (!_sv.active) {
+        if (typeof window.svShowSvView === 'function') {
+            window.svShowSvView();
+            // Short delay to let the DOM render before trying to scroll and highlight
+            setTimeout(() => _svHighlightBadgeByName(name), 50);
+            return;
+        }
+    }
+    _svHighlightBadgeByName(name);
+};
 
 // ── Cross-file arrows — Gap #1 ─────────────────────────────────────────────────
 
@@ -864,15 +1014,7 @@ async function _svFetchAndApplyCrossFile(token, classes, svg, scroll, grid) {
     const fileRel = _sv._fileRel;
     if (!jid || !fileRel) return;
 
-    // Show a subtle loading pill in the sv-header while fetching
-    const hdr = document.querySelector('#sv-view .sv-header');
-    let pill = null;
-    if (hdr) {
-        pill = document.createElement('span');
-        pill.className = 'sv-cf-loading';
-        pill.textContent = '↗ loading cross-file…';
-        hdr.appendChild(pill);
-    }
+    // No loading pill as per user request
 
     let crossData = null;
     try {
@@ -1164,67 +1306,66 @@ function _svApplyCrossFileData(crossData, classes, svg, scroll, grid) {
  * Called on first render and whenever ResizeObserver fires.
  */
 function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
-    // Remove only cross-file arrow groups (leaves local arrows intact)
     svg.querySelectorAll('.sv-cf-arrow-group').forEach(g => g.remove());
+    if (!arrowDescs.length) return;
 
-    // svg.getScreenCTM() maps SVG local → screen pixels.
-    // Its inverse maps screen pixels → SVG local coords.
-    const ctmInverse = svg.getScreenCTM()?.inverse();
-    if (!ctmInverse) return; // SVG not yet in DOM
-
-    const toSVG = (pageX, pageY) => {
-        const pt = svg.createSVGPoint();
-        pt.x = pageX; pt.y = pageY;
-        return pt.matrixTransform(ctmInverse);
-    };
+    // Build coordinate mapper from tGroup's actual CSS transform
+    // (Fixes the getScreenCTM() bug: CSS transforms on HTML parents are ignored)
+    const toSVG = _svMakeCoordMapper(scroll);
 
     arrowDescs.forEach(({ fromEl, toEl, ghostBoxEl, label, isField }) => {
-        const fr  = fromEl.getBoundingClientRect();
-        const toR = toEl.getBoundingClientRect();
+        // Skip invisible/unmounted elements
+        const fr = fromEl.getBoundingClientRect();
+        const tr = toEl.getBoundingClientRect();
+        if (fr.width + fr.height === 0 || tr.width + tr.height === 0) return;
 
-        // Skip if either endpoint is not visible (zero-size or off-DOM)
-        if (fr.width + fr.height === 0) return;
-        if (toR.width + toR.height === 0) return;
+        // ── Sourcetrail pivot-point algorithm ─────────────────────────────
+        // 4 candidate exits/entries per element → pick closest same-axis pair
+        const srcPts = _svGetPivots(fromEl, toSVG);
+        const dstPts = _svGetPivots(toEl,   toSVG);
+        if (!srcPts || !dstPts) return;
 
-        // Source: right-center of badge / box
-        const p1 = toSVG(fr.right, fr.top + fr.height / 2);
-        // Target: left-center of ghost class badge (Sourcetrail precision)
-        const p2 = toSVG(toR.left, toR.top + toR.height / 2);
+        // Ghost column is always to the right → force horizontal routing
+        // so arrows always exit right-edge of badges, enter left-edge of ghost
+        const { si, ti } = _svBestPair(srcPts, dstPts, 'H');
+        const p1 = srcPts[si];
+        const p2 = dstPts[ti];
+        const d = _svBezierPath(p1, si, p2, ti, _svTension(p1, p2));
 
-        const dx = p2.x - p1.x;
-        const tension = Math.max(28, Math.min(Math.abs(dx) * 0.42, 120));
-        const d = `M${p1.x},${p1.y} C${p1.x + tension},${p1.y} ${p2.x - tension},${p2.y} ${p2.x},${p2.y}`;
-
+        // ── Build SVG group ────────────────────────────────────────────────
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.classList.add('sv-cf-arrow-group');
 
-        // Wide transparent hit-area
+        // Transparent wide hit-area (thin beziers are hard to hover precisely)
         const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        hit.setAttribute('d', d); hit.setAttribute('stroke', 'transparent');
-        hit.setAttribute('stroke-width', '14'); hit.setAttribute('fill', 'none');
+        hit.setAttribute('d', d);
+        hit.setAttribute('stroke', 'transparent');
+        hit.setAttribute('stroke-width', '14');
+        hit.setAttribute('fill', 'none');
         hit.style.cursor = 'pointer';
         g.appendChild(hit);
 
-        // Glow copy
+        // Glow copy (wider, behind main line)
         const glow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        glow.setAttribute('d', d); glow.classList.add('sv-arrow-cf-glow');
+        glow.setAttribute('d', d);
+        glow.classList.add('sv-arrow-cf-glow');
         g.appendChild(glow);
 
-        // Main arrow
+        // Main dashed arrow
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', d);
         path.classList.add('sv-arrow', 'sv-arrow-cross-file');
         path.setAttribute('marker-end', 'url(#sv-ah-cross-file)');
         g.appendChild(path);
 
-        // Source dot (anchors arrow visually to badge)
+        // Source dot — sits precisely at the chosen exit point on the badge/box
         const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         dot.setAttribute('cx', p1.x); dot.setAttribute('cy', p1.y);
         dot.setAttribute('r', isField ? '4' : '5');
         dot.classList.add('sv-arrow-dot-cf');
         g.appendChild(dot);
 
-        // Target dot (pin at ghost class badge)
+        // Target dot — sits on the chosen entry point of the ghost badge
         const dotT = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         dotT.setAttribute('cx', p2.x); dotT.setAttribute('cy', p2.y);
         dotT.setAttribute('r', '3');
@@ -1232,9 +1373,10 @@ function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
         g.appendChild(dotT);
 
         const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        title.textContent = label; g.appendChild(title);
+        title.textContent = label;
+        g.appendChild(title);
 
-        // Hover / click — highlight both endpoints + ghost box border
+        // ── Interaction: hover glows path + highlights both endpoints ──────
         const _activate = () => {
             g.classList.add('sv-cf-arrow-active');
             fromEl.classList.add(isField ? 'sv-active-badge' : 'sv-active-box');
@@ -1244,7 +1386,8 @@ function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
         const _deactivate = () => {
             if (g.dataset.clicked) return;
             g.classList.remove('sv-cf-arrow-active');
-            fromEl.classList.remove('sv-active-badge'); fromEl.classList.remove('sv-active-box');
+            fromEl.classList.remove('sv-active-badge');
+            fromEl.classList.remove('sv-active-box');
             toEl.classList.remove('sv-ghost-badge-active');
             ghostBoxEl.classList.remove('sv-ghost-box-active');
         };
@@ -1254,7 +1397,8 @@ function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
             el.addEventListener('click', e => {
                 e.stopPropagation();
                 document.querySelectorAll('.sv-cf-arrow-group[data-clicked]').forEach(old => {
-                    delete old.dataset.clicked; old.classList.remove('sv-cf-arrow-active');
+                    delete old.dataset.clicked;
+                    old.classList.remove('sv-cf-arrow-active');
                 });
                 document.querySelectorAll('.sv-ghost-badge-active').forEach(b => b.classList.remove('sv-ghost-badge-active'));
                 document.querySelectorAll('.sv-ghost-box-active').forEach(b => b.classList.remove('sv-ghost-box-active'));
@@ -1267,6 +1411,7 @@ function _svDrawCrossFileArrows(arrowDescs, svg, scroll) {
         svg.appendChild(g);
     });
 }
+
 
 /**
  * Public: redraw cross-file arrows. Call from viz.js when code panel opens/closes.
