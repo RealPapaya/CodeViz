@@ -7,11 +7,11 @@
 #sv-view {
     position: absolute;
     inset: 0;
-    background: var(--panel, #0d0f17);
     display: none;
     flex-direction: column;
     overflow: hidden;
     z-index: 5;
+    pointer-events: none;
 }
 
 #sv-view.active {
@@ -27,6 +27,7 @@
     background: var(--panel2, #151922);
     border-bottom: 1px solid var(--border, #2a2d3a);
     flex-shrink: 0;
+    pointer-events: auto;
 }
 
 .sv-header-title {
@@ -66,12 +67,61 @@
     color: var(--fg, #e2e8f0);
 }
 
+/* ── Structure View specific actions in Header ─────────────────────────────── */
+.sv-header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sv-nav-btn {
+    background: var(--panel3, #1a1e2e);
+    border: 1px solid var(--border, #2a2d3a);
+    color: var(--fg, #e2e8f0);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    transition: background .15s, color .15s;
+    line-height: 1;
+}
+
+.sv-nav-btn:hover {
+    background: var(--hover, rgba(255, 255, 255, .05));
+    border-color: var(--accent, #fbbf24);
+}
+
+.sv-ext-btn {
+    background: transparent;
+    border: 1px solid var(--border, #2a2d3a);
+    color: var(--muted, #64748b);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all .15s;
+    white-space: nowrap;
+}
+
+.sv-ext-btn:hover {
+    border-color: var(--accent, #fbbf24);
+    color: var(--accent, #fbbf24);
+}
+
+.sv-ext-btn.active {
+    background: rgba(245, 158, 11, .1);
+    border-color: #f59e0b;
+    color: #f59e0b;
+}
+
 /* ── Scroll area (contains grid + SVG) ───────────────────────────────────────── */
 .sv-scroll {
     flex: 1;
-    overflow: auto;
+    overflow: hidden;
     position: relative;
     padding: 24px;
+    pointer-events: none;
 }
 
 /* SVG arrow canvas */
@@ -89,9 +139,52 @@
     position: relative;
     z-index: 2;
     display: flex;
+    flex-direction: row;
+    gap: 48px;
+    align-items: flex-start;
+    pointer-events: none;
+    min-height: 100%;
+}
+
+/* Local classes wrap area (left column) */
+.sv-local-area {
+    display: flex;
     flex-wrap: wrap;
     gap: 20px;
     align-items: flex-start;
+    flex: 1;
+    pointer-events: none;
+}
+
+/* Ghost column (right column — External Dependencies) */
+.sv-ghost-column {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 200px;
+    max-width: 280px;
+    flex-shrink: 0;
+    pointer-events: auto;
+    position: relative;
+}
+
+/* Ghost column header */
+.sv-ghost-col-hdr {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #f97316bb;
+    padding: 6px 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid rgba(249, 115, 22, .2);
+    margin-bottom: 2px;
+}
+
+.sv-ghost-col-hdr-icon {
+    font-size: 13px;
 }
 
 /* ── Individual class box ─────────────────────────────────────────────────────── */
@@ -105,6 +198,7 @@
     box-shadow: 0 2px 16px rgba(0, 0, 0, .35);
     transition: box-shadow .2s, border-color .2s, transform .15s;
     flex-shrink: 0;
+    pointer-events: auto;
 }
 
 .sv-class-box:hover {
@@ -367,6 +461,7 @@
     max-height: 260px;
     display: flex;
     flex-direction: column;
+    pointer-events: auto;
     /* Slide-up entry */
     transform: translateY(100%);
     transition: transform .22s cubic-bezier(.4, 0, .2, 1);
@@ -586,11 +681,9 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   Gap #1 — Cross-file arrows & Ghost boxes  (v3 addition)
-   Ghost boxes represent classes/files from neighbouring (imported/imported-by)
-   files.  They are rendered in a separate "External Dependencies" section below
-   the local class grid.  Cross-file inheritance arrows connect local class boxes
-   to ghost boxes using the sv-arrow-cross-file path style.
+   Gap #1 — Cross-file arrows & Ghost boxes  (v4 — fixed + Sourcetrail-style)
+   Layout: local classes (left flex-wrap) + ghost column (right, fixed)
+   Arrows: source dot → smooth bezier → arrowhead. Hover glows both ends.
    ══════════════════════════════════════════════════════════════════════════════ */
 
 /* ── Loading pill shown in sv-header while /structure fetches ─────────────── */
@@ -610,51 +703,40 @@
     50%       { opacity: 1;   }
 }
 
-/* ── Separator between local and ghost sections ───────────────────────────── */
-.sv-ghost-separator {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 16px 0 8px;
-    flex-basis: 100%;   /* force it onto its own row in the flex grid */
-}
-
-.sv-ghost-sep-line {
-    flex: 1;
-    height: 1px;
-    background: var(--border, #2a2d3a);
-    opacity: .6;
-}
-
-.sv-ghost-sep-label {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: #f97316bb;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
 /* ── Ghost class box ─────────────────────────────────────────────────────── */
 .sv-ghost-box {
     background: rgba(249, 115, 22, .04);
     border: 1px dashed rgba(249, 115, 22, .35);
     border-radius: 10px;
     min-width: 180px;
-    max-width: 260px;
     overflow: hidden;
     box-shadow: 0 2px 12px rgba(0, 0, 0, .25);
     flex-shrink: 0;
-    opacity: .85;
+    opacity: .88;
     transition: opacity .2s, border-color .2s, box-shadow .2s;
+    pointer-events: auto;
 }
 
 .sv-ghost-box:hover {
     opacity: 1;
     border-color: rgba(249, 115, 22, .65);
     box-shadow: 0 4px 20px rgba(249, 115, 22, .12);
+}
+
+/* Ghost box highlighted by arrow click/hover */
+.sv-ghost-box-active {
+    border-color: #f97316 !important;
+    box-shadow: 0 0 0 2px rgba(249, 115, 22, .25), 0 4px 20px rgba(249, 115, 22, .18) !important;
+    opacity: 1 !important;
+}
+
+/* Specific ghost class badge highlighted as arrow target */
+.sv-ghost-badge-active {
+    background: rgba(249, 115, 22, .28) !important;
+    border-color: #f97316 !important;
+    color: #fff !important;
+    box-shadow: 0 0 8px rgba(249, 115, 22, .4) !important;
+    transform: scale(1.08);
 }
 
 /* Header row inside ghost box */
@@ -768,21 +850,81 @@
     border-color: rgba(249, 115, 22, .5);
 }
 
-/* ── Cross-file arrow path style ─────────────────────────────────────────── */
+/* ── Cross-file SVG arrow styles ─────────────────────────────────────────── */
+
+/* Main arrow path — orange dashed */
 .sv-arrow-cross-file {
-    stroke: #f9731688;
+    stroke: #f9731699;
     stroke-dasharray: 7 4;
+    stroke-width: 1.8px;
+    fill: none;
+    transition: stroke .15s, stroke-width .15s;
+}
+
+/* Glow copy — wider, more transparent, drawn behind main line */
+.sv-arrow-cf-glow {
+    fill: none;
+    stroke: rgba(249, 115, 22, .18);
+    stroke-width: 6px;
+    stroke-dasharray: none;
+    pointer-events: none;
+    transition: stroke .15s, stroke-width .15s;
+}
+
+/* Source endpoint dot */
+.sv-arrow-dot-cf {
+    fill: #f97316bb;
+    stroke: rgba(249, 115, 22, .3);
+    stroke-width: 2px;
+    transition: fill .15s, r .15s;
+}
+
+/* Target endpoint dot (at ghost class badge) */
+.sv-arrow-dot-cf-target {
+    fill: rgba(249, 115, 22, .5);
+    stroke: rgba(249, 115, 22, .6);
     stroke-width: 1.5px;
 }
 
-.sv-arrow-cross-file:hover {
-    stroke: #f97316cc;
+/* Arrow group — hover state activates all children */
+.sv-cf-arrow-group:hover .sv-arrow-cross-file,
+.sv-cf-arrow-group.sv-cf-arrow-active .sv-arrow-cross-file {
+    stroke: #f97316ee;
     stroke-width: 2.5px;
 }
 
-/* Active cross-file arrow */
-.sv-arrow-cross-file.sv-arrow-active {
-    stroke: #f97316ee !important;
-    stroke-width: 3px !important;
-    filter: drop-shadow(0 0 5px #f9731688);
+.sv-cf-arrow-group:hover .sv-arrow-cf-glow,
+.sv-cf-arrow-group.sv-cf-arrow-active .sv-arrow-cf-glow {
+    stroke: rgba(249, 115, 22, .35);
+    stroke-width: 10px;
+}
+
+.sv-cf-arrow-group:hover .sv-arrow-dot-cf,
+.sv-cf-arrow-group.sv-cf-arrow-active .sv-arrow-dot-cf {
+    fill: #f97316ff;
+    stroke: rgba(249, 115, 22, .5);
+    stroke-width: 3px;
+}
+
+.sv-cf-arrow-group:hover .sv-arrow-dot-cf-target,
+.sv-cf-arrow-group.sv-cf-arrow-active .sv-arrow-dot-cf-target {
+    fill: #f97316cc;
+    stroke: rgba(249, 115, 22, .8);
+    stroke-width: 2px;
+}
+
+/* Clicked (persistent active) state */
+.sv-cf-arrow-group[data-clicked] .sv-arrow-cross-file {
+    stroke: #fb923c !important;
+    stroke-width: 2.8px !important;
+    filter: drop-shadow(0 0 4px #f9731688);
+}
+
+.sv-cf-arrow-group[data-clicked] .sv-arrow-cf-glow {
+    stroke: rgba(249, 115, 22, .4) !important;
+    stroke-width: 12px !important;
+}
+
+.sv-cf-arrow-group[data-clicked] .sv-arrow-dot-cf {
+    fill: #fb923c !important;
 }
