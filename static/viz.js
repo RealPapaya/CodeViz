@@ -7255,4 +7255,326 @@ function _syncLayoutIndicator(id) {
 
 
 
+const LAYOUT_PRESETS = [
+    // ── Original presets (unchanged) ──────────────────────────────────────────
+    {
+        id: 'dagre-lr',
+        icon: '→',
+        label: 'Hierarchy LR',
+        tip: 'Hierarchical Left → Right (DAG)',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'dagre', rankDir: 'LR',
+            animate: true, animationDuration: 380,
+            nodeSep: 28, rankSep: 90, padding: 45,
+        }),
+    },
+    {
+        id: 'dagre-tb',
+        icon: '↓',
+        label: 'Hierarchy TB',
+        tip: 'Hierarchical Top → Bottom (DAG)',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'dagre', rankDir: 'TB',
+            animate: true, animationDuration: 380,
+            nodeSep: 22, rankSep: 80, padding: 45,
+        }),
+    },
+    {
+        id: 'cose',
+        icon: '⚡',
+        label: 'Force',
+        tip: 'Force-Directed (CoSE) — physics simulation',
+        levels: [0, 1, 2],
+        config: () => ({
+            name: 'cose',
+            animate: true, animationDuration: 600,
+            randomize: false,
+            nodeRepulsion: 9000,
+            idealEdgeLength: 160,
+            nodeOverlap: 20,
+            padding: 55,
+            gravity: 0.25,
+        }),
+    },
+
+    // ── Advanced presets ───────────────────────────────────────────────────────
+
+    // ── Smart Cluster (fCoSE) ──────────────────────────────────────────────────
+    // Best for: module-level graphs and hairball call graphs.
+    // Beats plain CoSE: 2× faster, includes compound-node support, and supports
+    // user-defined placement constraints (fixed position, alignment, relative placement).
+    // Requires: cytoscape-fcose
+    {
+        id: 'fcose',
+        icon: '🧩',
+        label: 'Smart Cluster',
+        tip: 'fCoSE — fastest force-directed, compound-aware, best for modules & hairball graphs (requires fcose CDN)',
+        levels: [0, 1, 2],
+        requires: 'fcose',
+        config: () => {
+            const nodeCount = cy ? cy.nodes().length : 50;
+            const repulsion = Math.max(6000, Math.min(18000, nodeCount * 180));
+            const edgeLen = Math.max(80, Math.min(220, nodeCount * 2.5));
+            return {
+                name: 'fcose',
+                animate: true,
+                animationDuration: 650,
+                animationEasing: 'ease-out',
+                quality: nodeCount > 150 ? 'default' : 'proof',
+                randomize: false,
+                packComponents: true,
+                // Account for label sizes so nodes don't overlap their labels
+                nodeDimensionsIncludeLabels: true,
+                nodeRepulsion: () => repulsion,
+                idealEdgeLength: () => edgeLen,
+                edgeElasticity: () => 0.45,
+                nestingFactor: 0.1,
+                gravityRangeCompound: 1.5,
+                gravityCompound: 1.0,
+                gravity: 0.25,
+                numIter: nodeCount > 200 ? 3500 : 2500,
+                tile: true,
+                tilingPaddingVertical: 12,
+                tilingPaddingHorizontal: 12,
+                padding: 55,
+            };
+        },
+    },
+
+    // ── Smooth Physics (Cola / WebCola) ──────────────────────────────────────────
+    // Best for: L1 dependency map and L2 call-flow when graph < ~200 nodes.
+    // Unique advantage: constraint-based (can enforce LR flow direction while still
+    // being physically simulated), smoothest animation of all force layouts,
+    // and almost no jitter in interactive dragging.
+    // Requires: webcola + cytoscape-cola
+    {
+        id: 'cola',
+        icon: '🧲',
+        label: 'Smooth Physics',
+        tip: 'Cola — constraint physics, smoothest animation, directed-flow aware, best for L1/L2 < 200 nodes (requires cola CDN)',
+        levels: [1, 2],
+        requires: 'cola',
+        config: () => {
+            const nodeCount = cy ? cy.nodes().length : 50;
+            return {
+                name: 'cola',
+                animate: true,
+                animationDuration: 500,
+                refresh: 2,
+                maxSimulationTime: Math.min(5000, nodeCount * 20),
+                // Directed left→right flow constraint — mirrors how code is read
+                flow: { axis: 'x', minSeparation: 90 },
+                avoidOverlap: true,
+                nodeDimensionsIncludeLabels: true,
+                nodeSpacing: () => 14,
+                edgeLength: () => Math.max(100, Math.min(200, nodeCount * 2)),
+                convergenceThreshold: 0.005,
+                padding: 50,
+            };
+        },
+    },
+
+    // ELK Flow — ELK's "layered" algorithm for directed call-flow graphs.
+    // Best for: L1 dependency map, L2 call-flow (anything with clear direction).
+    // Solves: dagre's mediocre crossing-minimisation and loose node placement.
+    // Advantages over dagre: orthogonal edge routing, BRANDES_KOEPF placement,
+    //   post-compaction, and proper cycle-breaking for circular imports.
+    // Requires: cytoscape-elk (loaded via CDN in <head>)
+    {
+        id: 'elk-layered',
+        icon: '⛓',
+        label: 'ELK Flow',
+        tip: 'ELK Layered — precise directed DAG with orthogonal edges, better than Dagre (requires elk CDN)',
+        levels: [1, 2],   // Call-flow graphs only; L0 module graph has no fixed direction
+        requires: 'elk',
+        config: () => ({
+            name: 'elk',
+            animate: true,
+            animationDuration: 550,
+            animationEasing: 'ease-out',
+            elk: {
+                algorithm: 'layered',
+
+                // Direction: 'RIGHT' mirrors the mental model of reading code left→right.
+                // Change to 'DOWN' if you prefer top-down (like a traditional call tree).
+                'elk.direction': 'RIGHT',
+
+                // Inter-layer (column) and intra-layer (row) spacing
+                'elk.layered.spacing.nodeNodeBetweenLayers': 90,
+                'elk.spacing.nodeNode': 32,
+
+                // ORTHOGONAL routing: edges become clean right-angle paths instead of
+                // diagonal spaghetti. Makes the graph look far more professional.
+                'elk.edgeRouting': 'ORTHOGONAL',
+
+                // LAYER_SWEEP crossing minimisation — the best general strategy for
+                // reducing the number of edge crossings in a layered graph.
+                'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+
+                // BRANDES_KOEPF node placement: produces compact, well-aligned layers.
+                // Much tighter than ELK's default LINEAR_SEGMENTS.
+                'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+
+                // Post-layout compaction: shorten edges as much as possible while
+                // keeping the orthogonal shape, removing unnecessary whitespace.
+                'elk.layered.compaction.postCompaction.strategy': 'EDGE_LENGTH',
+
+                // GREEDY cycle-breaking: handles Python circular imports and similar
+                // patterns by reversing a minimal set of back-edges.
+                'elk.layered.cycleBreaking.strategy': 'GREEDY',
+
+                // Allow multiple edges between the same pair of nodes to be merged
+                // visually, keeping the graph cleaner.
+                'elk.mergeEdges': 'true',
+            },
+        }),
+    },
+
+    // ── ELK Stress ────────────────────────────────────────────────────────────
+    // Best for: 300+ node graphs — prevents hairball AND avoids "too tall/wide".
+    // Nodes placed so canvas distance ∝ hop distance (MDS/stress majorization).
+    // Requires: cytoscape-elk
+    {
+        id: 'elk-stress',
+        icon: '🌐',
+        label: 'ELK Stress',
+        tip: 'ELK Stress — best for 300+ node graphs, distance-proportional placement, no hairball (requires elk CDN)',
+        levels: [0, 1, 2],
+        requires: 'elk',
+        config: () => {
+            const nodeCount = cy ? cy.nodes().length : 100;
+            const iterations = Math.max(200, Math.min(800, nodeCount * 2.5));
+            return {
+                name: 'elk',
+                animate: true,
+                animationDuration: 700,
+                animationEasing: 'ease-out',
+                elk: {
+                    algorithm: 'stress',
+                    'elk.stress.desiredEdgeLength': 140,
+                    'elk.stress.epsilon': 0.00001,
+                    'elk.stress.iterationLimit': iterations,
+                    'elk.nodeSize.constraints': 'MINIMUM_SIZE',
+                    'elk.spacing.nodeNode': 40,
+                    'elk.stress.fixedStartPosition': 'false',
+                },
+            };
+        },
+    },
+];
+
+const layoutSwitcherState = {
+    currentId: 'dagre-lr',   // default for L1/L2
+    collapsed: false,
+};
+
+function initLayoutSwitcher() {
+    const wrap = document.getElementById('graph-wrap');
+    if (!wrap) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'layout-switcher';
+    panel.innerHTML = _buildLayoutSwitcherHTML();
+    wrap.appendChild(panel);
+
+    // Toggle collapse on header click
+    panel.querySelector('.ls-header').addEventListener('click', () => {
+        layoutSwitcherState.collapsed = !layoutSwitcherState.collapsed;
+        panel.classList.toggle('ls-collapsed', layoutSwitcherState.collapsed);
+    });
+
+    // Layout button clicks — delegated so re-renders don't break listeners
+    panel.querySelector('.ls-btns').addEventListener('click', e => {
+        const btn = e.target.closest('.ls-btn');
+        if (!btn) return;
+        const id = btn.dataset.layoutId;
+        if (id) applyLayoutPreset(id);
+    });
+}
+
+// Call this after every level change (loadLevel0, drillToModule, renderFilesFlat, etc.)
+// to refresh which layout buttons are visible for the current level.
+function refreshLayoutSwitcher() {
+    const panel = document.getElementById('layout-switcher');
+    if (!panel) return;
+    const collapsed = layoutSwitcherState.collapsed;
+    panel.innerHTML = _buildLayoutSwitcherHTML();
+    panel.classList.toggle('ls-collapsed', collapsed);
+    // Re-bind BOTH listeners (innerHTML wipe removes old ones)
+    panel.querySelector('.ls-header').addEventListener('click', () => {
+        layoutSwitcherState.collapsed = !layoutSwitcherState.collapsed;
+        panel.classList.toggle('ls-collapsed', layoutSwitcherState.collapsed);
+    });
+    panel.querySelector('.ls-btns').addEventListener('click', e => {
+        const btn = e.target.closest('.ls-btn');
+        if (!btn) return;
+        const id = btn.dataset.layoutId;
+        if (id) applyLayoutPreset(id);
+    });
+}
+
+function _buildLayoutSwitcherHTML() {
+    // Filter presets to those valid for the current level
+    const visiblePresets = LAYOUT_PRESETS.filter(p => !p.levels || p.levels.includes(state.level));
+
+    return `
+        <div class="ls-header">
+            <span class="ls-header-icon">⊞</span>
+            <span class="ls-header-text">${T('layoutLabel')}</span>
+            <span class="ls-chevron">▾</span>
+        </div>
+        <div class="ls-btns">
+            ${visiblePresets.map(p => {
+        // Check if required extension is loaded
+        const unavailable = p.requires && !_isLayoutAvailable(p.requires);
+        const lName = _layoutLabel(p);
+        const lTip = _layoutTip(p);
+
+        return `
+                <button class="ls-btn${p.id === layoutSwitcherState.currentId ? ' active' : ''}${unavailable ? ' ls-unavailable' : ''}"
+                        data-layout-id="${p.id}"
+                        data-tip="${lTip}${unavailable ? '\n⚠ CDN 未載入' : ''}">
+                    <span class="ls-icon">${p.icon}</span>
+                    <span class="ls-name">${lName}</span>
+                    ${unavailable ? '<span class="ls-warn">!</span>' : ''}
+                </button>`;
+    }).join('')}
+        </div>
+    `;
+}
+
+
+function applyLayoutPreset(id) {
+    const preset = LAYOUT_PRESETS.find(p => p.id === id);
+    if (!preset || !cy) return;
+
+    // Guard: if this preset requires an extension that wasn't loaded, warn and bail
+    if (preset.requires && !_isLayoutAvailable(preset.requires)) {
+        showToast(`⚠ Layout "${preset.label}" requires cytoscape-${preset.requires} — CDN script may not have loaded`, 'error');
+        console.warn(`[layout] "${preset.requires}" extension not registered. Add the CDN script to analyze_viz.py <head>.`);
+        return;
+    }
+
+    layoutSwitcherState.currentId = id;
+
+    // Update active button visuals
+    document.querySelectorAll('#layout-switcher .ls-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.layoutId === id);
+    });
+
+    showLoading(true, 'Applying layout…');
+    const config = preset.config();
+    const lay = cy.layout(config);
+    lay.one('layoutstop', () => {
+        showLoading(false);
+        cy.animate({ fit: { eles: cy.elements(), padding: 40 }, duration: 300 });
+    });
+    lay.run();
+
+    showToast(T('layoutApplied', { label: _layoutLabel(preset) }), 'info');
+}
+
+
 // ─── State ────────────────────────────────────────────────────────────────────
