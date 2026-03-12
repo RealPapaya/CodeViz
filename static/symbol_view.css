@@ -1,0 +1,171 @@
+/* ── Symbol View — Sourcetrail-style, embedded in #graph-wrap ─────────────── */
+
+#sym-view {
+    position: absolute;
+    inset: 0;
+    background: var(--bg, #050a0f);
+    display: none;
+    flex-direction: column;
+    font-family: 'Inter', system-ui, sans-serif;
+    color: var(--text, #e2e8f0);
+    z-index: 20;
+}
+
+#sym-view.active {
+    display: flex;
+}
+
+/* ── Toolbar (mirrors l2-toolbar style) ── */
+#sym-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    background: var(--panel, #090e14);
+    border-bottom: 1px solid var(--border, #1a2535);
+    flex-shrink: 0;
+    height: 40px;
+    min-height: 40px;
+}
+
+#sym-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+#sym-back-btn {
+    background: transparent;
+    border: 1px solid var(--border, #1a2535);
+    color: var(--text, #e2e8f0);
+    border-radius: 5px;
+    padding: 3px 9px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+    line-height: 1.4;
+}
+#sym-back-btn:hover:not(:disabled) {
+    background: var(--panel2, #0d1520);
+    border-color: var(--accent, #00d4ff);
+}
+#sym-back-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+#sym-breadcrumb {
+    font-size: 12px;
+    color: var(--accent, #00d4ff);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+}
+
+/* ── Search ── */
+#sym-search-wrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+
+#sym-search-input {
+    background: var(--panel2, #0d1520);
+    border: 1px solid var(--border, #1a2535);
+    border-radius: 5px;
+    color: var(--text, #e2e8f0);
+    font-size: 12px;
+    padding: 4px 10px;
+    width: 180px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+#sym-search-input:focus {
+    border-color: var(--accent, #00d4ff);
+}
+#sym-search-input::placeholder {
+    color: var(--muted, #64748b);
+}
+
+#sym-search-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 280px;
+    background: var(--panel, #090e14);
+    border: 1px solid var(--border, #1a2535);
+    border-radius: 7px;
+    z-index: 100;
+    max-height: 300px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+.sym-search-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border, #1a2535);
+    transition: background 0.1s;
+}
+.sym-search-item:last-child { border-bottom: none; }
+.sym-search-item:hover { background: var(--panel2, #0d1520); }
+
+#sym-close-btn {
+    background: transparent;
+    border: 1px solid var(--border, #1a2535);
+    color: var(--muted, #64748b);
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+    line-height: 1.4;
+}
+#sym-close-btn:hover {
+    color: var(--text, #e2e8f0);
+    border-color: var(--muted, #64748b);
+}
+
+/* ── Body + Canvas: full width ── */
+#sym-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+#sym-cy {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    background: var(--bg, #050a0f);
+}
+
+/* ── Kind badges ── */
+.sym-kind-badge {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--panel2, #0d1520);
+    color: var(--muted, #64748b);
+    flex-shrink: 0;
+}
+.kind-class     { color: #60a5fa; }
+.kind-function  { color: #34d399; }
+.kind-method    { color: #a78bfa; }
+.kind-field     { color: #64748b; }
+.kind-struct    { color: #fbbf24; }
+.kind-enum      { color: #fb923c; }

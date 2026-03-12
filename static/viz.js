@@ -603,10 +603,15 @@ function initCodePanel() {
         }
     };
 
-    // Structure button: toggle structure view in center panel
+    // Structure button: open symbol view (new), fall back to legacy struct view
     const structBtn = document.getElementById('struct-toggle-btn');
     if (structBtn) {
         structBtn.onclick = () => {
+            const fileRel = codeState.currentFile;
+            if (window.symViewOpen && fileRel && DATA && DATA.symbol_index) {
+                const hasSymbols = Object.values(DATA.symbol_index).some(s => s.file === fileRel);
+                if (hasSymbols) { symViewOpen(fileRel); return; }
+            }
             if (window.svToggleStructView) svToggleStructView();
         };
     }
@@ -4728,6 +4733,11 @@ function hideFuncView() {
     setL2ToolbarVisible(false);
     clearL2Legend();
     document.getElementById('cy')?.classList.remove('l2-view');
+    // Also close sym-view if open
+    if (window.symViewClose) {
+        const sv = document.getElementById('sym-view');
+        if (sv && sv.classList.contains('active')) symViewClose();
+    }
     l2State.activeFile = null;
     l2State.activeFuncIdx = 0;
     l2State.expandedModules = new Set();

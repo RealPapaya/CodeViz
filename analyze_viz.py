@@ -1315,6 +1315,7 @@ HTML_SKELETON = """\
     <div id="cy"></div>
     <div id="func-view"></div>
     <div id="sv-view"></div>
+    <div id="sym-view"></div>
     <div id="loading"><div class="spinner"></div><span id="loading-msg" data-i18n="loading">Loading...</span><button id="loading-cancel-btn" onclick="cancelRender()" data-i18n="cancelRender">✕ Cancel</button></div>
   </div>
   <!-- Resizer handle -->
@@ -1512,8 +1513,8 @@ HTML_TEMPLATE = HTML_SKELETON
 def build_html(data: dict, job_id: str = None) -> str:
     """Read shared static assets and embed them inline into the HTML skeleton."""
     base = Path(__file__).parent / 'static'
-    css_assets = [base / 'viz.css', base / 'themes.css', base / 'struct_view.css']
-    js_assets = [base / 'i18n.js', base / 'viz.js', base / 'struct_view.js']
+    css_assets = [base / 'viz.css', base / 'themes.css', base / 'struct_view.css', base / 'symbol_view.css']
+    js_assets = [base / 'i18n.js', base / 'viz.js', base / 'struct_view.js', base / 'symbol_view.js']
     missing = [p for p in css_assets + js_assets if not p.exists()]
 
     if missing:

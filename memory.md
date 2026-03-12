@@ -47,11 +47,20 @@
   - **用途**: 單頁應用 (SPA) 介面。顯示讀取進度條，並作為畫布的容器。
   - **🔄 依賴**: 載入 `static/` 下的靜態資源。
 - 🎨 **`static/viz.js`** (前端)
-  - **用途**: **前端的心臟**。解析 JSON 資料，處理 D3.js 繪圖、佈局、點擊事件與過濾器邏輯。
+  - **用途**: **前端的心臟**。解析 JSON 資料，處理 Cytoscape 繪圖、佈局、點擊事件與過濾器邏輯 (L0/L1/L2)。
+  - **⚠️ Structure 按鈕**: 優先呼叫 `symViewOpen()`，若檔案無 symbol 才 fallback 到 `svToggleStructView()`。
 - 💅 **`static/viz.css`** (前端)
   - **用途**: 所有介面的視覺外觀定義。
 - 🌍 **`static/i18n.js`** (前端)
   - **用途**: 管理中英雙語的翻譯對照表。
+- 🔮 **`static/struct_view.js`** (前端)
+  - **用途**: Structure View 插件，提供 class-grid 視圖。Entry points: `svToggleStructView()`, `svUpdateStructureBtn()`, `svAfterRenderCode()`。
+- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1 新增**
+  - **用途**: Sourcetrail 風格的 Symbol-Centric Graph。以 Cytoscape dagre LR 佈局顯示 center node 的 incoming/outgoing edges。
+  - **Entry points**: `symViewOpen(fileRel)` / `symViewActivate(symId)` / `symViewClose()`。
+  - **右側 Members 面板**: 顯示 center class 的 Public/Private 成員，點擊跳至程式碼。
+- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1 新增**
+  - **用途**: Symbol View 專用樣式 (`#sym-view`, `#sym-cy`, `#sym-members`, `.sym-member`, `.sym-kind-badge`)。
 
 ---
 
@@ -97,17 +106,52 @@
 
 ## 💡 統一的 Parser 介面規範
 
-任何在 `parsers/` 下的模組，其 `scan_xxx()` 函式都**必須**回傳如下格式：
+任何在 `parsers/` 下的模組，其 `scan_xxx()` 函式回傳格式：
 
+**標準 5-tuple** (BIOS/JS/Go parsers):
 ```python
 return (
     imports_or_refs,      # list[str]: 這個檔案依賴的外部模組/檔案/字串
-    funcdefs,             # list[dict]: 這個檔案定義的函式 [{label, is_efiapi, is_static}, ...]
-    funccalls,            # list[str]: 這個檔案呼叫了哪些外部函式 (Call Site 列表)
-    extra_dict,           # dict | None: 額外的 Metadata (目前主要用於 BIOS 特殊屬性，通常為 None)
-    func_calls_by_func,   # list[list[str]]: 精確紀錄每個 funcdef 對應的外部呼叫陣列
+    funcdefs,             # list[dict]: [{label, is_efiapi, is_static}, ...]
+    funccalls,            # list[str]: 這個檔案呼叫了哪些外部函式
+    extra_dict,           # dict | None: 額外 Metadata (BIOS 用，通常 None)
+    func_calls_by_func,   # list[list[str]]: 每個 funcdef 對應的呼叫陣列
 )
 ```
+
+**擴充 6-tuple** (Python parser 已實作，其他可選):
+```python
+return (
+    imports_or_refs,
+    funcdefs,
+    funccalls,
+    extra_dict,
+    func_calls_by_func,
+    symbol_defs,          # list[dict]: [{kind, name, line, end_line, bases, parent, is_public}, ...]
+                          # kind: 'class'|'method'|'function'
+                          # bases: 繼承的父類名稱 (for inheritance edges)
+                          # parent: 所屬的 class 名稱 (None = top-level)
+)
+```
+
+`analyze_viz.py` 的 `scan_file()` 會偵測 tuple 長度，6-tuple 時自動提取 `symbol_defs` 並存入 `file_symdefs`。`build_graph()` 在 Phase F 統一將所有 `symbol_defs` 組合為 `symbol_index` (dict) 和 `symbol_edges` (list)，注入最終 JSON。
+
+## 🔮 Symbol View 架構備忘 (Phase 1)
+
+- **資料來源**: `DATA.symbol_index` (build_graph Phase F 建立) + API `/symbol-graph?job=JID&sym=SID`
+- **`/symbol-graph` 回應格式** (server.py 已更新):
+  ```json
+  {
+    "center": { "id", "name", "kind", "file", "line", "is_public", "children": [{id, name, kind, line, is_public}] },
+    "incoming": [{ "sym": {...}, "edge_type": "call|inheritance|import", "count": N }],
+    "outgoing": [{ "sym": {...}, "edge_type": "...", "count": N }]
+  }
+  ```
+  `children` = center 的成員 (parent == center.name && file == center.file)
+- **Symbol edge types**: `call` (橘), `inheritance` (藍), `import` (綠), `member` (紫), `override` (粉), `type_usage` (黃), `include` (灰)
+- **`build_html()` 載入順序**: `viz.css` → `themes.css` → `struct_view.css` → **`symbol_view.css`** → `i18n.js` → `viz.js` → `struct_view.js` → **`symbol_view.js`**
+
+---
 
 ## 📜 備忘：BIOS 的 Edge Type 與顏色定義
 (保留這部分是因為 BIOS 結構過於龐大，常需要除錯)

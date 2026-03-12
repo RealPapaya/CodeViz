@@ -1100,8 +1100,28 @@ class Handler(BaseHTTPRequestHandler):
             incoming.sort(key=lambda x: -x['count'])
             outgoing.sort(key=lambda x: -x['count'])
 
+            # Build children list: symbols whose parent == center.name and file == center.file
+            center_name = center.get('name', '')
+            center_file = center.get('file', '')
+            children = [
+                {
+                    'id':       s['id'],
+                    'name':     s['name'],
+                    'kind':     s['kind'],
+                    'line':     s.get('line', 0),
+                    'end_line': s.get('end_line', 0),
+                    'is_public': s.get('is_public', True),
+                }
+                for s in sym_index.values()
+                if s.get('parent') == center_name and s.get('file') == center_file
+            ]
+            children.sort(key=lambda x: x.get('line', 0))
+
+            center_with_children = dict(center)
+            center_with_children['children'] = children
+
             self.json_resp({
-                'center':    center,
+                'center':    center_with_children,
                 'incoming':  incoming[:50],
                 'outgoing':  outgoing[:50],
                 'total_in':  len(incoming),
