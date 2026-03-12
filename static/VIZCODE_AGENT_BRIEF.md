@@ -38,7 +38,7 @@ Sourcetrail 是一個以 **Symbol 為中心** 的程式碼探索工具，核心 
 | `analyze_viz.py` | 掃描專案、建立 `DATA` (nodes + edges)。Entry: `build_graph(root)` |
 | `viz.js` | 主前端邏輯 (~7600 行)。State, Cytoscape graph, code panel |
 | `viz.css` | 主 stylesheet |
-| `struct_view.js` | Structure View plugin (~2600 行)。獨立 `<script>` 載入 |
+| `struct_view.js` | Structure View plugin (~1100 行)。獨立 `<script>` 載入 |
 | `struct_view.css` | Structure View stylesheet |
 | `i18n.js` | 中英雙語翻譯 |
 | `launcher.html` | SPA shell，注入 DATA + 載入所有 scripts |
@@ -46,22 +46,58 @@ Sourcetrail 是一個以 **Symbol 為中心** 的程式碼探索工具，核心 
 | `detector.py` | 專案類型自動偵測 |
 | `vizcode.py` | CLI launcher + TUI 動畫 |
 
-### Parser 回傳值規格（統一 6-tuple）
+### 前端架構
 
-所有 parser 的 entry point 現在均回傳相同格式：
-
-```python
-(refs, funcdefs, funccalls, extra_dict, func_calls_by_func, symbol_defs)
-# symbol_defs: List[{ kind, name, line, end_line, bases, parent, is_public }]
-# kind: 'class' | 'function' | 'method'
+```
+browser
+  ├─ #graph-wrap                    ← 主容器
+  │    ├─ #cy                       ← Cytoscape canvas (L2/sv-view 時隱藏)
+  │    ├─ #func-view                ← L2 call-graph overlay (3-column Callers | Func | Callees)
+  │    └─ #sv-view                  ← Structure View overlay
+  ├─ #code-panel                    ← 可調寬度的右側 source panel
+  └─ breadcrumb toolbar             ← Back / ⬡ Call Graph / 🏗 Structure / 📝 Code 按鈕
 ```
 
-| Parser | Entry point | symbol_defs 支援 |
-|--------|-------------|-----------------|
-| `python_parser.py` | `scan_python(src)` | ✅ class / method / function |
-| `js_parser.py` | `scan_js(src)` / `scan_ts(src)` | ✅ class / method / function |
-| `go_parser.py` | `scan_go(src)` | ✅ struct / interface / method / function |
-| `bios_parser.py` | `scan_bios(src, ext)` | ✅ C/C++ class / struct / method / function（本 session 新增） |
+### 導航層級
+
+- **L0** — 模組總覽 (Cytoscape, `state.level = 0`)
+- **L1** — 檔案依賴圖 (`state.level = 1`, `state.activeModule`)
+- **L2** — 函式 call-flow (`state.level = 2`, `state.activeFile`, `l2State`)
+- **sv-view** — Structure View overlay；在 L1 或 L2 開啟，隱藏 `#cy`
+
+### Key Global State
+
+```js
+window.DATA            // 完整 graph payload (server 注入 HTML)
+  .funcs_by_file       // { "rel/path.py": [ { label, is_public, is_efiapi }, ... ] }
+  .func_edges_by_file  // { "rel/path.py": [ { s: callerIdx, t: calleeIdx }, ... ] }
+  .files_by_module     // { modId: [ { id, path, label, ext, file_type, func_count }, ... ] }
+
+state          // { level, activeModule, activeFile, ... }
+l2State        // { activeFile, activeFuncIdx, ... }
+codeState      // { currentFile, funcLineMap, funcList, rawLines, isOpen, ... }
+_sv            // struct_view.js internal state (window._sv)
+```
+
+### 重要函式
+
+```js
+// viz.js
+drillToFile(fileRel)              // L2 導航
+focusFunc(fileRel, idx)           // 顯示某函式的 func-view
+showFuncView(fileRel, funcs, edges, centerIdx)  // 3-col callers/callees UI
+jumpToFunc(funcName)              // code panel 跳到函式定義
+loadFileInPanel(filePath, funcName)  // 載入檔案到 code panel
+renderCode(src, ext, fname, langHint)  // 語法高亮渲染
+
+// struct_view.js
+svUpdateStructureBtn(fileRel, ext)  // viz.js 呼叫，更新按鈕狀態
+svAfterRenderCode(src, ext, fname)  // viz.js 呼叫，renderCode 後
+svShowSvView() / svHideSvView()     // 顯示/隱藏 sv-view
+_svRender(src, ext, fname)          // 解析 + 建構 grid
+_svParseClasses(src, ext)           // 分發到各語言 parser
+_svFetchAndApplyCrossFile(...)      // async 取 /structure 資料
+```
 
 ---
 
@@ -69,15 +105,35 @@ Sourcetrail 是一個以 **Symbol 為中心** 的程式碼探索工具，核心 
 
 ### ❌ 完全缺失的核心功能
 
-| # | 功能 | 說明 | 狀態 |
-|---|------|------|------|
-| G1 | **Symbol Index / Database** | Sourcetrail 有 SQLite 索引庫儲存每個 symbol 的 type、定義位置、所有引用位置。CodeViz 只有 `funcs_by_file` 和 `func_edges_by_file` — 沒有統一的 symbol table | ✅ 後端已有 `symbol_index` + `symbol_edges`，`/symbols`、`/symbol-refs`、`/symbol-graph`、`/symbol-file` 端點已實作 |
-| G2 | **Symbol-Centric Graph** | 點擊任何 symbol 後，Graph 以該 symbol 為中心重新佈局，顯示所有 incoming/outgoing 關係 | ✅ `svShowSymbol()` + `/symbol-graph` 已實作三欄式符號圖 |
-| G3 | **Bundled Edges** | 多條 edge 合併為帶數字的粗邊，click 展開 | ⚠️ Symbol-centric 圖中已有 `×N` bundle 標記；Structure Grid 中尚未實作 |
-| G4 | **Multi-file Code Snippets** | 選中 symbol 後，Code View 聚合 N 個檔案中該 symbol 的所有出現位置為 snippet | ✅ `/symbol-refs` 端點已實作 |
-| G5 | **Class Hierarchy Visualization** | 繼承鏈 (base → derived) 在 graph 中視覺化 | ⚠️ Structure Grid 中有繼承箭頭；Symbol-centric 圖中尚未用 UML 空心三角 |
-| G6 | **Node Expansion (Class Members)** | Graph 中 class 節點可展開顯示 methods + fields | ❌ 尚未實作 |
-| G7 | **Symbol-Aware Search** | ⚠️ **已取消**。使用者決定維持現有的全文檢索 | — |
+| # | 功能 | 說明 |
+|---|------|------|
+| G1 | **Symbol Index / Database** | Sourcetrail 有 SQLite 索引庫儲存每個 symbol 的 type、定義位置、所有引用位置。CodeViz 只有 `funcs_by_file` 和 `func_edges_by_file` — 沒有統一的 symbol table |
+| G2 | **Symbol-Centric Graph** | 點擊任何 symbol 後，Graph 以該 symbol 為中心重新佈局，顯示所有 incoming/outgoing 關係。CodeViz 的 graph 是固定的 module→file→function 層級式導航 |
+| G3 | **Bundled Edges** | 多條 edge 合併為帶數字的粗邊，click 展開。CodeViz 的 Cytoscape 每條 edge 獨立繪製 |
+| G4 | **Multi-file Code Snippets** | 選中 symbol 後，Code View 聚合 N 個檔案中該 symbol 的所有出現位置為 snippet。CodeViz 只顯示一個完整檔案 |
+| G5 | **Class Hierarchy Visualization** | 繼承鏈 (base → derived) 在 graph 中視覺化。CodeViz 完全沒有繼承關係解析 |
+| G6 | **Node Expansion (Class Members)** | Graph 中 class 節點可展開顯示 methods + fields。CodeViz 沒有 |
+| G7 | **Symbol-Aware Search** | 搜尋結果按 symbol type 分類（函式、類別、namespace），fuzzy match。CodeViz 只有純文字全文搜尋 |
+
+### 🟡 部分實現
+
+| # | 功能 | 現狀 |
+|---|------|------|
+| P1 | **Cross-class Call Arrows** | ✅ **已修復（本 session）**。`_svDrawCallArrows()` 使用 `offsetLeft/offsetTop` 鏈追蹤，從具體 method badge 出發畫 bezier 曲線連線到目標 badge。SVG z-index 提升至 10，箭頭顯示在卡片之上。 |
+| P2 | **Navigation History** | Structure View 的 Prev/Next 按鈕已移除（本 session 簡化）。全局 back/forward 尚未實作（屬 Phase 6）。 |
+| P3 | **External Dependencies Toggle** | Structure View 有 toggle，但未整合到主圖 |
+
+### ✅ 已完備
+
+| # | 功能 |
+|---|------|
+| D1 | 多語言解析 (Python, JS/TS, Go, C/C++/BIOS) |
+| D2 | 模組→檔案→函式三層 Cytoscape 圖 |
+| D3 | 全文搜尋 + SSE 串流 |
+| D4 | Code Panel 語法高亮 |
+| D5 | Structure View — 單一畫面 grid（無第二畫面）。所有 class 的 PUBLIC/PRIVATE/FIELDS badge 全部顯示。**本 session 新增**：跨 class method call 箭頭（橘色 bezier）從 badge 精確出發，SVG 圖層在卡片之上 |
+| D6 | Focus Panel (Callers/Callees inline) |
+| D7 | i18n 中英切換 |
 
 ---
 
@@ -100,8 +156,17 @@ DATA.symbol_index = {
         "file": "mymodule/submod.py",
         "line": 42,
         "is_public": True,
-        "parent": "sym_3",
-        "module": "mymodule",
+        "parent": "sym_3",        # 所屬 class/module 的 symbol id
+        "children": ["sym_1", "sym_2"],   # methods/fields
+    },
+    "sym_1": {
+        "id": "sym_1",
+        "name": "do_work",
+        "qualified_name": "mymodule.submod.MyClass.do_work",
+        "kind": "method",
+        "file": "mymodule/submod.py",
+        "line": 55,
+        "parent": "sym_0",
     },
     ...
 }
@@ -109,30 +174,36 @@ DATA.symbol_index = {
 DATA.symbol_edges = [
     { "from": "sym_1", "to": "sym_5", "type": "call" },
     { "from": "sym_0", "to": "sym_8", "type": "inheritance" },
+    { "from": "sym_1", "to": "sym_12", "type": "type_usage" },
+    { "from": "sym_0", "to": "sym_20", "type": "import" },
     ...
 ]
+
+# Edge types: call, inheritance, type_usage, import, override, file_include
 ```
 
-#### 1.2 Server API 端點 ✅
+**修改 `parsers/*.py`**：每個 parser 回傳 symbol 資訊
 
-| 端點 | 說明 |
-|------|------|
-| `GET /symbols?job=&q=&kind=&limit=` | Fuzzy 符號搜尋 |
-| `GET /symbol-refs?job=&sym=` | 符號的定義 + 所有引用位置（snippet） |
-| `GET /symbol-graph?job=&sym=` | 符號中心圖（incoming/outgoing bundled edges） |
-| `GET /symbol-file?job=&file=` | **（本 session 新增）** 單一檔案的所有 symbol + intra-file edges |
+- `python_parser.py`: 解析 class 定義、method 定義、繼承關係 (`class Foo(Bar)`)、import 來源
+- `js_parser.py`: 解析 class, extends, React component, export
+- `go_parser.py`: 解析 struct, interface, method receiver
+- `bios_parser.py`: 解析 struct/typedef, PROTOCOL_INTERFACE
 
-#### 1.3 C/C++ Parser 補齊 ✅（本 session 完成）
+**新增 `server.py` endpoint**：
 
-`bios_parser.py` 的 `scan_bios()` / `scan_c()` 現在回傳 **6-tuple**，新增 `symbol_defs`：
+```
+GET /symbols?job=JID&query=foo&kind=function&limit=50
+→ 回傳 fuzzy-matched symbols (支援 camelCase splitting)
 
-- **新增** `_parse_c_symbol_defs(src, clean)` — 解析 class/struct 宣告、C++ 作用域方法 `Foo::Bar()`、`typedef struct`
-- **新增** `RE_C_CLASS`、`RE_C_METHOD`、`RE_C_TYPEDEF` 三個 regex
-- 非 C/C++ 格式（`.inf`、`.sdl` 等）回傳空 `[]` 作為 `symbol_defs`
+GET /symbol-graph?job=JID&sym=sym_0
+→ 回傳以目標 symbol 為中心的子圖 (鄰居 symbols + edges)
 
+GET /symbol-refs?job=JID&sym=sym_0
+→ 回傳該 symbol 在所有檔案中的出現位置 [{file, line, snippet, context}]
+```
 ---
 
-### Phase 2：Enhanced Grid View (Structure) ★★★★★ 🔄 進行中
+### Phase 2：Symbol-Centric Graph ★★★★★
 
 > **核心目標**：強化目前的 Structure View，使其成為一個支援「全屏網格（Grid Layout）」與「跨類別連線（SVG Arrows）」的互動圖表，**完全取代舊版的靜態列表**。
 
@@ -140,42 +211,60 @@ DATA.symbol_edges = [
 > ```
 > [ ArtificialPlayer ]       [ Field         ]             code panel
 >  ┌─────────────────┐       ┌──────────────────────┐      ┌──────────────────────────────┐
->  │ 🌐 PUBLIC       │ ──→   │ 🌐 PUBLIC            │      │ 77  int Field::SameInRow(...){│
->  │  [Evaluate]     │       │   [Token]            │      │ 78    int sum = amount*token; │
->  │ 🏠 PRIVATE      │       │ 🏠 PRIVATE           │      │ ...                          │
->  │  [m_name]       │       │  ▶[SameInRow]◀       │      │ 89  if (grid_[0][0]+...)    │
->  └─────────────────┘       └──────────────────────┘      └──────────────────────────────┘
+>  │ 🏠 PRIVATE      │ ──→   │ 🌐 PUBLIC            │      │ 77  int Field::SameInRow(...){│
+>  │  [Evaluate]     │       │   [Token] ③          │      │ 78    int sum = amount*token; │
+>  └─────────────────┘       │ 🏠 PRIVATE           │      │ ...                          │
+>                            │  ▶[SameInRow]◀ ←─ active   │ 89  if (grid_[0][0]+...)    │
+> [ TicTacToe      ↓ ]       │   [grid_]            │      └──────────────────────────────┘
+>  ┌─────────────────┐       └──────────────────────┘
+>  │ 🌐 PUBLIC       │
+>  │  [Run]          │
+>  └─────────────────┘
+>
+> 橘色曲線 edge 從 ArtificialPlayer.Evaluate → Field.SameInRow
+> 橘色曲線 edge 從 TicTacToe.Run         → Field (整體)
 > ```
+> 這是我們要做到的具體 UI 樣子。
 
-#### 2.1 已完成（本 session）
+#### 2.1 前端 — 獨立的 Cytoscape Canvas
 
-**Canvas 獨立 Pan / Zoom**（`struct_view.js`）：
-- 移除對 Cytoscape 的 transform 同步（`cy.on('pan zoom', ...)` 已解除）
-- 改為獨立狀態 `_sv._panX / _sv._panY / _sv._scale`
-- 滾輪縮放：以游標位置為中心，範圍 0.12x ～ 6.0x
-- 背景拖曳：空白區域拖曳平移畫布，游標顯示 `grabbing`
-- 所有 transform 寫入 `tGroup.style.transform`，`_svMakeCoordMapper()` 座標換算持續正確
+在現有 Structure 面板（`#sv-view`）內部，放棄靜態的 3-column HTML，改為初始一個全新的、獨立的 Cytoscape 實例（綁定在 `<div id="sv-cy">`）：
 
-**Per-node Drag**（`struct_view.js`）：
-- `_svConvertToAbsolute(localArea)` — flex 佈局快照後切換成 `position:absolute`，各 box 維持原視覺位置
-- `_svInitNodeDrag(localArea, svg, scroll)` — 每個 class card 可自由拖曳，移動量除以 `_sv._scale` 補償縮放
-- 節點移動時立即觸發 `_svRedrawAll()` 重繪箭頭
-- 每次 `_svRender()` 前呼叫 `_nodeDragCleanup()` 移除舊的 document 事件監聽器，防止 ghost listener 堆積
+```
+透過上方面板點擊「Structure」或從搜尋點擊 Symbol → 
+跳過原本的 file parsing，直接 fetch /symbol-graph → 渲染 svCy:
+  - 中央大節點（Compound Node） = active class，內部包含 Methods/Fields
+  - 左側 = incoming nodes (callers, base classes)
+  - 右側 = outgoing nodes (callees, derived classes)
+  - Edge = 橘色 Bezier spline 曲線；edge 從具體的 member badge 出發，連到目標 member badge
+```
 
-**統一重繪入口 `_svRedrawAll(svg, scroll)`**：
-- Local arrows（intra-file）同步重繪
-- Cross-file arrows 防抖 12ms 重繪
-- 由 pan / zoom / node drag 三者共用
+**節點外觀（對照截圖）**：
+- Class card = 帶圓角的白底矩形，左上方顯示 class 名稱 + 右上方顯示 collapse/expand 計數徽章
+- 每個 class card 分兩區塊顯示：
+  - `🌐 PUBLIC` 區塊（header 灰底）→ 列出 public methods/fields 的橘色 badge pill
+  - `🏠 PRIVATE` 區塊（header 灰底）→ 列出 private members 的藍色 badge pill
+- **Active member badge**（被邊連接到的那個）高亮顯示，如截圖中的 `SameInRow` 為橘底白字
+- 被 edge 引用到的具體 member badge 發光 / 加粗邊框
+- **只有中心 class 展開所有 members；周圍的 caller class 只展開與中心有關係的 member**
+- 佈局引擎：`dagre (LR)`（left-to-right），incoming class 在左，active class 在中，outgoing 在右
 
-**CSS 新增**（`struct_view.css`）：
-- `.sv-scroll { cursor: grab }` — 背景平移游標提示
-- `.sv-class-hdr { cursor: grab }` — 節點拖曳游標提示
-- `.sv-box-dragging` — 拖曳中：z-index 提升 + accent 邊框陰影
+**互動**：
+- 單擊任意 class node 或 member badge → 把該 symbol 變成新中心，重新 fetch `/symbol-graph`，畫布 animate 重佈局
+- member badge 被設為 active 後，同時觸發右側 Code Panel 跳到該 member 的定義處（見 Phase 3）
+- 支援拖曳節點、平移縮放畫布（原生 Cytoscape 優勢）
+- **原本專門針對個別檔案的 Structure View 按鈕行為已被攔截，改為自動尋找該檔案的第一個 Class/Function 作為起始點進入 Sourcetrail 模式**
 
-#### 2.2 待完成
+#### 2.2 Bundled Edges
 
-- **Bundled Edges in Grid** — 兩節點間多條同類 edge 合併為一條粗邊 + `×N` 標籤
-- **`/symbol-file` 整合** — struct_view.js 拉取後端 symbol_defs 補充 C/C++ badge（目前純靠前端 regex parse）
+當兩個節點之間有 N 條同類 edge 時：
+- 合併為一條粗邊，標示 `×N`
+- Hover → tooltip 列出每條 edge 的來源行
+- Click → 展開為 N 條細邊（或 side panel 列表）
+
+**實作方式**：
+- `/symbol-graph` 在後端先依照 `source + target + edge_type` 進行 GroupBy 算出 `count`，前端再映射為線條粗細。
+- 前端 group by `bundle_key`，如果 count > 1 則 render bundle
 
 ---
 
@@ -183,9 +272,12 @@ DATA.symbol_edges = [
 
 > **核心目標**：選中 symbol 後，Code View 右側直接跳到/顯示該 member 的函式定義 snippet。
 
-#### 3.1 後端 — `/symbol-refs` endpoint ✅
+> ⚠️ **參考截圖（目標 Code Panel 行為）**：
+> Graph 中點擊 `Field::SameInRow` badge → Code Panel 立刻顯示該函式的原始碼片段（帶行號，從第 77 行開始），而**不是**捲到整個檔案頂部。這是「Symbol-aware code jump」，不同於普通的「載入整個檔案」。
 
-回傳該 symbol 的定義與引用位置：
+#### 3.1 後端 — `/symbol-refs` endpoint
+
+回傳格式：
 ```json
 {
   "definitions": [{ "file": "path/to/file.cpp", "line": 77, "snippet": "..." }],
@@ -193,11 +285,15 @@ DATA.symbol_edges = [
 }
 ```
 
-#### 3.2 前端 — Snippet View ❌ 待實作
+#### 3.2 前端 — Code View 改版
 
-- **Symbol-aware jump**：點擊 Graph badge 不再只是捲動整個檔案，而是顯示縮減後的 snippet。
-- **Context 顯示**：顯示定義前後各 5 行的 context。
-- **多檔聚合**：如果該 symbol 在多處被引用，Code Panel 會按檔案顯示多個可摺疊的 snippets。
+- **點擊 Graph 中的 member badge**（如 `SameInRow`）→ Code Panel 自動載入該 symbol 所在的檔案，並 scroll + highlight 到該函式定義的起始行（不是檔案頂部）
+- **定義片段** 顯示在最上方（黃色左邊框），context 顯示前後各 3–5 行
+- **引用片段** 按檔案分組，每個可折疊，顯示上下各 2 行 context
+- 每個 snippet 有 `↗ 開啟完整檔案` 按鈕
+- snippet 內的 symbol 可點擊 → 觸發 `activateSymbol()`
+- 保留原本的「完整檔案模式」作為 toggle 選項
+- file tab 標題顯示 `field.cpp  1 reference`（對照截圖右上角）
 
 ---
 
@@ -231,42 +327,144 @@ DATA.symbol_edges = [
 
 ## 五、已知 Bugs / Tech Debt
 
-- `is_public` 永遠 `false` (Python parser)。
-- Dotted import 解析失敗（`from a.b import c`）。
-- ~~視窗 resize 後，Structure View 的跨 class 箭頭位置不會自動重繪。~~ ✅ 已修（ResizeObserver + `_svRedrawAll`）
-- Structure Grid 中 `_svConvertToAbsolute` 若在 flex reflow 完成前呼叫，座標快照可能不準確（目前用雙層 `requestAnimationFrame` 緩解，極端情況下仍可能發生）。
-- `bios_parser.py` 的 `RE_FUNCDEF` 在 template function（`template<T> void Foo<T>::Bar()`）上無法正確解析 parent。
+| Bug | 檔案 | 說明 |
+|-----|------|------|
+| `is_public` 永遠 `false` (Python) | `python_parser.py` | `is_static=True` for all → `is_public = not is_static = False`。Workaround 在 `/structure` 使用全部 funcs |
+| Dotted import 解析失敗 | `analyze_viz.py` / parsers | `from core.engine import Engine` → `file_edges_by_module` 空。Strategy B workaround |
+| `file_to_module` 可能不存在 | `server.py` | `/structure` endpoint 使用 `graph_data.get('file_to_module', {})`。需確認 `build_graph` 有輸出 |
+| ~~Cross-file 箭頭起點不精確~~ | ~~`struct_view.js`~~ | ✅ **已修復（本 session）**：改用 `offsetLeft/offsetTop` 鏈追蹤計算 SVG 座標，箭頭從 method badge 精確出發 |
+| ~~SVG 圖層在卡片後面~~ | ~~`struct_view.css`~~ | ✅ **已修復（本 session）**：`#sv-arrows { z-index: 10 }`，高於 `#sv-grid { z-index: 2 }` |
+| Structure View 重新渲染後箭頭不更新 | `struct_view.js` | 視窗 resize / scroll 後箭頭位置未重新計算。目前只在 render 時畫一次，需要監聽 ResizeObserver |
 
 ---
 
-## 六、Session 變更記錄
+## 五・五、本 Session 變更記錄 (最新在上)
 
-### 🔧 Session 1：Structure View 單一畫面 + 修正 3-column 規劃
-- 更新 `VIZCODE_AGENT_BRIEF.md`：移除 Phase 2 的「三欄式佈局 (incoming/center/outgoing)」需求。
-- 確認主題：Structure View 應維持「單一畫面的全檔案 Grid」，僅加強連線與互動。
+### 🔧 Session：Structure View 單一畫面 + 跨 class 箭頭修復
 
-### 🔧 Session 2：Phase 1 基礎設施補齊 + Phase 2 互動強化（已驗證 ✅）
+**修改檔案：`static/struct_view.js`、`static/struct_view.css`**
 
-#### `bios_parser.py`
-- **新增** `_parse_c_symbol_defs(src, clean)` 函數
-- **新增** 三個 regex：`RE_C_CLASS`、`RE_C_METHOD`、`RE_C_TYPEDEF`
-- `scan_c()` 回傳值從 5-tuple 升級為 **6-tuple**（新增 `symbol_defs`）
-- `scan_bios()` 所有分支統一回傳 **6-tuple**（非 C/C++ 格式的 `symbol_defs` 為 `[]`）
-- 可解析：`class Foo : public Base`、`void Foo::Bar()`、`typedef struct { } TypeName`
+#### 需求
+使用者確認：Structure View 只需要一個畫面。點檔案 → Structure 按鈕後，應顯示該檔案所有 class（PUBLIC/PRIVATE/FIELDS）並用箭頭串連，類似 Sourcetrail 截圖的模式。不需要第二畫面（Symbol-Centric Pivot 模式）。
 
-#### `server.py`
-- **新增** `GET /symbol-file?job=&file=` 端點
-  - 回傳指定檔案的所有 `symbol_index` entries
-  - 回傳兩端均在該檔案內的 `symbol_edges`（intra-file edges）
-  - 供前端 struct_view 強化 C/C++ class card badge
+#### 完成的修改
 
-#### `struct_view.js`
-- **移除** Cytoscape pan/zoom 同步（`cy.on('pan zoom', ...)` 解除耦合）
-- **新增** `_svInitPanZoom(scroll, tGroup, svg)` — 獨立 canvas pan/zoom
-- **新增** `_svConvertToAbsolute(localArea)` — flex → absolute 佈局轉換
-- **新增** `_svInitNodeDrag(localArea, svg, scroll)` — 每節點自由拖曳
-- **新增** `_svRedrawAll(svg, scroll)` — 統一箭頭重繪入口
-- **修正** `_svRender()` 每次呼叫前執行 `_nodeDragCleanup()` 防止事件監聽器洩漏
+**1. 移除自動切換到 Symbol-Centric 模式（`struct_view.js`）**
+- 刪除 `svShowSvView()` 內的 Phase 2 auto-switch 程式碼（`_svFindPrimarySymbol` + `svShowSymbol` 分支）
+- 刪除末尾包裹 `svShowSvView` 的 IIFE patch
+- 現在永遠執行 `_svRender(src, ext, fname)`，即全檔案 grid 視圖
 
-#### `struct_view.css`
-- **新增** `.sv-scroll`、`.sv-class-hdr`、`.sv-box-dragging` 的 cursor 與視覺狀態樣式
+**2. 新增跨 class method call 箭頭（`_svDrawCallArrows(svg)`）**
+- 讀取 `DATA.funcs_by_file[fileRel]` + `DATA.func_edges_by_file[fileRel]`
+- 為每條跨不同 class 的 caller→callee edge 繪製橘色 bezier 箭頭
+- 箭頭從 method badge DOM 元素精確出發（不是 class box 中心）
+- 每個 unique `callerLabel→calleeLabel` pair 只畫一條（deduped）
+- 點擊箭頭：高亮兩端 badge + 兩個 class box，並跳到 callee 定義行
+
+**3. 修復箭頭座標系統（`_svDrawCallArrows` 使用 `offsetLeft/offsetTop` 鏈）**
+- 舊問題：`getBoundingClientRect() + _svMakeCoordMapper()` 在 SVG 嵌套於 tGroup 內部時座標偏移
+- 新做法：`offsetLeft/offsetTop/offsetParent` 向上遍歷到 `tGroup`，直接得到 tGroup layout 空間座標（= SVG 座標系）
+- 不受 scroll、viewport 位置、CSS transform 影響
+
+**4. 修復 SVG z-index（`struct_view.css`）**
+- `#sv-arrows { z-index: 1 }` → `z-index: 10`
+- 確保箭頭繪製在 class card（`#sv-grid z-index: 2`）之上
+
+**5. 改用 double `requestAnimationFrame`**
+- `requestAnimationFrame(() => _svDrawArrows(...))` → `requestAnimationFrame(() => requestAnimationFrame(() => ...))`
+- 確保 flex 佈局完全 paint 後才量測 badge 位置
+
+**6. 新增 SVG marker 與 CSS**
+- `#sv-ah-call` marker（橘色實心三角）
+- `.sv-arrow-call` 樣式（`stroke: #fb923c99`，hover 加粗）
+
+**7. 簡化 header**
+- 移除 Prev/Next 按鈕（對應移除 Prev/Next 導航按鈕，保持 UI 簡潔）
+
+#### 注意事項（給下一位 AI）
+- `svShowSymbol()` 和相關的 Phase 2 Symbol-Centric 代碼**仍保留在檔案中**（約第 1500–2200 行），只是不再自動觸發。若未來要恢復，取消 IIFE 或手動呼叫即可。
+- `_svDrawCallArrows` 依賴 `DATA.funcs_by_file` + `DATA.func_edges_by_file`，如果後端沒有這兩個 key（例如分析失敗），箭頭不會出現但不會報錯。
+- 箭頭在視窗 resize 後不會自動重繪（已列入 Tech Debt）。
+
+---
+
+```
+viz.js  ──calls──►  struct_view.js exposed globals:
+    svUpdateStructureBtn(fileRel, ext)
+    svAfterRenderCode(src, ext, fname)
+    svHideStructureBtn()
+    svToggleStructView()
+
+struct_view.js  ──calls──►  viz.js globals:
+    jumpToFunc(name)
+    openCodePanel()
+    focusFunc(fileRel, idx)
+    drillToFile(fileRel)
+    state.level / l2State.activeFile / DATA.*
+```
+
+---
+
+## 七、Parser 介面規範
+
+所有 `parsers/*.py` 的 `scan_xxx()` 必須回傳：
+
+```python
+return (
+    imports_or_refs,      # list[str]
+    funcdefs,             # list[dict]: [{label, is_efiapi, is_static}, ...]
+    funccalls,            # list[str]
+    extra_dict,           # dict | None
+    func_calls_by_func,   # list[list[str]]
+)
+```
+
+Phase 1 後，新增回傳（backward compatible）：
+
+```python
+return (
+    imports_or_refs,
+    funcdefs,
+    funccalls,
+    extra_dict,
+    func_calls_by_func,
+    symbol_defs,          # list[dict]: 完整 symbol 定義 [{name, kind, line, end_line, parent, bases, fields, methods}, ...]
+)
+```
+
+---
+
+## 八、Dev Setup
+
+```bash
+# 啟動 server
+python vizcode.py /path/to/your/project
+
+# 瀏覽器開 http://localhost:7777
+# 前端檔案在 static/ 目錄，修改後 Ctrl+Shift+R 硬重整
+# 無 build step
+```
+
+---
+
+## 九、檔案清單
+
+```
+vizcode.py          CLI launcher + TUI 動畫
+server.py           HTTP server (stdlib only)
+analyze_viz.py      Graph builder — dispatches to parsers/
+parsers/
+  bios_parser.py    C/C++/UEFI parser
+  python_parser.py  Python parser
+  js_parser.py      JS/TS parser
+  go_parser.py      Go parser
+detector.py         專案類型自動偵測
+static/
+  viz.js            主前端 (~7600 行)
+  viz.css           主 stylesheet (~3000 行)
+  struct_view.js    Structure View plugin (~2300 行，含 Phase 2 Symbol 模式殘留代碼)
+  struct_view.css   Structure View styles
+  i18n.js           中英翻譯
+  themes.css        主題樣式
+launcher.html       Shell HTML (注入 DATA + 載入 scripts)
+```
