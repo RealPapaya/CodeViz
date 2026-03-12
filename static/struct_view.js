@@ -541,13 +541,11 @@ function _svRender(src, ext, fname) {
     svg.id = 'sv-arrows';
     svg.setAttribute('aria-hidden', 'true');
     svg.innerHTML = `<defs>
-        <marker id="sv-ah-uses"          markerWidth="8"  markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fbbf24bb"/></marker>
-        <marker id="sv-ah-inherit"       markerWidth="8"  markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#60a5faaa"/></marker>
-        <marker id="sv-ah-cross-file"    markerWidth="8"  markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f97316cc"/></marker>
-        <marker id="sv-ah-call"          markerWidth="8"  markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fb923ccc"/></marker>
-        <marker id="sv-ah-call-inner"    markerWidth="8"  markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a78bfacc"/></marker>
-        <marker id="sv-ah-call-bundled"  markerWidth="11" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,11 4,0 8" fill="#fb923c"/></marker>
-        <marker id="sv-ah-inner-bundled" markerWidth="11" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,11 4,0 8" fill="#a78bfa"/></marker>
+        <marker id="sv-ah-uses"       markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fbbf24bb"/></marker>
+        <marker id="sv-ah-inherit"    markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#60a5faaa"/></marker>
+        <marker id="sv-ah-cross-file" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f97316cc"/></marker>
+        <marker id="sv-ah-call"       markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#fb923ccc"/></marker>
+        <marker id="sv-ah-call-inner" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#a78bfacc"/></marker>
     </defs>`;
 
     const grid = document.createElement('div');
@@ -670,9 +668,6 @@ function _svRender(src, ext, fname) {
 
     // ── Async: fetch cross-file data from /structure endpoint ─────────────
     _svFetchAndApplyCrossFile(++_sv._renderToken, classes, svg, scroll, grid);
-
-    // ── Async: fetch backend symbol_defs to enrich C/C++ (and any) badges ─
-    _svFetchAndMergeSymbols(_sv._renderToken, classes, localArea, svg, scroll);
 }
 
 // -- Badge click/hover → code panel sync ----------------------------------------
@@ -915,9 +910,7 @@ function _svTopoSort(classes) {
 }
 
 function _svDrawArrows(classes, svg, scroll) {
-    // Remove inherit/uses path arrows, then call arrow groups
     svg.querySelectorAll('.sv-local-arrow').forEach(p => p.remove());
-    svg.querySelectorAll('.sv-call-arrow-group').forEach(g => g.remove());
 
     const boxMap = {};
     classes.forEach((cls, i) => { boxMap[cls.name] = i; });
@@ -991,222 +984,102 @@ function _svDrawArrows(classes, svg, scroll) {
 }
 
 
-// ── Call-graph arrows with Bundled Edge support ────────────────────────────────
-// Groups all edges by (fromClassIdx, toClassIdx) and draws:
-//   count == 1 → thin badge-to-badge arrow (original behaviour)
-//   count  > 1 → thick box-header-to-box-header arrow + ×N pill label
-//                hover shows tooltip; click highlights all source/target badges
+// ── Call-graph arrows ──────────────────────────────────────────────────────────
+// Uses offsetLeft/offsetTop traversal (= tGroup layout space = SVG coords).
+// This is re-called by ResizeObserver on every reflow, so arrows always stick.
 function _svDrawCallArrows(svg) {
     const tGroup = svg.parentElement;
     if (!tGroup) return;
-
-    // Remove only our call arrows (not inherit/uses arrows)
-    svg.querySelectorAll('.sv-call-arrow-group').forEach(g => g.remove());
 
     const fileRel = _sv._fileRel;
     const allFuncs = window.DATA?.funcs_by_file?.[fileRel] || [];
     const allEdges = window.DATA?.func_edges_by_file?.[fileRel] || [];
     if (!allFuncs.length || !allEdges.length) return;
 
-    // ── Element → tGroup-local coordinates (= SVG coordinate space) ──────────
+    // Compute element rect in tGroup layout space (= SVG coord space)
     function _localRect(el) {
         let x = 0, y = 0, cur = el;
         while (cur && cur !== tGroup) {
             x += (cur.offsetLeft || 0);
-            y += (cur.offsetTop  || 0);
+            y += (cur.offsetTop || 0);
             cur = cur.offsetParent;
         }
         return { x, y, w: el.offsetWidth, h: el.offsetHeight };
     }
+
     function _pivots(el) {
         const r = _localRect(el);
         if (!r.w && !r.h) return null;
         const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
         return [
-            { x: cx,        y: r.y        },  // 0 top-center
-            { x: r.x + r.w, y: cy         },  // 1 right-center
-            { x: cx,        y: r.y + r.h  },  // 2 bottom-center
-            { x: r.x,       y: cy         },  // 3 left-center
+            { x: cx, y: r.y },          // 0 top-center
+            { x: r.x + r.w, y: cy },            // 1 right-center
+            { x: cx, y: r.y + r.h },     // 2 bottom-center
+            { x: r.x, y: cy },            // 3 left-center
         ];
     }
 
-    // ── badge label → {el, access, ci} ───────────────────────────────────────
+    // Build label → {el, access, ci} map
     const labelMap = new Map();
     document.querySelectorAll('#sv-grid .sv-method[data-sv-name]').forEach(badge => {
         const name = badge.dataset.svName;
         if (!labelMap.has(name)) {
             labelMap.set(name, {
-                el:     badge,
+                el: badge,
                 access: badge.dataset.svAccess || (badge.classList.contains('sv-method-priv') ? 'private' : 'public'),
-                ci:     parseInt(badge.dataset.svClass, 10),
+                ci: parseInt(badge.dataset.svClass, 10),
             });
         }
     });
 
-    // ── Step 1: group every valid edge into a bundle ──────────────────────────
-    // Bundle key: `${fromCI}|${toCI}|${type}`
-    // Each bundle holds a Map of unique edgeKeys → edge descriptor
-    const bundles = new Map();
-
+    const seen = new Set();
     allEdges.forEach(({ s, t }) => {
         const sf = allFuncs[s], tf = allFuncs[t];
         if (!sf || !tf) return;
+
         const from = labelMap.get(sf.label);
-        const to   = labelMap.get(tf.label);
+        const to = labelMap.get(tf.label);
         if (!from || !to || from.el === to.el) return;
 
         const isCross = from.ci !== to.ci;
-        const isInner = !isCross && from.access === 'public' && to.access === 'private';
-        if (!isCross && !isInner) return;
+        const isInnerPubToPriv = !isCross && from.access === 'public' && to.access === 'private';
+        if (!isCross && !isInnerPubToPriv) return;
 
-        const type = isCross ? 'cross' : 'inner';
-        const key  = `${from.ci}|${to.ci}|${type}`;
+        const key = `${sf.label}→${tf.label}`;
+        if (seen.has(key)) return;
+        seen.add(key);
 
-        if (!bundles.has(key)) {
-            bundles.set(key, {
-                fromCI: from.ci, toCI: to.ci, isCross, isInner,
-                edges: new Map(),   // edgeKey → { fromEl, toEl, fromLabel, toLabel, lineIdx }
-            });
-        }
-        const b = bundles.get(key);
-        const edgeKey = `${sf.label}→${tf.label}`;
-        if (!b.edges.has(edgeKey)) {
-            b.edges.set(edgeKey, {
-                fromEl:    from.el,
-                toEl:      to.el,
-                fromLabel: sf.label,
-                toLabel:   tf.label,
-                lineIdx:   parseInt(to.el.dataset.svLine, 10) || 0,
-            });
-        }
-    });
-
-    if (!bundles.size) return;
-
-    // ── Step 2: draw one SVG group per bundle ─────────────────────────────────
-    bundles.forEach(({ fromCI, toCI, isCross, isInner, edges }) => {
-        const edgeList   = [...edges.values()];
-        const count      = edgeList.length;
-        const isBundled  = count > 1;
-        const baseColor  = isCross ? '#fb923c' : '#a78bfa';
-        const arrowClass = isCross ? 'sv-arrow-call' : 'sv-arrow-call-inner';
-        const markerId   = isCross
-            ? (isBundled ? 'sv-ah-call-bundled'  : 'sv-ah-call')
-            : (isBundled ? 'sv-ah-inner-bundled' : 'sv-ah-call-inner');
-
-        // Source / target elements:
-        //   bundled  → class-box header (centre of the whole node)
-        //   singular → individual badge elements
-        const fromEl = isBundled
-            ? (document.getElementById(`sv-cls-${fromCI}`)?.querySelector('.sv-class-hdr')
-               || document.getElementById(`sv-cls-${fromCI}`))
-            : edgeList[0].fromEl;
-        const toEl = isBundled
-            ? (document.getElementById(`sv-cls-${toCI}`)?.querySelector('.sv-class-hdr')
-               || document.getElementById(`sv-cls-${toCI}`))
-            : edgeList[0].toEl;
-        if (!fromEl || !toEl) return;
-
-        const srcPts = _pivots(fromEl);
-        const dstPts = _pivots(toEl);
+        const srcPts = _pivots(from.el);
+        const dstPts = _pivots(to.el);
         if (!srcPts || !dstPts) return;
 
         const { si, ti } = _svBestPair(srcPts, dstPts, isCross ? 'H' : '');
-        const p1      = srcPts[si], p2 = dstPts[ti];
-        const tension = _svTension(p1, p2);
-        const d       = _svBezierPath(p1, si, p2, ti, tension);
+        const p1 = srcPts[si], p2 = dstPts[ti];
+        const d = _svBezierPath(p1, si, p2, ti, _svTension(p1, p2));
 
-        // ── SVG group ─────────────────────────────────────────────────────────
-        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.classList.add('sv-call-arrow-group');
+        const arrowClass = isCross ? 'sv-arrow-call' : 'sv-arrow-call-inner';
+        const markerId = isCross ? 'sv-ah-call' : 'sv-ah-call-inner';
 
-        // Wide transparent hit-area (thin paths are hard to click precisely)
-        const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        hit.setAttribute('d', d);
-        hit.setAttribute('stroke', 'transparent');
-        hit.setAttribute('stroke-width', isBundled ? '18' : '12');
-        hit.setAttribute('fill', 'none');
-        hit.style.cursor = 'pointer';
-        g.appendChild(hit);
-
-        // Main visible path
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', d);
-        path.classList.add('sv-arrow', arrowClass);
-        if (isBundled) path.classList.add('sv-arrow-bundled');
+        path.classList.add('sv-arrow', 'sv-local-arrow', arrowClass);
         path.setAttribute('marker-end', `url(#${markerId})`);
-        path.style.pointerEvents = 'none';
-        g.appendChild(path);
-
-        // ── ×N pill label (bundled only) ──────────────────────────────────────
-        if (isBundled) {
-            // Cubic bezier midpoint at t=0.5 (De Casteljau)
-            const d1 = _SV_SIDE_DIR[si], d2 = _SV_SIDE_DIR[ti];
-            const cp1x = p1.x + d1.x * tension, cp1y = p1.y + d1.y * tension;
-            const cp2x = p2.x + d2.x * tension, cp2y = p2.y + d2.y * tension;
-            const mx = 0.125 * p1.x + 0.375 * cp1x + 0.375 * cp2x + 0.125 * p2.x;
-            const my = 0.125 * p1.y + 0.375 * cp1y + 0.375 * cp2y + 0.125 * p2.y;
-
-            const labelStr = `×${count}`;
-            const pillW    = labelStr.length * 7 + 14;  // dynamic width for ×10, ×100, etc.
-
-            const pill = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            pill.setAttribute('x',      mx - pillW / 2);
-            pill.setAttribute('y',      my - 9);
-            pill.setAttribute('width',  pillW);
-            pill.setAttribute('height', '17');
-            pill.setAttribute('rx',     '8');
-            pill.setAttribute('fill',   baseColor);
-            pill.setAttribute('opacity', '0.93');
-            pill.style.pointerEvents = 'none';
-            g.appendChild(pill);
-
-            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            label.setAttribute('x',            mx);
-            label.setAttribute('y',            my + 5);
-            label.setAttribute('text-anchor',  'middle');
-            label.classList.add('sv-bundle-label');
-            label.textContent    = labelStr;
-            label.style.pointerEvents = 'none';
-            g.appendChild(label);
-        }
-
-        // Tooltip: list all individual edges on hover
-        const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        titleEl.textContent = edgeList.map(e => `${e.fromLabel} → ${e.toLabel}`).join('\n');
-        g.appendChild(titleEl);
-
-        // ── Interaction ───────────────────────────────────────────────────────
-        const _clearAll = () => {
-            document.querySelectorAll('.sv-arrow-active').forEach(a  => a.classList.remove('sv-arrow-active'));
-            document.querySelectorAll('.sv-active-badge').forEach(b  => b.classList.remove('sv-active-badge'));
-            document.querySelectorAll('.sv-active-box').forEach(b    => b.classList.remove('sv-active-box'));
-        };
-
-        const _onClick = e => {
+        path.style.pointerEvents = 'stroke';
+        path.style.cursor = 'pointer';
+        path.addEventListener('click', e => {
             e.stopPropagation();
-            _clearAll();
+            document.querySelectorAll('.sv-arrow-active').forEach(a => a.classList.remove('sv-arrow-active'));
+            document.querySelectorAll('.sv-active-badge').forEach(b => b.classList.remove('sv-active-badge'));
+            document.querySelectorAll('.sv-active-box').forEach(b => b.classList.remove('sv-active-box'));
             path.classList.add('sv-arrow-active');
-            document.getElementById(`sv-cls-${fromCI}`)?.classList.add('sv-active-box');
-            document.getElementById(`sv-cls-${toCI}`)?.classList.add('sv-active-box');
-            edgeList.forEach(edge => {
-                edge.fromEl.classList.add('sv-active-badge');
-                edge.toEl.classList.add('sv-active-badge');
-            });
-            const lineIdx = edgeList[0].lineIdx;
-            if (lineIdx) _svJumpCodeToLine(lineIdx);
-        };
-
-        const _onEnter = () => g.classList.add('sv-call-arrow-hover');
-        const _onLeave = () => g.classList.remove('sv-call-arrow-hover');
-
-        [hit, path].forEach(el => {
-            el.addEventListener('click',      _onClick);
-            el.addEventListener('mouseenter', _onEnter);
-            el.addEventListener('mouseleave', _onLeave);
+            from.el.classList.add('sv-active-badge');
+            to.el.classList.add('sv-active-badge');
+            document.getElementById(`sv-cls-${from.ci}`)?.classList.add('sv-active-box');
+            document.getElementById(`sv-cls-${to.ci}`)?.classList.add('sv-active-box');
+            const lineIdx = parseInt(to.el.dataset.svLine, 10);
+            if (!isNaN(lineIdx)) _svJumpCodeToLine(lineIdx);
         });
-
-        svg.appendChild(g);
+        svg.appendChild(path);
     });
 }
 
@@ -1913,165 +1786,6 @@ function _svRedrawAll(svg, scroll) {
             );
         }, 12);
     }
-}
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// /symbol-file INTEGRATION — backend badge enrichment
-// Fetch symbol_index entries for the current file from the server and inject
-// any methods/fields that the frontend regex parser missed into the existing
-// class-box cards. Additive only — never removes existing badges.
-// ══════════════════════════════════════════════════════════════════════════════
-
-async function _svFetchAndMergeSymbols(token, classes, localArea, svg, scroll) {
-    const jid     = window.JOB_ID;
-    const fileRel = _sv._fileRel;
-    if (!jid || !fileRel) return;
-
-    let data = null;
-    try {
-        const r = await fetch(
-            `/symbol-file?job=${encodeURIComponent(jid)}&file=${encodeURIComponent(fileRel)}`
-        );
-        if (!r.ok) return;
-        data = await r.json();
-    } catch (_) { return; }
-
-    // Stale-render guard
-    if (token !== _sv._renderToken) return;
-
-    const symbols = data?.symbols || [];
-    if (!symbols.length) return;
-
-    // ── Build per-class buckets from backend symbols ───────────────────────────
-    // kind: 'method' | 'function' → goes into pub / priv lists
-    // kind: 'variable'            → goes into fields list
-    // kind: 'class'               → skip (already rendered by frontend regex)
-    const byClass = {};
-    for (const sym of symbols) {
-        if (sym.kind === 'class') continue;
-        const parent = sym.parent;
-        if (!parent) continue;
-        if (!byClass[parent]) byClass[parent] = { pub: [], priv: [], fields: [] };
-        const b = byClass[parent];
-        if (sym.kind === 'method' || sym.kind === 'function') {
-            (sym.is_public ? b.pub : b.priv).push({ name: sym.name, line: sym.line });
-        } else if (sym.kind === 'variable') {
-            b.fields.push({ name: sym.name, line: sym.line, access: sym.is_public ? 'public' : 'private' });
-        }
-    }
-
-    if (!Object.keys(byClass).length) return;
-
-    let anyAdded = false;
-
-    classes.forEach((cls, ci) => {
-        const extra = byClass[cls.name];
-        if (!extra) return;
-
-        const box = document.getElementById(`sv-cls-${ci}`);
-        if (!box) return;
-
-        // Snapshot existing badge names to avoid duplicates
-        const existingNames = new Set();
-        box.querySelectorAll('[data-sv-name]').forEach(b => existingNames.add(b.dataset.svName));
-
-        // ── Helper: append new method badges to the correct .sv-section ────────
-        const _injectMethods = (items, isPublic) => {
-            const newItems = items.filter(m => !existingNames.has(m.name));
-            if (!newItems.length) return;
-
-            // Find (or create) the target section
-            let section = null;
-            const hdrText = isPublic ? 'PUBLIC' : 'PRIVATE';
-            const hdrIcon = isPublic ? '🌐' : '🏠';
-            box.querySelectorAll('.sv-section').forEach(sec => {
-                const hdr = sec.querySelector('.sv-section-hdr');
-                if (hdr && hdr.textContent.includes(hdrText)) section = sec;
-            });
-            if (!section) {
-                section = document.createElement('div');
-                section.className = 'sv-section';
-                section.innerHTML = `<div class="sv-section-hdr"><span>${hdrIcon}</span> ${hdrText}</div><div class="sv-items"></div>`;
-                box.appendChild(section);
-            }
-            const itemsEl = section.querySelector('.sv-items');
-            if (!itemsEl) return;
-
-            newItems.forEach((m, idx) => {
-                if (existingNames.has(m.name)) return;
-                existingNames.add(m.name);
-                anyAdded = true;
-
-                const col  = _SV_COLORS[(ci * 5 + idx) % _SV_COLORS.length];
-                const span = document.createElement('span');
-                span.className        = isPublic ? 'sv-method sv-backend-badge' : 'sv-method sv-method-priv sv-backend-badge';
-                if (isPublic) span.style.cssText = `background:${col}1a;border-color:${col}88;color:${col}`;
-                span.dataset.svClass  = ci;
-                span.dataset.svLine   = m.line;
-                span.dataset.svName   = m.name;
-                span.dataset.svAccess = isPublic ? 'public' : 'private';
-                span.title            = `${m.name} (backend)`;
-                span.textContent      = m.name;
-                itemsEl.appendChild(span);
-
-                // Keep cls object in sync for arrow drawing
-                (isPublic ? cls.public_methods : cls.private_methods).push({ name: m.name, line: m.line });
-            });
-        };
-
-        // ── Helper: append new field badges ────────────────────────────────────
-        const _injectFields = (fields) => {
-            const newFields = fields.filter(f => !existingNames.has(f.name));
-            if (!newFields.length) return;
-
-            let section = null;
-            box.querySelectorAll('.sv-section').forEach(sec => {
-                const hdr = sec.querySelector('.sv-section-hdr');
-                if (hdr && hdr.textContent.includes('FIELDS')) section = sec;
-            });
-            if (!section) {
-                section = document.createElement('div');
-                section.className = 'sv-section';
-                section.innerHTML = `<div class="sv-section-hdr"><span>#</span> FIELDS</div><div class="sv-items"></div>`;
-                // Insert before PUBLIC section if one exists
-                const pubSec = Array.from(box.querySelectorAll('.sv-section'))
-                    .find(s => s.querySelector('.sv-section-hdr')?.textContent.includes('PUBLIC'));
-                pubSec ? box.insertBefore(section, pubSec) : box.appendChild(section);
-            }
-            const itemsEl = section.querySelector('.sv-items');
-            if (!itemsEl) return;
-
-            newFields.forEach(f => {
-                if (existingNames.has(f.name)) return;
-                existingNames.add(f.name);
-                anyAdded = true;
-
-                const span = document.createElement('span');
-                span.className       = `sv-field sv-field-${f.access || 'private'} sv-backend-badge`;
-                span.dataset.svClass = ci;
-                span.dataset.svLine  = f.line;
-                span.dataset.svName  = f.name;
-                span.title           = `${f.name} (backend)`;
-                span.textContent     = f.name;
-                itemsEl.appendChild(span);
-
-                cls.fields.push({ name: f.name, line: f.line, access: f.access });
-            });
-        };
-
-        _injectMethods(extra.pub,   true);
-        _injectMethods(extra.priv,  false);
-        _injectFields(extra.fields);
-    });
-
-    if (!anyAdded) return;
-
-    // NOTE: _svAttachBadgeHandlers uses event delegation on `scroll`, so dynamically
-    // injected badges are already covered — DO NOT re-call it here (would double-fire).
-
-    // Redraw arrows — new badges may be valid arrow endpoints
-    requestAnimationFrame(() => _svRedrawAll(svg, scroll));
 }
 
 
