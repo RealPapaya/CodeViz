@@ -1074,14 +1074,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not s:
                     return None
                 return {
-                    'id':        s['id'],
-                    'name':      s['name'],
-                    'kind':      s['kind'],
-                    'file':      s['file'],
-                    'line':      s['line'],
-                    'is_public': s['is_public'],
-                    'module':    s['module'],
-                    'parent':    s['parent'],
+                    'id':           s['id'],
+                    'name':         s['name'],
+                    'kind':         s['kind'],
+                    'file':         s['file'],
+                    'line':         s['line'],
+                    'is_public':    s['is_public'],
+                    'access_level': 'public' if s.get('is_public', True) else 'private',
+                    'module':       s['module'],
+                    'parent':       s['parent'],
                 }
 
             incoming = []
@@ -1105,12 +1106,13 @@ class Handler(BaseHTTPRequestHandler):
             center_file = center.get('file', '')
             children = [
                 {
-                    'id':       s['id'],
-                    'name':     s['name'],
-                    'kind':     s['kind'],
-                    'line':     s.get('line', 0),
-                    'end_line': s.get('end_line', 0),
-                    'is_public': s.get('is_public', True),
+                    'id':           s['id'],
+                    'name':         s['name'],
+                    'kind':         s['kind'],
+                    'line':         s.get('line', 0),
+                    'end_line':     s.get('end_line', 0),
+                    'is_public':    s.get('is_public', True),
+                    'access_level': 'public' if s.get('is_public', True) else 'private',
                 }
                 for s in sym_index.values()
                 if s.get('parent') == center_name and s.get('file') == center_file

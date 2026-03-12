@@ -1514,7 +1514,7 @@ def build_html(data: dict, job_id: str = None) -> str:
     """Read shared static assets and embed them inline into the HTML skeleton."""
     base = Path(__file__).parent / 'static'
     css_assets = [base / 'viz.css', base / 'themes.css', base / 'struct_view.css', base / 'symbol_view.css']
-    js_assets = [base / 'i18n.js', base / 'viz.js', base / 'struct_view.js', base / 'symbol_view.js']
+    js_assets = [base / 'i18n.js', base / 'viz.js', base / 'struct_view.js', base / 'trail_layouter.js', base / 'symbol_view.js']
     missing = [p for p in css_assets + js_assets if not p.exists()]
 
     if missing:

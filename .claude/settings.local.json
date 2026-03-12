@@ -4,7 +4,11 @@
       "Bash(python -c \"\nimport ast, sys\nfiles = [\n    'D:/Google AI/CodeViz/server.py',\n    'D:/Google AI/CodeViz/analyze_viz.py',\n    'D:/Google AI/CodeViz/parsers/python_parser.py',\n]\nfor f in files:\n    try:\n        with open\\(f, encoding='utf-8'\\) as fh:\n            ast.parse\\(fh.read\\(\\)\\)\n        print\\(f'OK: {f}'\\)\n    except SyntaxError as e:\n        print\\(f'SYNTAX ERROR in {f}: {e}'\\)\n        sys.exit\\(1\\)\nprint\\('All Python files OK'\\)\n\")",
       "Bash(python -c \"\nimport ast\nwith open\\('D:/Google AI/CodeViz/analyze_viz.py', encoding='utf-8'\\) as f:\n    ast.parse\\(f.read\\(\\)\\)\nprint\\('analyze_viz.py OK'\\)\n\nwith open\\('D:/Google AI/CodeViz/server.py', encoding='utf-8'\\) as f:\n    ast.parse\\(f.read\\(\\)\\)\nprint\\('server.py OK'\\)\n\")",
       "Bash(python -c \"\nimport ast\nwith open\\('D:/Google AI/CodeViz/analyze_viz.py', encoding='utf-8'\\) as f:\n    ast.parse\\(f.read\\(\\)\\)\nprint\\('OK'\\)\n\")",
-      "Bash(node -e \"\nconst fs = require\\('fs'\\);\nconst src = fs.readFileSync\\('D:/Google AI/CodeViz/static/symbol_view.js', 'utf8'\\);\ntry { new Function\\(src\\); console.log\\('Syntax OK'\\); }\ncatch\\(e\\) { console.error\\('Syntax error:', e.message\\); }\n\")"
+      "Bash(node -e \"\nconst fs = require\\('fs'\\);\nconst src = fs.readFileSync\\('D:/Google AI/CodeViz/static/symbol_view.js', 'utf8'\\);\ntry { new Function\\(src\\); console.log\\('Syntax OK'\\); }\ncatch\\(e\\) { console.error\\('Syntax error:', e.message\\); }\n\")",
+      "Bash(grep -i \"\\\\.h$\")",
+      "Bash(grep -r 'struct GraphParams' /d/GOOGLE/CodeViz/Sourcetrail-master/src/lib --include=*.h)",
+      "Bash(find /d/GOOGLE/CodeViz/Sourcetrail-master -name TrailLayouter* -o -name *trail*layout*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

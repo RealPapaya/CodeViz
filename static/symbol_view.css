@@ -151,19 +151,9 @@
     background: var(--bg, #050a0f);
 }
 
-/* ── Member Panel (left sidebar) ── */
+/* ── Member Panel (left sidebar) — hidden in Phase 3+, members are in the graph ── */
 #sym-member-panel {
-    display: none;
-    flex-direction: column;
-    width: 200px;
-    min-width: 160px;
-    background: var(--panel, #090e14);
-    border-right: 1px solid var(--border, #1a2535);
-    overflow: hidden;
-    flex-shrink: 0;
-}
-#sym-member-panel.visible {
-    display: flex;
+    display: none !important;
 }
 
 .sym-mp-header {
