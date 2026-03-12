@@ -3226,6 +3226,16 @@ function jumpToFunc(funcName, targetCallText = null) {
     }
 }
 
+function jumpToLine(lineNo) {
+    const idx = lineNo - 1;   // lineNo is 1-based; cl-N ids are 0-based
+    document.querySelectorAll('.code-line.fn-highlight').forEach(el => el.classList.remove('fn-highlight'));
+    const el = document.getElementById(`cl-${idx}`);
+    if (el) {
+        el.classList.add('fn-highlight');
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+}
+
 function showFuncBar(fDef) {
     const bar = document.getElementById('cp-func-bar');
     bar.classList.add('visible');

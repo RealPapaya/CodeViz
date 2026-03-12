@@ -55,12 +55,14 @@
   - **用途**: 管理中英雙語的翻譯對照表。
 - 🔮 **`static/struct_view.js`** (前端)
   - **用途**: Structure View 插件，提供 class-grid 視圖。Entry points: `svToggleStructView()`, `svUpdateStructureBtn()`, `svAfterRenderCode()`。
-- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1 新增**
-  - **用途**: Sourcetrail 風格的 Symbol-Centric Graph。以 Cytoscape dagre LR 佈局顯示 center node 的 incoming/outgoing edges。
+- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1+2 新增**
+  - **用途**: Sourcetrail 風格的 Symbol-Centric Graph。嵌入 `#graph-wrap`（與 `#func-view` 同層、同機制），`position: absolute; inset: 0`，用 `.active` class 控制顯示。
+  - **佈局**: 左側 sidebar + 上方 topbar 完全不動；畫布區域顯示 Cytoscape dagre LR Symbol Graph；右側 Code Panel 照常可用。
   - **Entry points**: `symViewOpen(fileRel)` / `symViewActivate(symId)` / `symViewClose()`。
-  - **右側 Members 面板**: 顯示 center class 的 Public/Private 成員，點擊跳至程式碼。
-- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1 新增**
-  - **用途**: Symbol View 專用樣式 (`#sym-view`, `#sym-cy`, `#sym-members`, `.sym-member`, `.sym-kind-badge`)。
+  - **節點互動**: 點 center node → Code Panel 跳到定義行；點周圍節點 → 重新以該 symbol 為中心；Back 按鈕 → 導航歷史。
+  - **⚠️ DOM**: `<div id="sym-view">` 已在 `analyze_viz.py` HTML skeleton 的 `#graph-wrap` 內靜態宣告；JS 首次顯示時填入 innerHTML。
+- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1+2 新增**
+  - **用途**: Symbol View 專用樣式。`#sym-view` = `position:absolute; inset:0; display:none`，`.active` = `display:flex`。無獨立 members 側欄，Code Panel 負責程式碼顯示。
 
 ---
 
@@ -119,7 +121,7 @@ return (
 )
 ```
 
-**擴充 6-tuple** (Python parser 已實作，其他可選):
+**擴充 6-tuple** (全部 4 個 parser 均已實作 ✅):
 ```python
 return (
     imports_or_refs,

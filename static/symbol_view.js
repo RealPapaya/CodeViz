@@ -51,13 +51,20 @@ const _SYM_CY_STYLE = [
     {
         selector: 'node[?isCenter]',
         style: {
-            'background-color': '#1e3a5f',
+            'background-color': '#0d2137',
             'border-color':     '#00d4ff',
-            'border-width':     2.5,
-            'color':            '#00d4ff',
-            'font-size':        14,
-            'font-weight':      'bold',
+            'border-width':     2,
+            'color':            '#cbd5e1',
+            'font-size':        11,
+            'font-family':      'JetBrains Mono, monospace',
+            'text-wrap':        'wrap',
+            'text-max-width':   220,
+            'text-valign':      'center',
+            'text-halign':      'center',
+            'width':            'label',
+            'height':           'label',
             'padding':          '16px',
+            'shape':            'roundrectangle',
         },
     },
     {
@@ -218,6 +225,7 @@ function _symShow() {
                 <button id="sym-close-btn" onclick="symViewClose()" title="Close Symbol View">✕</button>
             </div>
             <div id="sym-body">
+                <div id="sym-member-panel"></div>
                 <div id="sym-cy"></div>
             </div>
         `;
@@ -297,7 +305,13 @@ function _symRender(data) {
     // Open center symbol's file in code panel
     if (center.file && window.loadFileInPanel) loadFileInPanel(center.file, center.name);
 
+    _symRenderMemberPanel(center);
     _symUpdateBack();
+}
+
+function _symCenterLabel(center) {
+    // Member list is shown in #sym-member-panel; center node only shows the name.
+    return center.name;
 }
 
 function _symBuildElements(data) {
@@ -309,7 +323,7 @@ function _symBuildElements(data) {
     nodes.push({
         data: {
             id:       'center',
-            label:    center.name,
+            label:    _symCenterLabel(center),
             kind:     center.kind,
             symId:    center.id,
             isCenter: true,
@@ -321,6 +335,7 @@ function _symBuildElements(data) {
         const s = item.sym;
         if (!s || seen.has(s.id)) continue;
         seen.add(s.id);
+        const edgeLabel = `${item.edge_type}${item.count > 1 ? ' ×' + item.count : ''}`;
         nodes.push({ data: { id: s.id, label: s.name, kind: s.kind, symId: s.id } });
         edges.push({
             data: {
@@ -329,7 +344,7 @@ function _symBuildElements(data) {
                 target:   'center',
                 edgeType: item.edge_type,
                 count:    item.count,
-                label:    item.count > 1 ? `×${item.count}` : '',
+                label:    edgeLabel,
             },
         });
     }
@@ -338,6 +353,7 @@ function _symBuildElements(data) {
         const s = item.sym;
         if (!s || seen.has(s.id)) continue;
         seen.add(s.id);
+        const edgeLabel = `${item.edge_type}${item.count > 1 ? ' ×' + item.count : ''}`;
         nodes.push({ data: { id: s.id, label: s.name, kind: s.kind, symId: s.id } });
         edges.push({
             data: {
@@ -346,12 +362,73 @@ function _symBuildElements(data) {
                 target:   s.id,
                 edgeType: item.edge_type,
                 count:    item.count,
-                label:    item.count > 1 ? `×${item.count}` : '',
+                label:    edgeLabel,
             },
         });
     }
 
     return { nodes, edges };
+}
+
+// ── Member Panel ──────────────────────────────────────────────────────────────
+
+function _symRenderMemberPanel(center) {
+    const panel = document.getElementById('sym-member-panel');
+    if (!panel) return;
+
+    const children = center.children || [];
+    if (!children.length) {
+        panel.innerHTML = '';
+        panel.classList.remove('visible');
+        return;
+    }
+
+    panel.classList.add('visible');
+
+    const pub  = children.filter(c => c.is_public);
+    const priv = children.filter(c => !c.is_public);
+
+    let html = `<div class="sym-mp-header">
+        <span class="sym-kind-badge kind-${center.kind}">${center.kind}</span>
+        <span class="sym-mp-name">${_symEscHtml(center.name)}</span>
+    </div><div class="sym-mp-list">`;
+
+    pub.forEach(c => {
+        html += `<div class="sym-member-row is-public" data-line="${c.line}">
+            <span class="sym-mr-vis">+</span>
+            <span class="sym-mr-name">${_symEscHtml(c.name)}</span>
+        </div>`;
+    });
+
+    if (pub.length && priv.length) html += `<div class="sym-mp-divider"></div>`;
+
+    priv.forEach(c => {
+        html += `<div class="sym-member-row" data-line="${c.line}">
+            <span class="sym-mr-vis">−</span>
+            <span class="sym-mr-name">${_symEscHtml(c.name)}</span>
+        </div>`;
+    });
+
+    html += '</div>';
+    panel.innerHTML = html;
+
+    panel.querySelectorAll('.sym-member-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const line = parseInt(row.dataset.line, 10);
+            if (!line) return;
+            if (!window.jumpToLine) return;
+            const alreadyOpen = window.codeState && codeState.currentFile === center.file;
+            if (!alreadyOpen && window.loadFileInPanel) {
+                loadFileInPanel(center.file, null);
+                setTimeout(() => jumpToLine(line), 150);
+            } else {
+                jumpToLine(line);
+            }
+            // Highlight the clicked row
+            panel.querySelectorAll('.sym-member-row').forEach(r => r.classList.remove('active'));
+            row.classList.add('active');
+        });
+    });
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
