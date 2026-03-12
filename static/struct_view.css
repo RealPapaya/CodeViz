@@ -1605,3 +1605,30 @@
     position: relative;
     width: 100%;
 }
+/* ── Pan / Zoom canvas ──────────────────────────────────────────────────────── */
+.sv-scroll {
+    cursor: grab;
+    user-select: none;
+    overflow: hidden;
+}
+.sv-scroll:active {
+    cursor: default;  /* overridden to grabbing in JS during background drag */
+}
+
+/* ── Per-node drag ──────────────────────────────────────────────────────────── */
+.sv-class-box {
+    cursor: default;
+    transition: box-shadow 0.12s ease;
+}
+.sv-class-box .sv-class-hdr {
+    cursor: grab;
+}
+.sv-box-dragging {
+    cursor: grabbing !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 2px var(--accent, #3b82f6);
+    z-index: 100;
+    transition: none !important;
+}
+.sv-box-dragging .sv-class-hdr {
+    cursor: grabbing !important;
+}

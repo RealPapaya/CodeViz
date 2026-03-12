@@ -1108,6 +1108,46 @@ class Handler(BaseHTTPRequestHandler):
                 'total_out': len(outgoing),
             })
 
+        elif p == '/symbol-file':
+            # ── Per-file symbol index + intra-file call edges ─────────────────
+            # GET /symbol-file?job=JID&file=path/to/file.cpp
+            # Returns all symbol_index entries for the file, plus symbol_edges
+            # that connect two symbols both inside that file.
+            # Used by struct_view.js to enrich the class-grid with backend symbols.
+            jid = qs.get('job',  [''])[0]
+            rel = qs.get('file', [''])[0].strip()
+
+            with JOBS_LOCK:
+                job = JOBS.get(jid, {})
+            graph_data = job.get('data')
+
+            if not graph_data or not rel:
+                self.json_resp({'symbols': [], 'edges': []})
+                return
+
+            sym_index = graph_data.get('symbol_index', {})
+            sym_edges = graph_data.get('symbol_edges', [])
+
+            # All symbols belonging to this file
+            file_syms = {
+                sid: s for sid, s in sym_index.items()
+                if s.get('file') == rel
+            }
+            file_sym_ids = set(file_syms.keys())
+
+            # Edges where both endpoints live in this file
+            file_edges = [
+                {'from': e['from'], 'to': e['to'], 'type': e.get('type', 'call')}
+                for e in sym_edges
+                if e['from'] in file_sym_ids and e['to'] in file_sym_ids
+            ]
+
+            self.json_resp({
+                'file':    rel,
+                'symbols': list(file_syms.values()),
+                'edges':   file_edges,
+            })
+
         elif p == '/jobs':
             with JOBS_LOCK:
                 snapshot = [(k, {kk: vv for kk, vv in v.items() if kk != 'data'})

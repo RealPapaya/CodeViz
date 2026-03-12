@@ -500,6 +500,12 @@ function _svRender(src, ext, fname) {
     if (!view) return;
     view.innerHTML = '';
 
+    // Clean up node-drag event listeners from any previous render
+    if (typeof _sv._nodeDragCleanup === 'function') {
+        _sv._nodeDragCleanup();
+        _sv._nodeDragCleanup = null;
+    }
+
     const classes = _svParseClasses(src, ext);
     _sv.classes = classes;
 
@@ -553,19 +559,21 @@ function _svRender(src, ext, fname) {
     tGroup.appendChild(grid);
     scroll.appendChild(tGroup);
 
-    // Sync Cytoscape pan/zoom to the transform group
-    if (typeof cy !== 'undefined' && cy) {
-        if (window._svCyListener) cy.off('pan zoom', window._svCyListener);
-        const applyTransform = () => {
-            if (!_sv.active) return;
-            const p = cy.pan();
-            const z = cy.zoom();
-            tGroup.style.transform = `translate(${p.x}px, ${p.y}px) scale(${z})`;
-        };
-        window._svCyListener = () => applyTransform();
-        cy.on('pan zoom', window._svCyListener);
-        applyTransform();
+    // ── Independent pan/zoom (no Cytoscape dependency) ───────────────────────
+    // Disconnect any stale Cytoscape listener from a previous render
+    if (typeof cy !== 'undefined' && cy && window._svCyListener) {
+        cy.off('pan zoom', window._svCyListener);
+        window._svCyListener = null;
     }
+    // Reset transform state on each fresh render
+    _sv._panX  = 20;
+    _sv._panY  = 20;
+    _sv._scale = 1.0;
+    tGroup.style.transform = `translate(${_sv._panX}px,${_sv._panY}px) scale(${_sv._scale})`;
+    // Give the canvas a large virtual size so absolute-positioned nodes don't clip
+    tGroup.style.minWidth  = '6000px';
+    tGroup.style.minHeight = '4000px';
+    _svInitPanZoom(scroll, tGroup, svg);
 
     // ── Topological sort: callers on left, callees on right ───────────────────
     const _sortedClasses = _svTopoSort(classes);
@@ -622,6 +630,13 @@ function _svRender(src, ext, fname) {
     });
 
     _svAttachBadgeHandlers(scroll);
+
+    // ── Convert flex grid → absolute positions + enable free-drag per node ───
+    // Two nested rAFs: first rAF allows flex layout to paint, second reads coords
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        _svConvertToAbsolute(localArea);
+        _svInitNodeDrag(localArea, svg, scroll);
+    }));
 
     // ── Wire a ResizeObserver so arrows always stick to their badges ──────────
     // Any flex-wrap reflow (window resize, code panel open/close) re-triggers draw.
@@ -1582,6 +1597,197 @@ window.svRedrawArrows = function () {
         );
     }, 40);
 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CANVAS PAN / ZOOM  (independent of Cytoscape)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Attach wheel-zoom and drag-pan listeners to the .sv-scroll container.
+ * All transforms are stored in _sv._panX / _sv._panY / _sv._scale and written
+ * to `tGroup.style.transform` so _svMakeCoordMapper() continues to work.
+ *
+ * After every transform the arrows are redrawn via _svRedrawAll().
+ */
+function _svInitPanZoom(scroll, tGroup, svg) {
+    const _apply = () => {
+        tGroup.style.transform =
+            `translate(${_sv._panX}px,${_sv._panY}px) scale(${_sv._scale})`;
+    };
+    const _redraw = () => _svRedrawAll(svg, scroll);
+
+    // ── Wheel → zoom toward the cursor ────────────────────────────────────
+    scroll.addEventListener('wheel', e => {
+        if (!_sv.active) return;
+        e.preventDefault();
+        const prev  = _sv._scale;
+        const delta = e.deltaY < 0 ? 1.10 : (1 / 1.10);
+        _sv._scale  = Math.max(0.12, Math.min(6.0, prev * delta));
+        // Zoom toward cursor position
+        const rect  = scroll.getBoundingClientRect();
+        const mx    = e.clientX - rect.left;
+        const my    = e.clientY - rect.top;
+        _sv._panX   = mx - (mx - _sv._panX) * (_sv._scale / prev);
+        _sv._panY   = my - (my - _sv._panY) * (_sv._scale / prev);
+        _apply();
+        _redraw();
+    }, { passive: false });
+
+    // ── Background drag → pan (skip clicks on cards / badges) ─────────────
+    let _pan = null;
+    const _SKIP = '.sv-class-box,.sv-ghost-box,.sv-header,.sv-header-actions,[data-sv-line],[data-sv-name]';
+
+    scroll.addEventListener('mousedown', e => {
+        if (!_sv.active || e.button !== 0) return;
+        if (e.target.closest(_SKIP)) return;
+        e.preventDefault();
+        _pan = { sx: e.clientX, sy: e.clientY, px: _sv._panX, py: _sv._panY };
+        scroll.style.cursor = 'grabbing';
+    });
+
+    const _stopPan = () => { _pan = null; scroll.style.cursor = ''; };
+
+    scroll.addEventListener('mousemove', e => {
+        if (!_pan || !_sv.active) return;
+        _sv._panX = _pan.px + (e.clientX - _pan.sx);
+        _sv._panY = _pan.py + (e.clientY - _pan.sy);
+        _apply();
+        _redraw();
+    });
+    scroll.addEventListener('mouseup',    _stopPan);
+    scroll.addEventListener('mouseleave', _stopPan);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PER-NODE DRAG  (convert flex → absolute, then allow free repositioning)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * After the initial flex layout has painted, snapshot every class-box's position
+ * then switch the localArea to `position:relative` with explicit dimensions and
+ * each box to `position:absolute left:X top:Y`.
+ *
+ * This allows drag-repositioning while keeping the SVG arrow coordinate system
+ * (offsetLeft traversal + getBoundingClientRect) fully intact.
+ */
+function _svConvertToAbsolute(localArea) {
+    if (!localArea || localArea.dataset.absLayout) return;
+    const boxes = localArea.querySelectorAll(':scope > .sv-class-box');
+    if (!boxes.length) return;
+
+    // Single-pass layout read — avoid forced reflow loops
+    const baseR = localArea.getBoundingClientRect();
+    const snaps = Array.from(boxes).map(b => {
+        const r = b.getBoundingClientRect();
+        return {
+            left: r.left - baseR.left,
+            top:  r.top  - baseR.top,
+            w: r.width, h: r.height,
+        };
+    });
+
+    // Canvas size = bounding box of all snaps + padding
+    let maxW = 0, maxH = 0;
+    snaps.forEach(s => {
+        maxW = Math.max(maxW, s.left + s.w);
+        maxH = Math.max(maxH, s.top  + s.h);
+    });
+
+    localArea.style.position = 'relative';
+    localArea.style.width    = (maxW + 80) + 'px';
+    localArea.style.height   = (maxH + 80) + 'px';
+    localArea.dataset.absLayout = '1';
+
+    boxes.forEach((box, i) => {
+        box.style.position = 'absolute';
+        box.style.left     = snaps[i].left + 'px';
+        box.style.top      = snaps[i].top  + 'px';
+    });
+}
+
+/**
+ * Wire mousedown/move/up drag listeners to every .sv-class-box inside localArea.
+ * Dragging a box updates its absolute left/top and triggers an immediate arrow redraw.
+ *
+ * The drag delta is divided by the current canvas scale so the box tracks the
+ * pointer correctly at any zoom level.
+ */
+function _svInitNodeDrag(localArea, svg, scroll) {
+    if (!localArea) return;
+    let _drag = null;
+
+    // Capture mousedown on the localArea (event delegation)
+    localArea.addEventListener('mousedown', e => {
+        if (e.button !== 0 || !_sv.active) return;
+        const box = e.target.closest('.sv-class-box');
+        if (!box) return;
+        // Let badge / method clicks pass through uninterrupted
+        if (e.target.closest('[data-sv-line],[data-sv-name]')) return;
+        e.stopPropagation();
+        e.preventDefault();
+        _drag = {
+            box,
+            sx: e.clientX, sy: e.clientY,
+            l0: parseFloat(box.style.left) || 0,
+            t0: parseFloat(box.style.top)  || 0,
+            scale: _sv._scale || 1,
+        };
+        box.classList.add('sv-box-dragging');
+    });
+
+    // mousemove / mouseup are on document so the drag survives fast cursor moves
+    const _onMove = e => {
+        if (!_drag || !_sv.active) return;
+        const dx = (e.clientX - _drag.sx) / _drag.scale;
+        const dy = (e.clientY - _drag.sy) / _drag.scale;
+        _drag.box.style.left = (_drag.l0 + dx) + 'px';
+        _drag.box.style.top  = (_drag.t0 + dy) + 'px';
+        _svRedrawAll(svg, scroll);
+    };
+    const _onUp = () => {
+        if (!_drag) return;
+        _drag.box.classList.remove('sv-box-dragging');
+        _drag = null;
+    };
+
+    document.addEventListener('mousemove', _onMove);
+    document.addEventListener('mouseup',   _onUp);
+
+    // Store references so we can clean up on the next render
+    _sv._nodeDragCleanup = () => {
+        document.removeEventListener('mousemove', _onMove);
+        document.removeEventListener('mouseup',   _onUp);
+    };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// UNIFIED ARROW REDRAW
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Redraw both local (intra-file) arrows and cross-file arrows in one call.
+ * Safe to call during drag/pan/zoom — local arrows are synchronous, cross-file
+ * arrows are debounced to avoid excessive work during rapid mouse movement.
+ */
+function _svRedrawAll(svg, scroll) {
+    if (!svg || !_sv.active) return;
+    const classes = _sv._localArrowClasses || [];
+    // Synchronous: local arrows are cheap to redraw
+    _svDrawArrows(classes, svg, scroll);
+    // Debounced: cross-file arrows involve more DOM queries
+    if (_sv._crossArrowDescs && _sv._crossArrowSvg) {
+        clearTimeout(_sv._crossRedrawTimer);
+        _sv._crossRedrawTimer = setTimeout(() => {
+            if (!_sv.active) return;
+            _svDrawCrossFileArrows(
+                _sv._crossArrowDescs,
+                _sv._crossArrowSvg,
+                _sv._crossArrowScroll
+            );
+        }, 12);
+    }
+}
+
 
 /**
  * Map edge_type string to a representative colour for ghost box styling.

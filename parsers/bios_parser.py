@@ -66,6 +66,28 @@ RE_CIF_FILES = re.compile(r'^\[files\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL
 RE_CIF_PARTS = re.compile(r'^\[parts\](.*?)(?=^\[|\Z)', re.MULTILINE | re.DOTALL | re.IGNORECASE)
 RE_QUOTED    = re.compile(r'"([^"]+)"')
 
+# ─── C/C++ Symbol extraction (for symbol_defs / struct view) ──────────────────
+# class/struct declaration:  class Foo  /  struct Bar  /  class Foo : public Base
+RE_C_CLASS = re.compile(
+    r'^(?:typedef\s+)?'
+    r'(?:class|struct)\s+(\w+)'
+    r'(?:\s*:\s*(?:public|protected|private)?\s*([\w:]+))?'
+    r'\s*(?:\{|$)',
+    re.MULTILINE
+)
+# C++ scoped method definition:  void Foo::Bar(...)  {
+RE_C_METHOD = re.compile(
+    r'^(?:(?:static|inline|virtual|override|explicit|const|'
+    r'EFIAPI|EFI_STATUS|VOID|UINTN|INTN|UINT8|UINT16|UINT32|UINT64|BOOLEAN)\s+)*'
+    r'[\w\s\*<>:]+\b(\w+)::(\w+)\s*\([^)]*\)\s*(?:const\s*)?\{',
+    re.MULTILINE
+)
+# typedef struct { ... } TypeName;
+RE_C_TYPEDEF = re.compile(
+    r'typedef\s+(?:struct|union)\s*\w*\s*\{[^}]*\}\s*(\w+)\s*;',
+    re.DOTALL
+)
+
 # VFR/HFR (shared)
 _RE_STR_TOKEN   = re.compile(r'\bSTRING_TOKEN\s*\(\s*(\w+)\s*\)', re.IGNORECASE)
 _RE_VFR_FORMSET = re.compile(
@@ -81,6 +103,100 @@ _RE_VFR_CB      = re.compile(
     re.IGNORECASE
 )
 _RE_VFR_LABEL   = re.compile(r'\blabel\s+(0x[0-9A-Fa-f]+|\w+)', re.IGNORECASE)
+
+
+def _parse_c_symbol_defs(src: str, clean: str) -> list:
+    """
+    Extract struct/class/method/function symbols from C/C++ source.
+    Returns list of symbol dicts compatible with analyze_viz.py symbol_index format.
+    """
+    symbols = []
+    seen_names = set()
+
+    # ── 1. Struct / Class declarations ──────────────────────────────────────
+    for m in RE_C_CLASS.finditer(clean):
+        name = m.group(1)
+        if name in C_KEYWORDS or len(name) < 2:
+            continue
+        base = m.group(2)
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'class',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [base.split('::')[-1]] if base else [],
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
+
+    # ── 2. typedef struct { ... } TypeName; ─────────────────────────────────
+    for m in RE_C_TYPEDEF.finditer(clean):
+        name = m.group(1)
+        if name in C_KEYWORDS or len(name) < 2 or name in seen_names:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'class',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
+
+    # ── 3. C++ scoped methods:  Foo::Bar(...) { ──────────────────────────────
+    seen_methods = set()
+    for m in RE_C_METHOD.finditer(clean):
+        parent_name = m.group(1)
+        method_name = m.group(2)
+        if method_name in C_KEYWORDS or len(method_name) < 2:
+            continue
+        key = f'{parent_name}::{method_name}'
+        if key in seen_methods:
+            continue
+        seen_methods.add(key)
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'method',
+            'name':      method_name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    parent_name,
+            'is_public': not method_name.startswith('_'),
+        })
+
+    # ── 4. Top-level functions (RE_FUNCDEF, not already captured as methods) ─
+    method_keys = {f"{s['parent']}::{s['name']}" for s in symbols if s['kind'] == 'method'}
+    for m in RE_FUNCDEF.finditer(clean):
+        name = m.group(2)
+        if name in C_KEYWORDS or len(name) < 2:
+            continue
+        # Skip if it's a C++ method we already captured
+        # (detect "ClassName::name" in the surrounding text)
+        prefix = clean[max(0, m.start() - 60):m.start()]
+        is_method = bool(re.search(r'\w+::\s*$', prefix.rstrip()))
+        if is_method:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        line_before = clean[:m.start()].rstrip()
+        last_line = line_before.split('\n')[-1] if '\n' in line_before else line_before
+        is_static = bool(RE_STATIC.search(last_line))
+        symbols.append({
+            'kind':      'function',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not is_static and not name.startswith('_'),
+        })
+
+    return symbols
 
 
 # ─── C source utilities ────────────────────────────────────────────────────────
@@ -413,11 +529,11 @@ def scan_asl(src: str) -> dict:
 def scan_c(src: str, ext: str):
     """
     Parse C/C++ or Assembly source.
-    Returns standard 5-tuple: (refs, funcdefs, funccalls, extra, func_calls_by_func)
+    Returns standard 6-tuple: (refs, funcdefs, funccalls, extra, func_calls_by_func, symbol_defs)
     """
     if ext in ('.asm', '.s', '.nasm'):
         refs = [m.group(1) or m.group(2) for m in RE_ASM_INC.finditer(src)]
-        return refs, [], [], None, []
+        return refs, [], [], None, [], []
 
     clean  = strip_comments(src)
     masked = mask_string_literals(clean)
@@ -447,7 +563,8 @@ def scan_c(src: str, ext: str):
         m.group(1) for m in RE_FUNCCALL.finditer(clean)
         if m.group(1) not in C_KEYWORDS and len(m.group(1)) >= 2
     ]
-    return refs, funcdefs, funccalls, None, func_calls_by_func
+    symbol_defs = _parse_c_symbol_defs(src, clean)
+    return refs, funcdefs, funccalls, None, func_calls_by_func, symbol_defs
 
 
 # ─── Main entry point ──────────────────────────────────────────────────────────
@@ -471,62 +588,64 @@ def scan_bios(src: str, ext: str):
         ext: lowercase file extension (e.g. '.inf', '.c')
 
     Returns:
-        (refs, funcdefs, funccalls, extra_dict, func_calls_by_func)
-        — same 5-tuple as all other parsers
+        (refs, funcdefs, funccalls, extra_dict, func_calls_by_func, symbol_defs)
+        — same 6-tuple as all other parsers.  symbol_defs is a list of
+        {kind, name, line, end_line, bases, parent, is_public} dicts; it is
+        non-empty only for C/C++ source files.
     """
     ext = ext.lower()
 
     if ext in ('.asm', '.s', '.nasm'):
         refs = [m.group(1) or m.group(2) for m in RE_ASM_INC.finditer(src)]
-        return refs, [], [], None, []
+        return refs, [], [], None, [], []
 
     if ext == '.inf':
         data = scan_inf(src)
-        return data['sources'] + data['packages'], [], [], data, []
+        return data['sources'] + data['packages'], [], [], data, [], []
 
     if ext == '.dec':
         data = scan_dec(src)
-        return [], [], [], data, []
+        return [], [], [], data, [], []
 
     if ext == '.dsc':
         data = scan_dsc(src)
-        return data['components'], [], [], data, []
+        return data['components'], [], [], data, [], []
 
     if ext == '.fdf':
         data = scan_fdf(src)
-        return data['infs'], [], [], data, []
+        return data['infs'], [], [], data, [], []
 
     if ext == '.sdl':
         data = scan_sdl(src)
-        return data['inf_components'], [], [], data, []
+        return data['inf_components'], [], [], data, [], []
 
     if ext == '.sd':
         data = scan_sd(src)
-        return data['includes'], [], [], data, []
+        return data['includes'], [], [], data, [], []
 
     if ext == '.cif':
         data = scan_cif(src)
-        return data['infs'] + data['files'], [], [], data, []
+        return data['infs'] + data['files'], [], [], data, [], []
 
     if ext == '.mak':
         data = scan_mak(src)
-        return [], [], [], data, []
+        return [], [], [], data, [], []
 
     if ext == '.vfr':
         data = scan_vfr(src)
-        return data['includes'], [], [], data, []
+        return data['includes'], [], [], data, [], []
 
     if ext == '.hfr':
         data = scan_hfr(src)
-        return data['includes'], [], [], data, []
+        return data['includes'], [], [], data, [], []
 
     if ext == '.uni':
         data = scan_uni(src)
-        return [], [], [], data, []
+        return [], [], [], data, [], []
 
     if ext == '.asl':
         data = scan_asl(src)
-        return data['includes'], [], [], data, []
+        return data['includes'], [], [], data, [], []
 
     # C / C++ / Assembly fallback
     return scan_c(src, ext)
