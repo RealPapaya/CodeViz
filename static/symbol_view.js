@@ -251,7 +251,9 @@ function _symShow() {
                 </div>
                 <button id="sym-close-btn" onclick="symViewClose()" title="Close">&#x2715;</button>
             </div>
-            <div id="sym-body"><div id="sym-cy"></div></div>
+            <div id="sym-body">
+                <div id="sym-cy"></div>
+            </div>
             <div id="sym-edge-tooltip" class="sym-edge-tooltip"></div>
         `;
         const si = panel.querySelector('#sym-search-input');
@@ -289,6 +291,7 @@ function _symRender(data) {
     const { center } = data;
     if (!center) return;
     _symHideEdgeTooltip();
+    _symCloseSnippets();
 
     const bc = document.getElementById('sym-breadcrumb');
     if (bc) bc.textContent = `${center.kind}: ${center.name}`;
@@ -526,14 +529,13 @@ function _symOnNodeTap(event, data) {
     if (d.isMember) {
         _sym.cy.nodes().removeClass('sym-active-member');
         event.target.addClass('sym-active-member');
-        const file = _symCenterFile();
-        if (!file) return;
-        const alreadyOpen = window.codeState && codeState.currentFile === file;
-        if (!alreadyOpen && window.loadFileInPanel) {
-            loadFileInPanel(file, null);
+        if (d.symId) {
+            _symShowSnippets(d.symId, d.line);
+        } else {
+            // fallback: no symId, open full file at line
+            const file = _symCenterFile();
+            if (file && window.loadFileInPanel) loadFileInPanel(file, null);
             if (d.line) setTimeout(() => window.jumpToLine && jumpToLine(d.line), 150);
-        } else if (d.line && window.jumpToLine) {
-            jumpToLine(d.line);
         }
         return;
     }
@@ -568,6 +570,123 @@ function _symOnEdgeTap(e) {
 function _symHideEdgeTooltip() {
     const tooltip = document.getElementById('sym-edge-tooltip');
     if (tooltip) tooltip.classList.remove('visible');
+}
+
+// ── Snippet panel (Phase 5) — rendered inside the existing #code-panel ────────
+
+async function _symShowSnippets(symId, _fallbackLine) {
+    // Render snippets into the existing right-side code panel (#cp-code-wrap)
+    // rather than a separate sidebar, so structure mode reuses the normal panel.
+    const wrap       = document.getElementById('cp-code-wrap');
+    const filenameEl = document.getElementById('cp-filename');
+    const extBadge   = document.getElementById('cp-ext-badge');
+    if (!wrap) return;
+
+    // Ensure code panel is visible
+    if (window.openCodePanel) openCodePanel();
+    if (window.hideFuncBar)   hideFuncBar();
+
+    // Hide loading/empty placeholders and show wrap
+    const cpLoading = document.getElementById('cp-loading');
+    const cpEmpty   = document.getElementById('cp-empty');
+    if (cpLoading) cpLoading.classList.add('hidden');
+    if (cpEmpty)   cpEmpty.style.display = 'none';
+    wrap.style.display = '';
+    wrap.innerHTML = '<div class="sym-snip-loading">Loading\u2026</div>';
+
+    // Sentinel: force next loadFileInPanel call to re-fetch even for same path
+    if (window.codeState) codeState.currentFile = '__sym_snippet__';
+
+    const jid = _sym.jobId || '';
+    try {
+        const resp = await fetch(
+            `/symbol-refs?job=${encodeURIComponent(jid)}&sym=${encodeURIComponent(symId)}`
+        );
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const sym  = data.symbol || {};
+
+        // Update code panel header to reflect the symbol being inspected
+        if (filenameEl) filenameEl.textContent = sym.name || 'References';
+        if (extBadge) {
+            extBadge.textContent        = (sym.kind || 'SYM').toUpperCase();
+            extBadge.style.background   = '#334155';
+            extBadge.style.color        = '#e2e8f0';
+        }
+
+        _symRenderSnippets(wrap, data);
+    } catch (e) {
+        console.error('[sym-view] snippet fetch error:', e);
+        wrap.innerHTML = '<div class="sym-snip-loading">Error loading references</div>';
+    }
+}
+
+function _symCloseSnippets() {
+    // No separate panel to close — snippets live in #cp-code-wrap.
+    // The next loadFileInPanel call (triggered by navigation) overwrites the content.
+    if (_sym.cy) _sym.cy.nodes().removeClass('sym-active-member');
+}
+
+function _symRenderSnippets(wrap, data) {
+    const defs = data.definitions || [];
+    const refs  = data.references  || [];
+
+    wrap.innerHTML = '';
+    const body = document.createElement('div');
+    body.className = 'sym-snip-body';
+
+    if (!defs.length && !refs.length) {
+        const empty = document.createElement('div');
+        empty.className = 'sym-snip-loading';
+        empty.textContent = 'No references found';
+        body.appendChild(empty);
+    } else {
+        if (defs.length) _symAppendSnipSection(body, 'Definition', defs, 'definition');
+        if (refs.length) _symAppendSnipSection(body, 'References', refs, 'reference');
+    }
+    wrap.appendChild(body);
+}
+
+function _symAppendSnipSection(container, title, items, type) {
+    const hdr = document.createElement('div');
+    hdr.className = 'sym-snip-sec-hdr';
+    hdr.textContent = `${title} (${items.length})`;
+    container.appendChild(hdr);
+    for (const item of items) container.appendChild(_symMakeSnipItem(item, type));
+}
+
+function _symMakeSnipItem(item, type) {
+    const wrap = document.createElement('div');
+    wrap.className = `sym-snip-item ${type}`;
+
+    const label = document.createElement('div');
+    label.className = 'sym-snip-file-label';
+    label.textContent = `${item.file}:${item.line}`;
+    label.onclick = () => {
+        if (window.loadFileInPanel) loadFileInPanel(item.file, null);
+        if (item.line) setTimeout(() => window.jumpToLine && jumpToLine(item.line), 150);
+    };
+    wrap.appendChild(label);
+
+    const pre = document.createElement('div');
+    pre.className = 'sym-snip-pre';
+    const snippetLines = (item.snippet || '').split('\n');
+    const hlOffset = item.highlight != null ? item.highlight : -1;
+    snippetLines.forEach((lineText, i) => {
+        const row = document.createElement('div');
+        row.className = 'sym-snip-line' + (i === hlOffset ? ' hl' : '');
+        const lnum = document.createElement('span');
+        lnum.className = 'sym-snip-lnum';
+        lnum.textContent = (item.start_line || 1) + i;
+        const code = document.createElement('span');
+        code.className = 'sym-snip-code';
+        code.textContent = lineText;
+        row.appendChild(lnum);
+        row.appendChild(code);
+        pre.appendChild(row);
+    });
+    wrap.appendChild(pre);
+    return wrap;
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────

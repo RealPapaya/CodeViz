@@ -212,6 +212,116 @@
     margin: 4px 0;
 }
 
+/* ── Snippet content (Phase 5) — rendered inside #cp-code-wrap ── */
+
+.sym-snip-hdr {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border, #1a2535);
+    flex-shrink: 0;
+}
+.sym-snip-title {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent, #00d4ff);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sym-snip-close {
+    background: transparent;
+    border: 1px solid var(--border, #1a2535);
+    color: var(--muted, #64748b);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1.4;
+    flex-shrink: 0;
+    transition: color 0.12s, border-color 0.12s;
+}
+.sym-snip-close:hover { color: var(--text, #e2e8f0); border-color: var(--muted, #64748b); }
+
+.sym-snip-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.sym-snip-sec-hdr {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted, #64748b);
+    padding: 10px 12px 5px;
+}
+
+.sym-snip-item {
+    border-left: 3px solid transparent;
+    margin: 0 8px 6px;
+    border-radius: 0 4px 4px 0;
+    overflow: hidden;
+    background: var(--panel2, #0d1520);
+}
+.sym-snip-item.definition { border-left-color: #fbbf24; }
+.sym-snip-item.reference  { border-left-color: #334155; }
+
+.sym-snip-file-label {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted, #64748b);
+    padding: 4px 8px 2px;
+    cursor: pointer;
+    transition: color 0.1s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sym-snip-file-label:hover { color: var(--accent, #00d4ff); }
+
+.sym-snip-pre {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    line-height: 1.5;
+    padding: 2px 0 4px;
+    overflow-x: auto;
+}
+
+.sym-snip-line {
+    display: flex;
+    gap: 8px;
+    padding: 0 8px;
+    white-space: pre;
+}
+.sym-snip-line.hl { background: rgba(251,191,36,0.12); }
+
+.sym-snip-lnum {
+    flex-shrink: 0;
+    width: 28px;
+    text-align: right;
+    color: var(--muted, #64748b);
+    user-select: none;
+}
+.sym-snip-line.hl .sym-snip-lnum { color: #fbbf24; }
+
+.sym-snip-code {
+    color: var(--text-dim, #94a3b8);
+    flex: 1;
+    min-width: 0;
+}
+.sym-snip-line.hl .sym-snip-code { color: var(--text, #e2e8f0); }
+
+.sym-snip-loading {
+    font-size: 11px;
+    color: var(--muted, #64748b);
+    padding: 16px 12px;
+    text-align: center;
+}
+
 /* ── Edge tooltip ── */
 .sym-edge-tooltip {
     position: fixed;

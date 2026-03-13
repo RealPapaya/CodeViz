@@ -119,7 +119,7 @@ Server endpoints（Phase 1 新增）：
 | S3 | Compound Class Card（PUBLIC/PRIVATE section 在節點內） | ✅ Phase 3 完成 |
 | S4 | Sugiyama Layout Engine（TrailLayouter 移植） | ✅ Phase 3 完成 |
 | S5 | Bundled Edges（多條同類 edge 合併為帶數字的粗邊） | ✅ Phase 4 完成 |
-| S6 | Multi-file Code Snippets（右側 Code View 顯示跨檔案片段） | ❌ Phase 5 |
+| S6 | Multi-file Code Snippets（右側 Code View 顯示跨檔案片段） | ✅ Phase 5 完成 |
 | S7 | Node Expand/Collapse（class 節點可折疊，顯示 hidden count） | ❌ Phase 6 |
 | S8 | Edge Type Filtering（toggle 隱藏/顯示特定 edge 類型） | ❌ Phase 7 |
 | S9 | Back/Forward 全域導航 + 動畫過渡 | ❌ Phase 8 |
@@ -138,23 +138,15 @@ Server endpoints（Phase 1 新增）：
 - 點擊 edge → fixed-position tooltip 顯示 edgeType（帶顏色）+ ×N
 - 節點不可拖曳：`cy.nodes().ungrabify()`（Sourcetrail 行為）
 
-### Phase 5：Multi-file Code Snippets ★★★★
+### Phase 5：Multi-file Code Snippets ✅
 
-**目標**：點擊 graph 中的 member badge → Code View 右側顯示該 symbol 的定義片段（不是整個檔案）。
-
-**後端（`server.py` `/symbol-refs`）**：
-```json
-{
-  "definitions": [{ "file": "path.cpp", "line": 77, "snippet": "..." }],
-  "references":  [{ "file": "other.cpp", "line": 120, "snippet": "...", "context": "..." }]
-}
-```
-
-**前端**：
-- 點擊 member badge → fetch `/symbol-refs` → Code Panel 渲染 snippet 列表
-- 每個 snippet：行號 + context（前後 3 行）+ 高亮目標行
-- 定義 snippet 黃色左邊框，引用 snippet 灰色左邊框
-- 保留「完整檔案模式」toggle
+已實作：
+- member badge click → fetch `/symbol-refs` → `#sym-snippet-panel`（`#sym-body` 右側 360px 固定欄）
+- Definition snippets 黃色左邊框；Reference snippets 灰色左邊框
+- 行號 + context（前後 3 行）+ 高亮目標行（`item.highlight` 0-based offset）
+- 點擊 file label → 呼叫 viz.js `loadFileInPanel + jumpToLine`（完整檔案模式）
+- 導航到新 symbol 時自動關閉 snippet panel（`_symCloseSnippets()`）
+- Edge curve style 改為 `taxi`（正交折線，更接近 Sourcetrail 視覺）
 
 ### Phase 6：Node Expand/Collapse ★★★
 
