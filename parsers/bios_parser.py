@@ -87,6 +87,16 @@ RE_C_TYPEDEF = re.compile(
     r'typedef\s+(?:struct|union)\s*\w*\s*\{[^}]*\}\s*(\w+)\s*;',
     re.DOTALL
 )
+# enum declaration:  enum Foo {  /  typedef enum { ... } FooEnum;
+RE_C_ENUM = re.compile(
+    r'(?:typedef\s+)?enum\s+(\w+)\s*\{',
+    re.MULTILINE
+)
+# typedef enum { ... } FooEnum;  (anonymous enum with trailing name)
+RE_C_ENUM_TYPEDEF = re.compile(
+    r'typedef\s+enum\s*\w*\s*\{[^}]*\}\s*(\w+)\s*;',
+    re.DOTALL
+)
 
 # VFR/HFR (shared)
 _RE_STR_TOKEN   = re.compile(r'\bSTRING_TOKEN\s*\(\s*(\w+)\s*\)', re.IGNORECASE)
@@ -138,7 +148,39 @@ def _parse_c_symbol_defs(src: str, clean: str) -> list:
             continue
         line_no = src[:m.start()].count('\n') + 1
         symbols.append({
-            'kind':      'class',
+            'kind':      'typedef',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
+
+    # ── 2b. Enum declarations ─────────────────────────────────────────────────
+    for m in RE_C_ENUM_TYPEDEF.finditer(clean):
+        name = m.group(1)
+        if name in C_KEYWORDS or len(name) < 2 or name in seen_names:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'enum',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
+    for m in RE_C_ENUM.finditer(clean):
+        name = m.group(1)
+        if name in C_KEYWORDS or len(name) < 2 or name in seen_names:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'enum',
             'name':      name,
             'line':      line_no,
             'end_line':  line_no,

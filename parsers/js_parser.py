@@ -69,6 +69,25 @@ RE_JS_CLASS = re.compile(
     re.MULTILINE
 )
 
+# TypeScript interface declarations:  interface Foo {  /  export interface Bar extends Baz {
+RE_TS_INTERFACE = re.compile(
+    r'(?:^|\s)(?:export\s+)?interface\s+(\w+)'
+    r'(?:\s+extends\s+([\w,\s.]+))?\s*\{',
+    re.MULTILINE
+)
+
+# TypeScript enum declarations:  enum Foo {  /  const enum Bar {
+RE_TS_ENUM = re.compile(
+    r'(?:^|\s)(?:export\s+)?(?:const\s+)?enum\s+(\w+)\s*\{',
+    re.MULTILINE
+)
+
+# TypeScript type alias:  type Foo = ...  /  export type Foo = ...
+RE_TS_TYPE = re.compile(
+    r'(?:^|\s)(?:export\s+)?type\s+(\w+)\s*(?:<[^>]*>)?\s*=',
+    re.MULTILINE
+)
+
 # Strip // and /* */ comments (very rough, ignores strings — adequate for import/def extraction)
 RE_LINE_COMMENT   = re.compile(r'//[^\n]*')
 RE_BLOCK_COMMENT  = re.compile(r'/\*.*?\*/', re.DOTALL)
@@ -188,6 +207,57 @@ def _parse_symbol_defs(src: str, clean: str) -> list:
             'parent':    None,
             'is_public': not fname.startswith('_'),
         })
+    # TypeScript interfaces
+    seen_names = {s['name'] for s in symbols}
+    for m in RE_TS_INTERFACE.finditer(clean):
+        name = m.group(1)
+        if name in JS_KEYWORDS or name in seen_names:
+            continue
+        extends_raw = m.group(2) or ''
+        bases = [b.strip() for b in extends_raw.split(',') if b.strip()]
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'interface',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     bases,
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
+    # TypeScript enums
+    for m in RE_TS_ENUM.finditer(clean):
+        name = m.group(1)
+        if name in JS_KEYWORDS or name in seen_names:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'enum',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
+    # TypeScript type aliases
+    for m in RE_TS_TYPE.finditer(clean):
+        name = m.group(1)
+        if name in JS_KEYWORDS or name in seen_names:
+            continue
+        line_no = src[:m.start()].count('\n') + 1
+        symbols.append({
+            'kind':      'typedef',
+            'name':      name,
+            'line':      line_no,
+            'end_line':  line_no,
+            'bases':     [],
+            'parent':    None,
+            'is_public': not name.startswith('_'),
+        })
+        seen_names.add(name)
     return symbols
 
 

@@ -55,13 +55,15 @@
   - **用途**: 管理中英雙語的翻譯對照表。
 - 🔮 **`static/struct_view.js`** (前端)
   - **用途**: Structure View 插件，提供 class-grid 視圖。Entry points: `svToggleStructView()`, `svUpdateStructureBtn()`, `svAfterRenderCode()`。
-- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1–5**
+- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1–9**
   - **用途**: Sourcetrail 風格的 Symbol-Centric Graph（compound class card + PUBLIC/PRIVATE section + TrailLayouter + snippet panel）。
   - **Entry points**: `symViewOpen(fileRel)` / `symViewActivate(symId)` / `symViewClose()`。
   - **節點互動**: 不可拖曳。click center → Code Panel；click neighbor → 重新導航；click member badge → `_symShowSnippets(symId)` 顯示右側 snippet panel；click edge → tooltip edgeType + ×N。
   - **⚠️ DOM**: `#sym-body` 包含 `#sym-cy`（flex:1）和 `#sym-snippet-panel`（360px，預設隱藏）。Edge curve-style = `taxi`（正交折線）。
-- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1–5**
+  - **Phase 9 Node Types**: `isCard` 條件為 `['class','struct','interface','enum']`；`«stereotype»` 前綴顯示於 header node。
+- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1–9**
   - **用途**: Symbol View 專用樣式。含 `#sym-snippet-panel`（definition 黃色邊框、reference 灰色邊框、高亮行、行號）以及 `.sym-edge-tooltip`。
+  - **Kind badges**: class(藍) / function(綠) / method(紫) / struct(黃) / enum(橘) / interface(綠) / typedef(粉)。
 
 ---
 
@@ -129,7 +131,7 @@ return (
     extra_dict,
     func_calls_by_func,
     symbol_defs,          # list[dict]: [{kind, name, line, end_line, bases, parent, is_public}, ...]
-                          # kind: 'class'|'method'|'function'
+                          # kind: 'class'|'struct'|'interface'|'enum'|'typedef'|'method'|'function'
                           # bases: 繼承的父類名稱 (for inheritance edges)
                           # parent: 所屬的 class 名稱 (None = top-level)
 )
@@ -137,7 +139,7 @@ return (
 
 `analyze_viz.py` 的 `scan_file()` 會偵測 tuple 長度，6-tuple 時自動提取 `symbol_defs` 並存入 `file_symdefs`。`build_graph()` 在 Phase F 統一將所有 `symbol_defs` 組合為 `symbol_index` (dict) 和 `symbol_edges` (list)，注入最終 JSON。
 
-## 🔮 Symbol View 架構備忘 (Phase 1–8)
+## 🔮 Symbol View 架構備忘 (Phase 1–9)
 
 - **資料來源**: `DATA.symbol_index` (build_graph Phase F 建立) + API `/symbol-graph?job=JID&sym=SID`
 - **`/symbol-graph` 回應格式**:

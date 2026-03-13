@@ -123,8 +123,19 @@ Server endpoints（Phase 1 新增）：
 | S7 | Node Expand/Collapse（class 節點可折疊，顯示 hidden count） | ✅ Phase 6 完成 |
 | S8 | Edge Type Filtering（toggle 隱藏/顯示特定 edge 類型） | ✅ Phase 7 完成 |
 | S9 | Back/Forward 全域導航 + 動畫過渡 | ✅ Phase 8 完成 |
-| S10 | 21+ Node Types（NAMESPACE, ENUM_CONSTANT, TYPEDEF, MACRO, ...） | 🔄 部分（class/method/function/field/enum） |
+| S10 | 21+ Node Types（NAMESPACE, ENUM_CONSTANT, TYPEDEF, MACRO, ...） | ✅ Phase 9 完成（struct/interface/enum/typedef 全部區分） |
 | S11 | Template/Generic 關係（TYPE_ARGUMENT, SPECIALIZATION） | ❌ 未實作 |
+
+---
+
+### Phase 9：擴充 Node Types ✅
+
+已實作：
+- `go_parser.py`：Go struct → kind `'struct'`，Go interface → kind `'interface'`
+- `bios_parser.py`：`typedef struct` → kind `'typedef'`；新增 `RE_C_ENUM` / `RE_C_ENUM_TYPEDEF` → kind `'enum'`
+- `js_parser.py`：新增 `RE_TS_INTERFACE` / `RE_TS_ENUM` / `RE_TS_TYPE` → kind `'interface'` / `'enum'` / `'typedef'`
+- `symbol_view.js`：`_symNodesForSym` 中 `isCard` 條件擴充為 `['class','struct','interface','enum']`；`kindPriority` 更新；`isClassHdr` header node 對非 class 種類加入 `«stereotype»` 前綴（`«interface»`, `«struct»`, `«enum»`, `«type»`）；header node 改用 `height: label` 自動高度
+- `symbol_view.css`：新增 `.kind-interface` (綠)、`.kind-typedef` (粉)、`.kind-enum_constant` (橘半透明)
 
 ---
 

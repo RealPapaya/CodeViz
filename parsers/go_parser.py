@@ -113,7 +113,7 @@ def _parse_symbol_defs(src: str, clean: str) -> list:
         name = m.group(1)
         line_no = src[:m.start()].count('\n') + 1
         symbols.append({
-            'kind':      'class',   # treat struct as class
+            'kind':      'struct',
             'name':      name,
             'line':      line_no,
             'end_line':  line_no,
@@ -125,7 +125,7 @@ def _parse_symbol_defs(src: str, clean: str) -> list:
         name = m.group(1)
         line_no = src[:m.start()].count('\n') + 1
         symbols.append({
-            'kind':      'class',
+            'kind':      'interface',
             'name':      name,
             'line':      line_no,
             'end_line':  line_no,

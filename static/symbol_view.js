@@ -73,10 +73,12 @@ const _SYM_CY_STYLE = [
             'text-valign':       'center',
             'text-halign':       'center',
             'color':             '#94a3b8',
-            'font-size':         11,
+            'font-size':         10,
             'font-weight':       600,
+            'text-wrap':         'wrap',
+            'text-max-width':    _SYM_MEMBER_W,
             'width':             _SYM_MEMBER_W,
-            'height':            _SYM_CLASS_HDR_H,
+            'height':            'label',
         },
     },
     {
@@ -165,11 +167,13 @@ const _SYM_CY_STYLE = [
         selector: 'node[isCenter][!isClassCard]',
         style: { 'border-color': '#00d4ff', 'border-width': 2, 'color': '#00d4ff' },
     },
-    { selector: 'node[kind="class"][!isClassCard][!isMember][!isClassHdr]',    style: { 'border-color': '#60a5fa' } },
-    { selector: 'node[kind="function"][!isMember][!isClassHdr]', style: { 'shape': 'ellipse', 'border-color': '#34d399' } },
-    { selector: 'node[kind="method"][!isMember][!isClassHdr]',   style: { 'shape': 'ellipse', 'border-color': '#a78bfa' } },
-    { selector: 'node[kind="struct"][!isClassCard][!isMember][!isClassHdr]',   style: { 'border-color': '#fbbf24' } },
-    { selector: 'node[kind="enum"][!isMember][!isClassHdr]',     style: { 'shape': 'diamond', 'border-color': '#fb923c' } },
+    { selector: 'node[kind="class"][!isClassCard][!isMember][!isClassHdr]',       style: { 'border-color': '#60a5fa' } },
+    { selector: 'node[kind="struct"][!isClassCard][!isMember][!isClassHdr]',      style: { 'border-color': '#fbbf24' } },
+    { selector: 'node[kind="interface"][!isClassCard][!isMember][!isClassHdr]',   style: { 'border-color': '#34d399', 'border-style': 'dashed' } },
+    { selector: 'node[kind="enum"][!isMember][!isClassHdr]',                      style: { 'shape': 'diamond', 'border-color': '#fb923c' } },
+    { selector: 'node[kind="typedef"][!isMember][!isClassHdr]',                   style: { 'border-color': '#e879f9', 'border-style': 'dashed' } },
+    { selector: 'node[kind="function"][!isMember][!isClassHdr]',                  style: { 'shape': 'ellipse', 'border-color': '#34d399' } },
+    { selector: 'node[kind="method"][!isMember][!isClassHdr]',                    style: { 'shape': 'ellipse', 'border-color': '#a78bfa' } },
     // Member badges override kind-based shape (must come after kind selectors)
     { selector: 'node[?isMember]', style: { 'shape': 'roundrectangle' } },
     // ── Edges ─────────────────────────────────────────────────────────────────
@@ -232,7 +236,7 @@ function symViewOpen(fileRel) {
     const inFile      = allSymbols.filter(s => s.file === fileRel);
     if (!inFile.length) return;
 
-    const kindPriority = ['class', 'struct', 'function', 'method', 'enum'];
+    const kindPriority = ['class', 'struct', 'interface', 'enum', 'function', 'method', 'typedef'];
     inFile.sort((a, b) => {
         const pa = kindPriority.indexOf(a.kind);
         const pb = kindPriority.indexOf(b.kind);
@@ -462,7 +466,7 @@ function _symBuildCompoundElements(data) {
 }
 
 function _symNodesForSym(sym, nodeId, isCenter, edgeMemberIds) {
-    const isCard = ['class', 'struct'].includes(sym.kind);
+    const isCard = ['class', 'struct', 'interface', 'enum'].includes(sym.kind);
     if (!isCard) return [_symMakePlainNode(sym, nodeId, isCenter)];
     const children = (sym.children || []).slice().sort((a, b) => (a.line || 0) - (b.line || 0));
     const vis = isCenter ? children : children.filter(c => edgeMemberIds && edgeMemberIds.has(c.id));
@@ -478,10 +482,13 @@ function _symMakeClassCompound(sym, nodeId, isCenter, visChildren) {
     }}];
 
     // Class name header is always present (even when collapsed)
+    // For non-class kinds, prefix the name with a stereotype label (e.g. «interface»)
+    const _kindPrefix = { interface: '\xABinterface\xBB\n', struct: '\xABstruct\xBB\n', enum: '\xABenum\xBB\n', typedef: '\xABtype\xBB\n' };
+    const hdrLabel = (_kindPrefix[sym.kind] || '') + sym.name;
     result.push({ data: {
         id: `${nodeId}__hdr`, parent: nodeId,
         isClassHdr: true, isCenter: isCenter || undefined,
-        label: sym.name,
+        label: hdrLabel,
     }});
 
     if (isCollapsed) return result;  // collapsed: only header, card shrinks
@@ -587,8 +594,11 @@ function _symComputeLayout(data, elements) {
 
 function _symEstimateCardHeight(sym, nodeId, elements) {
     const isCollapsed = _sym.collapsed.has(nodeId);
-    // Always has class name header child
-    const base = _SYM_CLASS_HDR_H + _SYM_MEMBER_GAP + _SYM_CLASS_PAD * 2;
+    // Non-class kinds have a two-line header (stereotype + name)
+    const hdrH = ['interface', 'enum', 'struct', 'typedef'].includes(sym.kind)
+        ? _SYM_CLASS_HDR_H + 14   // extra line for «stereotype»
+        : _SYM_CLASS_HDR_H;
+    const base = hdrH + _SYM_MEMBER_GAP + _SYM_CLASS_PAD * 2;
     if (isCollapsed) return base;
 
     const memberNodes = elements.nodes.filter(n => n.data.isMember && n.data.parent === nodeId);
