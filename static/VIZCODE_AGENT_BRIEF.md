@@ -121,8 +121,8 @@ Server endpoints（Phase 1 新增）：
 | S5 | Bundled Edges（多條同類 edge 合併為帶數字的粗邊） | ✅ Phase 4 完成 |
 | S6 | Multi-file Code Snippets（右側 Code View 顯示跨檔案片段） | ✅ Phase 5 完成 |
 | S7 | Node Expand/Collapse（class 節點可折疊，顯示 hidden count） | ✅ Phase 6 完成 |
-| S8 | Edge Type Filtering（toggle 隱藏/顯示特定 edge 類型） | ❌ Phase 7 |
-| S9 | Back/Forward 全域導航 + 動畫過渡 | ❌ Phase 8 |
+| S8 | Edge Type Filtering（toggle 隱藏/顯示特定 edge 類型） | ✅ Phase 7 完成 |
+| S9 | Back/Forward 全域導航 + 動畫過渡 | ✅ Phase 8 完成 |
 | S10 | 21+ Node Types（NAMESPACE, ENUM_CONSTANT, TYPEDEF, MACRO, ...） | 🔄 部分（class/method/function/field/enum） |
 | S11 | Template/Generic 關係（TYPE_ARGUMENT, SPECIALIZATION） | ❌ 未實作 |
 
@@ -157,13 +157,22 @@ Server endpoints（Phase 1 新增）：
 - 折疊時成員 badge 完全不加入 elements，class card 自動縮小
 - 導航到新 symbol 時自動 reset collapsed state（`_sym.collapsed.clear()`）
 
-### Phase 7：Edge Type Filtering ★★
+### Phase 7：Edge Type Filtering ✅
 
-Toolbar 加入 edge type 開關（call / inheritance / import / type_usage ...），即時 toggle edge visibility。
+已實作：
+- Toolbar 中央加入 edge type filter pills（call / inheritance / import / type_usage / include / override / member）
+- 每個 pill 有對應顏色圓點（同 `_SYM_EDGE_COLORS`）
+- 點擊 pill → toggle `_sym.hiddenEdgeTypes` Set → `edge.style('display', 'none'/'element')`
+- Filter state 在導航時**保留**（不 reset）；re-render 後自動重新套用（`_symApplyEdgeFilters()`）
+- 關閉的 pill 顯示 dashed border + 降低 opacity
 
-### Phase 8：全域 Back/Forward + 動畫 ★★
+### Phase 8：全域 Back/Forward + 動畫 ✅
 
-類似瀏覽器的全域導航歷史；節點佈局切換時加彈性動畫（`_sym.cy.animate()`）。
+已實作：
+- `_sym.future` stack 補完雙向導航（Back pop history → future；Forward pop future → history）
+- Toolbar 新增 `↪ Back` + `↩ Forward` 兩顆按鈕（disabled 自動更新）
+- 從 history 導航（`_fromHistory=true`）時不清除 future stack
+- 每次 render 後呼叫 `cy.animate({ fit }, { duration: 280, easing: 'ease-out-cubic' })` 做 zoom-to-fit 動畫
 
 ---
 

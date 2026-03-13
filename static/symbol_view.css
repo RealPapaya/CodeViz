@@ -36,25 +36,71 @@
     min-width: 0;
 }
 
-#sym-back-btn {
+#sym-back-btn,
+#sym-fwd-btn {
     background: transparent;
     border: 1px solid var(--border, #1a2535);
     color: var(--text, #e2e8f0);
     border-radius: 5px;
-    padding: 3px 9px;
-    font-size: 12px;
+    padding: 3px 8px;
+    font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
     flex-shrink: 0;
     line-height: 1.4;
 }
-#sym-back-btn:hover:not(:disabled) {
+#sym-back-btn:hover:not(:disabled),
+#sym-fwd-btn:hover:not(:disabled) {
     background: var(--panel2, #0d1520);
     border-color: var(--accent, #00d4ff);
 }
-#sym-back-btn:disabled {
+#sym-back-btn:disabled,
+#sym-fwd-btn:disabled {
     opacity: 0.35;
     cursor: default;
+}
+
+/* ── Edge type filter pills (Phase 7) ── */
+#sym-filter-pills {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.sym-filter-pill {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: var(--panel2, #0d1520);
+    border: 1px solid var(--border, #1a2535);
+    border-radius: 10px;
+    color: var(--text-dim, #94a3b8);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s, opacity 0.15s, color 0.15s;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+.sym-filter-pill:hover {
+    border-color: #475569;
+    color: var(--text, #e2e8f0);
+}
+.sym-filter-pill.sym-fp-off {
+    opacity: 0.35;
+    border-style: dashed;
+}
+.sym-filter-pill.sym-fp-off:hover {
+    opacity: 0.6;
+}
+
+.sym-fp-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
 }
 
 #sym-breadcrumb {

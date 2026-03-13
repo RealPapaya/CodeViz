@@ -137,7 +137,7 @@ return (
 
 `analyze_viz.py` 的 `scan_file()` 會偵測 tuple 長度，6-tuple 時自動提取 `symbol_defs` 並存入 `file_symdefs`。`build_graph()` 在 Phase F 統一將所有 `symbol_defs` 組合為 `symbol_index` (dict) 和 `symbol_edges` (list)，注入最終 JSON。
 
-## 🔮 Symbol View 架構備忘 (Phase 1–5)
+## 🔮 Symbol View 架構備忘 (Phase 1–8)
 
 - **資料來源**: `DATA.symbol_index` (build_graph Phase F 建立) + API `/symbol-graph?job=JID&sym=SID`
 - **`/symbol-graph` 回應格式**:
@@ -155,6 +155,8 @@ return (
 - **Edge curve**: `taxi`（正交折線，`taxi-turn: 60%`）。
 - **Snippet panel** (`#sym-snippet-panel`): click member badge → `/symbol-refs` → 右側 360px 欄；definition 黃框，reference 灰框；navigate 時自動關閉。
 - **Symbol edge types**: `call` (橘 #fb923c), `inheritance` (藍 #60a5fa), `import` (綠 #34d399), `member` (紫 #c084fc), `override` (粉 #f472b6), `type_usage` (黃 #fbbf24), `include` (灰 #94a3b8)
+- **Phase 7 Edge Filter**: Toolbar pills → `_sym.hiddenEdgeTypes` Set → `edge.style('display','none'/'element')`；filter 在導航時保留，re-render 後 `_symApplyEdgeFilters()` 重新套用。
+- **Phase 8 Back/Forward**: `_sym.history`（back stack）+ `_sym.future`（forward stack）；`symViewActivate(id, _fromHistory)` 若為 back/forward 操作不清除 future；`cy.animate({ fit }, {duration:280})` 每次 render 後淡入動畫。
 - **`build_html()` 載入順序**: `viz.css` → `themes.css` → `struct_view.css` → **`symbol_view.css`** → `i18n.js` → `viz.js` → `struct_view.js` → `trail_layouter.js` → **`symbol_view.js`**
 
 ---

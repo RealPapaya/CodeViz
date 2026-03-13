@@ -2,6 +2,8 @@
 // Phase 1+2: Symbol Index + basic symbol graph (Cytoscape dagre LR).
 // Phase 3: Compound class card nodes (PUBLIC/PRIVATE sections) + TrailLayouter.
 // Phase 6: Section expand/collapse toggle on group header nodes.
+// Phase 7: Edge type filter pills in toolbar.
+// Phase 8: Back/Forward navigation with future stack + layout animation.
 //
 // Entry points (called from viz.js):
 //   symViewOpen(fileRel)   — open the primary symbol in a file
@@ -12,11 +14,13 @@
 
 const _sym = {
     active:    null,   // current center symbol id
-    history:   [],     // navigation stack [symId, ...]
+    history:   [],     // back stack  [symId, ...]
+    future:    [],     // forward stack [symId, ...]
     cy:        null,   // Cytoscape instance inside #sym-cy
     jobId:     null,
     ready:     false,
-    collapsed: new Set(),  // set of nodeIds whose class card is collapsed
+    collapsed:       new Set(),  // nodeIds whose class card is collapsed
+    hiddenEdgeTypes: new Set(),  // edge type keys that are currently hidden
 };
 
 // ── Sizing constants (must match _symEstimateCardHeight) ──────────────────────
@@ -238,13 +242,15 @@ function symViewOpen(fileRel) {
     });
 
     _sym.history = [];
+    _sym.future  = [];
     _sym.active  = null;
     symViewActivate(inFile[0].id);
 }
 
-function symViewActivate(symId) {
+function symViewActivate(symId, _fromHistory) {
     if (_sym.active && _sym.active !== symId) {
         _sym.history.push(_sym.active);
+        if (!_fromHistory) _sym.future = [];   // new navigation clears forward stack
         _sym.collapsed.clear();  // reset section collapsed state on navigation
     }
     _sym.active = symId;
@@ -261,6 +267,7 @@ function symViewClose() {
     if (_sym.cy) { _sym.cy.destroy(); _sym.cy = null; }
     _sym.active    = null;
     _sym.history   = [];
+    _sym.future    = [];
     _sym.collapsed.clear();
 }
 
@@ -279,9 +286,11 @@ function _symShow() {
         panel.innerHTML = `
             <div id="sym-toolbar">
                 <div id="sym-toolbar-left">
-                    <button id="sym-back-btn" onclick="_symBack()" title="Back">&#x21A9; Back</button>
+                    <button id="sym-back-btn" onclick="_symBack()" title="Back" disabled>&#x21A9;</button>
+                    <button id="sym-fwd-btn"  onclick="_symForward()" title="Forward" disabled>&#x21AA;</button>
                     <span id="sym-breadcrumb"></span>
                 </div>
+                <div id="sym-filter-pills"></div>
                 <div id="sym-search-wrapper">
                     <input id="sym-search-input" type="text" placeholder="Search symbols\u2026"
                            autocomplete="off" spellcheck="false">
@@ -294,6 +303,7 @@ function _symShow() {
             </div>
             <div id="sym-edge-tooltip" class="sym-edge-tooltip"></div>
         `;
+        _symBuildFilterPills();
         const si = panel.querySelector('#sym-search-input');
         si.addEventListener('input', _symDebounce(e => _symSearch(e.target.value), 300));
         si.addEventListener('keydown', e => {
@@ -358,7 +368,13 @@ function _symRender(data) {
     _sym.cy.on('tap', 'node', e => _symOnNodeTap(e, data));
     _sym.cy.on('tap', 'edge', e => _symOnEdgeTap(e));
     _sym.cy.on('tap', e => { if (e.target === _sym.cy) _symHideEdgeTooltip(); });
+
+    // Phase 8: animated fit-to-view
     _sym.cy.fit(undefined, 60);
+    _sym.cy.animate({ fit: { eles: _sym.cy.elements(), padding: 60 } }, { duration: 280, easing: 'ease-out-cubic' });
+
+    // Phase 7: re-apply edge filters after each render
+    _symApplyEdgeFilters();
 
     // Overlay collapse/expand buttons on class card nodes
     // Delay first render until after fit() has settled
@@ -866,18 +882,70 @@ function _symShowSearchResults(results) {
     });
 }
 
-// ── Navigation ────────────────────────────────────────────────────────────────
+// ── Navigation (Phase 8) ──────────────────────────────────────────────────────
 
 function _symBack() {
     if (!_sym.history.length) return;
+    _sym.future.unshift(_sym.active);
     const prev  = _sym.history.pop();
     _sym.active = null;
-    symViewActivate(prev);
+    symViewActivate(prev, true);
+}
+
+function _symForward() {
+    if (!_sym.future.length) return;
+    _sym.history.push(_sym.active);
+    const next  = _sym.future.shift();
+    _sym.active = null;
+    symViewActivate(next, true);
 }
 
 function _symUpdateBack() {
-    const btn = document.getElementById('sym-back-btn');
-    if (btn) btn.disabled = _sym.history.length === 0;
+    const back = document.getElementById('sym-back-btn');
+    const fwd  = document.getElementById('sym-fwd-btn');
+    if (back) back.disabled = _sym.history.length === 0;
+    if (fwd)  fwd.disabled  = _sym.future.length  === 0;
+}
+
+// ── Edge type filter pills (Phase 7) ─────────────────────────────────────────
+
+// Ordered list of edge types to show in toolbar
+const _SYM_FILTER_ORDER = ['call', 'inheritance', 'import', 'type_usage', 'include', 'override', 'member'];
+
+function _symBuildFilterPills() {
+    const container = document.getElementById('sym-filter-pills');
+    if (!container) return;
+    container.innerHTML = '';
+    for (const type of _SYM_FILTER_ORDER) {
+        const color = _SYM_EDGE_COLORS[type] || '#94a3b8';
+        const pill  = document.createElement('button');
+        pill.className   = 'sym-filter-pill';
+        pill.dataset.type = type;
+        pill.title       = `Toggle ${type} edges`;
+        pill.innerHTML   = `<span class="sym-fp-dot" style="background:${color}"></span>${type}`;
+        pill.addEventListener('click', () => _symToggleEdgeFilter(type, pill));
+        container.appendChild(pill);
+    }
+}
+
+function _symToggleEdgeFilter(type, pill) {
+    if (_sym.hiddenEdgeTypes.has(type)) {
+        _sym.hiddenEdgeTypes.delete(type);
+        pill.classList.remove('sym-fp-off');
+    } else {
+        _sym.hiddenEdgeTypes.add(type);
+        pill.classList.add('sym-fp-off');
+    }
+    _symApplyEdgeFilters();
+}
+
+function _symApplyEdgeFilters() {
+    if (!_sym.cy) return;
+    _sym.cy.edges().forEach(edge => {
+        const type    = edge.data('edgeType');
+        const hidden  = _sym.hiddenEdgeTypes.has(type);
+        edge.style('display', hidden ? 'none' : 'element');
+    });
 }
 
 function _symCenterFile() {
