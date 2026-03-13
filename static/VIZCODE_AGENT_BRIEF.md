@@ -120,7 +120,7 @@ Server endpoints（Phase 1 新增）：
 | S4 | Sugiyama Layout Engine（TrailLayouter 移植） | ✅ Phase 3 完成 |
 | S5 | Bundled Edges（多條同類 edge 合併為帶數字的粗邊） | ✅ Phase 4 完成 |
 | S6 | Multi-file Code Snippets（右側 Code View 顯示跨檔案片段） | ✅ Phase 5 完成 |
-| S7 | Node Expand/Collapse（class 節點可折疊，顯示 hidden count） | ❌ Phase 6 |
+| S7 | Node Expand/Collapse（class 節點可折疊，顯示 hidden count） | ✅ Phase 6 完成 |
 | S8 | Edge Type Filtering（toggle 隱藏/顯示特定 edge 類型） | ❌ Phase 7 |
 | S9 | Back/Forward 全域導航 + 動畫過渡 | ❌ Phase 8 |
 | S10 | 21+ Node Types（NAMESPACE, ENUM_CONSTANT, TYPEDEF, MACRO, ...） | 🔄 部分（class/method/function/field/enum） |
@@ -148,12 +148,14 @@ Server endpoints（Phase 1 新增）：
 - 導航到新 symbol 時自動關閉 snippet panel（`_symCloseSnippets()`）
 - Edge curve style 改為 `taxi`（正交折線，更接近 Sourcetrail 視覺）
 
-### Phase 6：Node Expand/Collapse ★★★
+### Phase 6：Node Expand/Collapse ✅
 
-Class compound node 的 section 可折疊：
-- Section header 有 `▶/▼` toggle
-- 折疊後只顯示 `🔒 PRIVATE (5)` header
-- 點擊 toggle → cy.nodes().style({ display: 'none' }) 或 remove/re-add
+已實作：
+- 每個 class card 右上角有 `isToggle: true` 小按鈕（▼ 展開 / ▲ 折疊）
+- 收疊整個 class（public + private 一起），折疊後 card 只顯示 class 名稱 + 按鈕
+- 點擊 toggle → `_sym.collapsed` Set（以 nodeId 為 key）→ 重繪（`_symFetchAndRender`）
+- 折疊時成員 badge 完全不加入 elements，class card 自動縮小
+- 導航到新 symbol 時自動 reset collapsed state（`_sym.collapsed.clear()`）
 
 ### Phase 7：Edge Type Filtering ★★
 

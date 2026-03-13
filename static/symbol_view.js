@@ -1,6 +1,7 @@
 // ── Symbol View — Sourcetrail-style, embedded in #graph-wrap ─────────────────
 // Phase 1+2: Symbol Index + basic symbol graph (Cytoscape dagre LR).
 // Phase 3: Compound class card nodes (PUBLIC/PRIVATE sections) + TrailLayouter.
+// Phase 6: Section expand/collapse toggle on group header nodes.
 //
 // Entry points (called from viz.js):
 //   symViewOpen(fileRel)   — open the primary symbol in a file
@@ -10,21 +11,22 @@
 'use strict';
 
 const _sym = {
-    active:  null,   // current center symbol id
-    history: [],     // navigation stack [symId, ...]
-    cy:      null,   // Cytoscape instance inside #sym-cy
-    jobId:   null,
-    ready:   false,
+    active:    null,   // current center symbol id
+    history:   [],     // navigation stack [symId, ...]
+    cy:        null,   // Cytoscape instance inside #sym-cy
+    jobId:     null,
+    ready:     false,
+    collapsed: new Set(),  // set of nodeIds whose class card is collapsed
 };
 
 // ── Sizing constants (must match _symEstimateCardHeight) ──────────────────────
 const _SYM_MEMBER_W    = 130;
 const _SYM_MEMBER_H    = 22;
 const _SYM_MEMBER_GAP  = 4;
-const _SYM_GROUP_HDR   = 16;
-const _SYM_GROUP_GAP   = 6;
-const _SYM_CLASS_HDR   = 28;
-const _SYM_CLASS_PAD   = 8;
+const _SYM_SEC_HDR_H   = 18;   // height of ⊕ PUBLIC / 🏠 PRIVATE section header
+const _SYM_CLASS_HDR_H = 26;   // height of class name header child node
+const _SYM_SEC_GAP     = 6;    // gap between public and private sections
+const _SYM_CLASS_PAD   = 6;    // compound padding (all sides)
 
 // ── Edge colors ───────────────────────────────────────────────────────────────
 const _SYM_EDGE_COLORS = {
@@ -39,7 +41,7 @@ const _SYM_EDGE_COLORS = {
 
 // ── Cytoscape stylesheet ──────────────────────────────────────────────────────
 const _SYM_CY_STYLE = [
-    // ── Compound class card ──────────────────────────────────────────────────
+    // ── Compound class card (no label — name shown via isClassHdr child) ────
     {
         selector: 'node[?isClassCard]',
         style: {
@@ -47,32 +49,68 @@ const _SYM_CY_STYLE = [
             'background-color':             '#0d1a2e',
             'border-color':                 '#334155',
             'border-width':                 1.5,
-            'label':                        'data(label)',
-            'text-valign':                  'top',
-            'text-halign':                  'center',
-            'color':                        '#94a3b8',
-            'font-size':                    11,
-            'font-weight':                  600,
+            'label':                        '',
             'padding':                      `${_SYM_CLASS_PAD}px`,
             'compound-sizing-wrt-labels':   'exclude',
         },
     },
     {
         selector: 'node[isCenter][?isClassCard]',
-        style: { 'border-color': '#00d4ff', 'border-width': 2, 'color': '#00d4ff' },
+        style: { 'border-color': '#00d4ff', 'border-width': 2 },
+    },
+    // ── Class name header child node ─────────────────────────────────────────
+    {
+        selector: 'node[?isClassHdr]',
+        style: {
+            'shape':             'rectangle',
+            'background-color':  '#0d1a2e',
+            'border-width':      0,
+            'label':             'data(label)',
+            'text-valign':       'center',
+            'text-halign':       'center',
+            'color':             '#94a3b8',
+            'font-size':         11,
+            'font-weight':       600,
+            'width':             _SYM_MEMBER_W,
+            'height':            _SYM_CLASS_HDR_H,
+        },
+    },
+    {
+        selector: 'node[isCenter][?isClassHdr]',
+        style: { 'color': '#00d4ff' },
+    },
+    // ── Section header (⊕ PUBLIC / 🏠 PRIVATE) ─────────────────────────────
+    {
+        selector: 'node[?isSectionHdr]',
+        style: {
+            'shape':             'rectangle',
+            'background-color':  '#0b1628',
+            'border-width':      0,
+            'label':             'data(label)',
+            'text-valign':       'center',
+            'text-halign':       'left',
+            'text-margin-x':     6,
+            'color':             '#64748b',
+            'font-size':         9,
+            'font-weight':       700,
+            'text-transform':    'uppercase',
+            'letter-spacing':    0.5,
+            'width':             _SYM_MEMBER_W,
+            'height':            _SYM_SEC_HDR_H,
+        },
     },
     // ── Member badge nodes (inside compound) ─────────────────────────────────
     {
         selector: 'node[?isMember]',
         style: {
             'shape':             'roundrectangle',
-            'background-color':  '#181e2e',
-            'border-color':      '#2e2a4a',
+            'background-color':  '#2a1f0e',
+            'border-color':      '#78500a',
             'border-width':      1,
             'label':             'data(label)',
             'text-valign':       'center',
             'text-halign':       'center',
-            'color':             '#7c6fa8',
+            'color':             '#fbbf24',
             'font-size':         10,
             'font-family':       'JetBrains Mono, monospace',
             'width':             _SYM_MEMBER_W,
@@ -82,30 +120,26 @@ const _SYM_CY_STYLE = [
     {
         selector: 'node[?isMember][?isPublic]',
         style: {
-            'background-color': '#0d1e30',
-            'border-color':     '#1e3a52',
-            'color':            '#5b9fc7',
+            'background-color': '#2a1f0e',
+            'border-color':     '#78500a',
+            'color':            '#fbbf24',
         },
     },
-    // ── Divider node between public/private sections ─────────────────────────
     {
-        selector: 'node[?isDivider]',
+        selector: 'node[?isMember][!isPublic]',
         style: {
-            'shape':            'rectangle',
-            'background-color': '#1a2535',
-            'border-width':     0,
-            'label':            '',
-            'width':            _SYM_MEMBER_W,
-            'height':           1,
+            'background-color': '#0d1e30',
+            'border-color':     '#1e3a52',
+            'color':            '#60a5fa',
         },
     },
     {
         selector: 'node.sym-active-member',
-        style: { 'background-color': '#1a3a5c', 'border-color': '#00d4ff', 'color': '#e2e8f0' },
+        style: { 'border-color': '#00d4ff', 'border-width': 2 },
     },
     // ── Plain symbol nodes ────────────────────────────────────────────────────
     {
-        selector: 'node[!isClassCard][!isGroup][!isMember]',
+        selector: 'node[!isClassCard][!isGroup][!isMember][!isSectionHdr][!isClassHdr]',
         style: {
             'label':            'data(label)',
             'text-valign':      'center',
@@ -127,11 +161,11 @@ const _SYM_CY_STYLE = [
         selector: 'node[isCenter][!isClassCard]',
         style: { 'border-color': '#00d4ff', 'border-width': 2, 'color': '#00d4ff' },
     },
-    { selector: 'node[kind="class"]',    style: { 'border-color': '#60a5fa' } },
-    { selector: 'node[kind="function"]', style: { 'shape': 'ellipse', 'border-color': '#34d399' } },
-    { selector: 'node[kind="method"]',   style: { 'shape': 'ellipse', 'border-color': '#a78bfa' } },
-    { selector: 'node[kind="struct"]',   style: { 'border-color': '#fbbf24' } },
-    { selector: 'node[kind="enum"]',     style: { 'shape': 'diamond', 'border-color': '#fb923c' } },
+    { selector: 'node[kind="class"][!isClassCard][!isMember][!isClassHdr]',    style: { 'border-color': '#60a5fa' } },
+    { selector: 'node[kind="function"][!isMember][!isClassHdr]', style: { 'shape': 'ellipse', 'border-color': '#34d399' } },
+    { selector: 'node[kind="method"][!isMember][!isClassHdr]',   style: { 'shape': 'ellipse', 'border-color': '#a78bfa' } },
+    { selector: 'node[kind="struct"][!isClassCard][!isMember][!isClassHdr]',   style: { 'border-color': '#fbbf24' } },
+    { selector: 'node[kind="enum"][!isMember][!isClassHdr]',     style: { 'shape': 'diamond', 'border-color': '#fb923c' } },
     // Member badges override kind-based shape (must come after kind selectors)
     { selector: 'node[?isMember]', style: { 'shape': 'roundrectangle' } },
     // ── Edges ─────────────────────────────────────────────────────────────────
@@ -209,7 +243,10 @@ function symViewOpen(fileRel) {
 }
 
 function symViewActivate(symId) {
-    if (_sym.active && _sym.active !== symId) _sym.history.push(_sym.active);
+    if (_sym.active && _sym.active !== symId) {
+        _sym.history.push(_sym.active);
+        _sym.collapsed.clear();  // reset section collapsed state on navigation
+    }
     _sym.active = symId;
     _sym.jobId  = window.JOB_ID || _sym.jobId || null;
     _symShow();
@@ -222,8 +259,9 @@ function symViewClose() {
     const cyEl = document.getElementById('cy');
     if (cyEl) cyEl.style.display = '';
     if (_sym.cy) { _sym.cy.destroy(); _sym.cy = null; }
-    _sym.active  = null;
-    _sym.history = [];
+    _sym.active    = null;
+    _sym.history   = [];
+    _sym.collapsed.clear();
 }
 
 // ── Panel setup ───────────────────────────────────────────────────────────────
@@ -322,8 +360,47 @@ function _symRender(data) {
     _sym.cy.on('tap', e => { if (e.target === _sym.cy) _symHideEdgeTooltip(); });
     _sym.cy.fit(undefined, 60);
 
+    // Overlay collapse/expand buttons on class card nodes
+    // Delay first render until after fit() has settled
+    requestAnimationFrame(() => {
+        _symUpdateToggleOverlays();
+        _sym.cy.on('viewport', _symUpdateToggleOverlays);
+    });
+
     if (center.file && window.loadFileInPanel) loadFileInPanel(center.file, center.name);
     _symUpdateBack();
+}
+
+// ── Collapse/expand overlay buttons (HTML, not Cytoscape nodes) ───────────────
+
+function _symUpdateToggleOverlays() {
+    if (!_sym.cy) return;
+    const container = document.getElementById('sym-cy');
+    if (!container) return;
+
+    // Remove old overlays
+    container.querySelectorAll('.sym-toggle-btn').forEach(el => el.remove());
+
+    _sym.cy.nodes('[?isClassCard]').forEach(node => {
+        const nodeId      = node.id();
+        const bb          = node.renderedBoundingBox({ includeLabels: false });
+        const isCollapsed = _sym.collapsed.has(nodeId);
+
+        const btn = document.createElement('button');
+        btn.className   = 'sym-toggle-btn';
+        btn.textContent = isCollapsed ? '\u2304' : '\u2303';  // ⌄ or ⌃
+        btn.title       = isCollapsed ? 'Expand' : 'Collapse';
+        btn.style.left = `${bb.x2 - 18}px`;
+        btn.style.top  = `${bb.y1 + 3}px`;
+        // hover handled by CSS .sym-toggle-btn:hover
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            if (_sym.collapsed.has(nodeId)) _sym.collapsed.delete(nodeId);
+            else _sym.collapsed.add(nodeId);
+            _symFetchAndRender(_sym.active);
+        });
+        container.appendChild(btn);
+    });
 }
 
 // ── Element building (compound nodes) ────────────────────────────────────────
@@ -378,18 +455,42 @@ function _symNodesForSym(sym, nodeId, isCenter, edgeMemberIds) {
 }
 
 function _symMakeClassCompound(sym, nodeId, isCenter, visChildren) {
+    const isCollapsed = _sym.collapsed.has(nodeId);
     const result = [{ data: {
-        id: nodeId, label: sym.name, kind: sym.kind, symId: sym.id,
+        id: nodeId, label: '', kind: sym.kind, symId: sym.id,
         isCenter: isCenter || undefined, isClassCard: true,
     }}];
+
+    // Class name header is always present (even when collapsed)
+    result.push({ data: {
+        id: `${nodeId}__hdr`, parent: nodeId,
+        isClassHdr: true, isCenter: isCenter || undefined,
+        label: sym.name,
+    }});
+
+    if (isCollapsed) return result;  // collapsed: only header, card shrinks
+
     const pub  = visChildren.filter(c => c.access_level === 'public');
     const priv = visChildren.filter(c => c.access_level !== 'public');
-    pub.forEach(m => result.push(_symMakeMemberNode(m, nodeId)));
-    if (pub.length && priv.length) {
-        // Thin divider line between sections
-        result.push({ data: { id: `${nodeId}__div`, parent: nodeId, isDivider: true } });
+
+    if (pub.length) {
+        result.push({ data: {
+            id: `${nodeId}__pub_hdr`, parent: nodeId,
+            isSectionHdr: true,
+            label: '\u2295 PUBLIC',
+        }});
+        pub.forEach(m => result.push(_symMakeMemberNode(m, nodeId)));
     }
-    priv.forEach(m => result.push(_symMakeMemberNode(m, nodeId)));
+
+    if (priv.length) {
+        result.push({ data: {
+            id: `${nodeId}__priv_hdr`, parent: nodeId,
+            isSectionHdr: true,
+            label: '\u2302 PRIVATE',
+        }});
+        priv.forEach(m => result.push(_symMakeMemberNode(m, nodeId)));
+    }
+
     return result;
 }
 
@@ -439,11 +540,21 @@ function _symComputeLayout(data, elements) {
         topNodes.forEach((n, i) => { classPos[n.id] = { x: i * 280, y: 0 }; });
     }
 
-    // Compute member + divider positions per class card
-    const allPos = { ...classPos };
+    // Compute member + section header positions per class card.
+    // NOTE: compound parent positions are NOT included — Cytoscape derives them from children.
+    const allPos = {};
     const computed = new Set();
+
+    // For non-compound (plain) nodes, keep TrailLayouter positions
     for (const el of elements.nodes) {
-        if (!el.data.isMember && !el.data.isDivider) continue;
+        if (el.data.parent) continue;  // skip children (handled below)
+        if (el.data.isClassCard) continue;  // skip compound parents
+        if (classPos[el.data.id]) allPos[el.data.id] = classPos[el.data.id];
+    }
+
+    // For compound class cards: position their children (class hdr, section headers, members)
+    for (const el of elements.nodes) {
+        if (!el.data.isMember && !el.data.isSectionHdr && !el.data.isClassHdr) continue;
         const topId = el.data.parent || el.data.id;
         if (computed.has(topId)) continue;
         const cp = classPos[topId];
@@ -459,43 +570,70 @@ function _symComputeLayout(data, elements) {
 }
 
 function _symEstimateCardHeight(sym, nodeId, elements) {
+    const isCollapsed = _sym.collapsed.has(nodeId);
+    // Always has class name header child
+    const base = _SYM_CLASS_HDR_H + _SYM_MEMBER_GAP + _SYM_CLASS_PAD * 2;
+    if (isCollapsed) return base;
+
     const memberNodes = elements.nodes.filter(n => n.data.isMember && n.data.parent === nodeId);
-    const pubCount  = memberNodes.filter(n => n.data.isPublic).length;
-    const privCount = memberNodes.length - pubCount;
-    if (!memberNodes.length) return 44;
-    const total = memberNodes.length;
-    let h = _SYM_CLASS_HDR + _SYM_CLASS_PAD * 2;
-    h += total * (_SYM_MEMBER_H + _SYM_MEMBER_GAP) - _SYM_MEMBER_GAP;
-    if (pubCount && privCount) h += _SYM_GROUP_GAP + 3; // divider gap
+    const hdrNodes    = elements.nodes.filter(n => n.data.isSectionHdr && n.data.parent === nodeId);
+    if (!memberNodes.length) return base;
+    let h = base;
+    h += hdrNodes.length * (_SYM_SEC_HDR_H + _SYM_MEMBER_GAP);
+    h += memberNodes.length * (_SYM_MEMBER_H + _SYM_MEMBER_GAP);
+    // gap between public and private sections
+    const hasBoth = memberNodes.some(n => n.data.isPublic) && memberNodes.some(n => !n.data.isPublic);
+    if (hasBoth) h += _SYM_SEC_GAP;
     return Math.max(h, 60);
 }
 
 function _symMemberPositions(sym, classPos, nodeId, elements) {
-    const result = {};
-    const memberNodes = elements.nodes
-        .filter(n => n.data.isMember && n.data.parent === nodeId)
-        .sort((a, b) => (a.data.line || 0) - (b.data.line || 0));
-    const pub  = memberNodes.filter(n => n.data.isPublic);
-    const priv = memberNodes.filter(n => !n.data.isPublic);
-    const hasDivider = pub.length > 0 && priv.length > 0;
-    const totalH = _symEstimateCardHeight(sym, nodeId, elements);
-    const cx = classPos.x;
-    let y = classPos.y - totalH / 2 + _SYM_CLASS_HDR + _SYM_CLASS_PAD;
+    const result   = {};
+    const totalH   = _symEstimateCardHeight(sym, nodeId, elements);
+    const cx       = classPos.x;
+    const children = elements.nodes.filter(n => n.data.parent === nodeId);
 
-    for (const n of pub) {
+    // Starting y: top of content area inside card
+    let y = classPos.y - totalH / 2 + _SYM_CLASS_PAD;
+
+    // Class name header (always present)
+    const classHdr = children.find(n => n.data.isClassHdr);
+    if (classHdr) {
+        result[classHdr.data.id] = { x: cx, y: y + _SYM_CLASS_HDR_H / 2 };
+        y += _SYM_CLASS_HDR_H + _SYM_MEMBER_GAP;
+    }
+
+    if (_sym.collapsed.has(nodeId)) return result;
+
+    // Public section
+    const pubHdr = children.find(n => n.data.id === `${nodeId}__pub_hdr`);
+    if (pubHdr) {
+        result[pubHdr.data.id] = { x: cx, y: y + _SYM_SEC_HDR_H / 2 };
+        y += _SYM_SEC_HDR_H + _SYM_MEMBER_GAP;
+    }
+    const pubMembers = children.filter(n => n.data.isMember && n.data.isPublic)
+        .sort((a, b) => (a.data.line || 0) - (b.data.line || 0));
+    for (const n of pubMembers) {
         result[n.data.id] = { x: cx, y: y + _SYM_MEMBER_H / 2 };
         y += _SYM_MEMBER_H + _SYM_MEMBER_GAP;
     }
-    if (hasDivider) {
-        // Position the divider node
-        const divId = `${nodeId}__div`;
-        result[divId] = { x: cx, y: y + 1 };
-        y += _SYM_GROUP_GAP + 3;
+
+    // Gap between sections
+    if (pubMembers.length) y += _SYM_SEC_GAP;
+
+    // Private section
+    const privHdr = children.find(n => n.data.id === `${nodeId}__priv_hdr`);
+    if (privHdr) {
+        result[privHdr.data.id] = { x: cx, y: y + _SYM_SEC_HDR_H / 2 };
+        y += _SYM_SEC_HDR_H + _SYM_MEMBER_GAP;
     }
-    for (const n of priv) {
+    const privMembers = children.filter(n => n.data.isMember && !n.data.isPublic)
+        .sort((a, b) => (a.data.line || 0) - (b.data.line || 0));
+    for (const n of privMembers) {
         result[n.data.id] = { x: cx, y: y + _SYM_MEMBER_H / 2 };
         y += _SYM_MEMBER_H + _SYM_MEMBER_GAP;
     }
+
     return result;
 }
 
@@ -525,6 +663,9 @@ function _symOnNodeTap(event, data) {
     const d = event.target.data();
     if (d.isGroup) return;
     _symHideEdgeTooltip();
+
+    // Section labels and class header are non-interactive (handled by card tap)
+    if (d.isSectionHdr || d.isClassHdr) return;
 
     if (d.isMember) {
         _sym.cy.nodes().removeClass('sym-active-member');
