@@ -212,6 +212,36 @@
     margin: 4px 0;
 }
 
+/* ── Edge tooltip ── */
+.sym-edge-tooltip {
+    position: fixed;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--panel, #090e14);
+    border: 1px solid var(--border, #1a2535);
+    border-radius: 6px;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    white-space: nowrap;
+}
+.sym-edge-tooltip.visible {
+    display: flex;
+}
+.sym-et-type {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.sym-et-count {
+    color: var(--text, #e2e8f0);
+    font-weight: 700;
+    font-size: 12px;
+}
+
 /* ── Kind badges ── */
 .sym-kind-badge {
     font-size: 9px;

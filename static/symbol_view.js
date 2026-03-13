@@ -138,7 +138,7 @@ const _SYM_CY_STYLE = [
     {
         selector: 'edge',
         style: {
-            'width':                   1.5,
+            'width':                   'data(lineWidth)',
             'line-color':              '#334155',
             'target-arrow-color':      '#334155',
             'target-arrow-shape':      'triangle',
@@ -175,7 +175,13 @@ const _SYM_CY_STYLE = [
         selector: 'edge[edgeType="type_usage"]',
         style: { 'line-color': '#fbbf24', 'target-arrow-color': '#fbbf24', 'line-style': 'dashed' },
     },
+    // ── Bundled edges (count > 1) ─────────────────────────────────────────────
+    {
+        selector: 'edge[?isBundled]',
+        style: { 'opacity': 0.95, 'text-opacity': 1 },
+    },
     { selector: 'node:selected', style: { 'border-color': '#fbbf24', 'border-width': 3 } },
+    { selector: 'edge:selected', style: { 'overlay-color': '#fbbf24', 'overlay-opacity': 0.2, 'overlay-padding': 4 } },
 ];
 
 // ── Entry Points ──────────────────────────────────────────────────────────────
@@ -246,6 +252,7 @@ function _symShow() {
                 <button id="sym-close-btn" onclick="symViewClose()" title="Close">&#x2715;</button>
             </div>
             <div id="sym-body"><div id="sym-cy"></div></div>
+            <div id="sym-edge-tooltip" class="sym-edge-tooltip"></div>
         `;
         const si = panel.querySelector('#sym-search-input');
         si.addEventListener('input', _symDebounce(e => _symSearch(e.target.value), 300));
@@ -281,6 +288,7 @@ async function _symFetchAndRender(symId) {
 function _symRender(data) {
     const { center } = data;
     if (!center) return;
+    _symHideEdgeTooltip();
 
     const bc = document.getElementById('sym-breadcrumb');
     if (bc) bc.textContent = `${center.kind}: ${center.name}`;
@@ -304,7 +312,11 @@ function _symRender(data) {
         maxZoom: 4,
     });
 
+    _sym.cy.nodes().ungrabify();   // nodes are not draggable (Sourcetrail behaviour)
+
     _sym.cy.on('tap', 'node', e => _symOnNodeTap(e, data));
+    _sym.cy.on('tap', 'edge', e => _symOnEdgeTap(e));
+    _sym.cy.on('tap', e => { if (e.target === _sym.cy) _symHideEdgeTooltip(); });
     _sym.cy.fit(undefined, 60);
 
     if (center.file && window.loadFileInPanel) loadFileInPanel(center.file, center.name);
@@ -334,15 +346,21 @@ function _symBuildCompoundElements(data) {
 
     for (const item of incoming) {
         if (!item.sym) continue;
-        const label = `${item.edge_type}${item.count > 1 ? ' \xd7' + item.count : ''}`;
+        const cnt  = item.count || 1;
+        const lw   = cnt > 1 ? Math.min(1.5 + Math.log2(cnt), 6) : 1.5;
+        const label = `${item.edge_type}${cnt > 1 ? ' \xd7' + cnt : ''}`;
         edges.push({ data: { id: `in_${item.sym.id}`, source: item.sym.id, target: 'center',
-            edgeType: item.edge_type, count: item.count, label } });
+            edgeType: item.edge_type, count: cnt, lineWidth: lw,
+            isBundled: cnt > 1 || undefined, label } });
     }
     for (const item of outgoing) {
         if (!item.sym) continue;
-        const label = `${item.edge_type}${item.count > 1 ? ' \xd7' + item.count : ''}`;
+        const cnt  = item.count || 1;
+        const lw   = cnt > 1 ? Math.min(1.5 + Math.log2(cnt), 6) : 1.5;
+        const label = `${item.edge_type}${cnt > 1 ? ' \xd7' + cnt : ''}`;
         edges.push({ data: { id: `out_${item.sym.id}`, source: 'center', target: item.sym.id,
-            edgeType: item.edge_type, count: item.count, label } });
+            edgeType: item.edge_type, count: cnt, lineWidth: lw,
+            isBundled: cnt > 1 || undefined, label } });
     }
     return { nodes, edges };
 }
@@ -503,6 +521,7 @@ function _symDedupeEdges(edges) {
 function _symOnNodeTap(event, data) {
     const d = event.target.data();
     if (d.isGroup) return;
+    _symHideEdgeTooltip();
 
     if (d.isMember) {
         _sym.cy.nodes().removeClass('sym-active-member');
@@ -526,6 +545,29 @@ function _symOnNodeTap(event, data) {
     }
 
     if (d.symId) symViewActivate(d.symId);
+}
+
+// ── Edge tooltip (bundled edges) ──────────────────────────────────────────────
+
+function _symOnEdgeTap(e) {
+    const d  = e.target.data();
+    const oe = e.originalEvent;
+    if (!oe) return;
+    const tooltip = document.getElementById('sym-edge-tooltip');
+    if (!tooltip) return;
+
+    const typeColor = _SYM_EDGE_COLORS[d.edgeType] || '#94a3b8';
+    tooltip.innerHTML =
+        `<span class="sym-et-type" style="color:${_symEscHtml(typeColor)}">${_symEscHtml(d.edgeType || 'edge')}</span>` +
+        (d.count > 1 ? `<span class="sym-et-count">\xd7${d.count}</span>` : '');
+    tooltip.style.left = (oe.clientX + 14) + 'px';
+    tooltip.style.top  = (oe.clientY - 12) + 'px';
+    tooltip.classList.add('visible');
+}
+
+function _symHideEdgeTooltip() {
+    const tooltip = document.getElementById('sym-edge-tooltip');
+    if (tooltip) tooltip.classList.remove('visible');
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────

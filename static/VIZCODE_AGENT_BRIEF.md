@@ -118,7 +118,7 @@ Server endpoints（Phase 1 新增）：
 | S2 | Symbol-Centric Graph（以 symbol 為中心重新佈局） | ✅ Phase 2 完成 |
 | S3 | Compound Class Card（PUBLIC/PRIVATE section 在節點內） | ✅ Phase 3 完成 |
 | S4 | Sugiyama Layout Engine（TrailLayouter 移植） | ✅ Phase 3 完成 |
-| S5 | Bundled Edges（多條同類 edge 合併為帶數字的粗邊） | ❌ Phase 4 |
+| S5 | Bundled Edges（多條同類 edge 合併為帶數字的粗邊） | ✅ Phase 4 完成 |
 | S6 | Multi-file Code Snippets（右側 Code View 顯示跨檔案片段） | ❌ Phase 5 |
 | S7 | Node Expand/Collapse（class 節點可折疊，顯示 hidden count） | ❌ Phase 6 |
 | S8 | Edge Type Filtering（toggle 隱藏/顯示特定 edge 類型） | ❌ Phase 7 |
@@ -130,16 +130,13 @@ Server endpoints（Phase 1 新增）：
 
 ## 五、接下來的 Phase 路線圖
 
-### Phase 4：Bundled Edges ★★★★
+### Phase 4：Bundled Edges ✅
 
-**目標**：當兩個節點間有 N 條同類 edge 時，合併為一條帶 `×N` 標籤的粗邊。
-
-**後端（`server.py` `/symbol-graph`）**：已在 in_bundles/out_bundles 按 `(from_id, type)` GroupBy；`count` 已在 response 中。✅ 不需要改。
-
-**前端（`symbol_view.js`）**：
-- `_symBuildCompoundElements()` 中，若 `item.count > 1`，edge 線寬 = `1.5 + log2(count)px`
-- Edge label 顯示 `×N`（已有部分實作）
-- Click on bundled edge → side panel 或 tooltip 列出每條 edge 的 source line
+已實作：
+- edge `lineWidth = min(1.5 + log2(count), 6)px`，count=1 時 1.5px
+- edge label 顯示 `×N`
+- 點擊 edge → fixed-position tooltip 顯示 edgeType（帶顏色）+ ×N
+- 節點不可拖曳：`cy.nodes().ungrabify()`（Sourcetrail 行為）
 
 ### Phase 5：Multi-file Code Snippets ★★★★
 

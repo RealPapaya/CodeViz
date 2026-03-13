@@ -55,14 +55,14 @@
   - **用途**: 管理中英雙語的翻譯對照表。
 - 🔮 **`static/struct_view.js`** (前端)
   - **用途**: Structure View 插件，提供 class-grid 視圖。Entry points: `svToggleStructView()`, `svUpdateStructureBtn()`, `svAfterRenderCode()`。
-- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1+2 新增**
-  - **用途**: Sourcetrail 風格的 Symbol-Centric Graph。嵌入 `#graph-wrap`（與 `#func-view` 同層、同機制），`position: absolute; inset: 0`，用 `.active` class 控制顯示。
-  - **佈局**: 左側 sidebar + 上方 topbar 完全不動；畫布區域顯示 Cytoscape dagre LR Symbol Graph；右側 Code Panel 照常可用。
+- 🌐 **`static/symbol_view.js`** (前端) ← **Phase 1–4**
+  - **用途**: Sourcetrail 風格的 Symbol-Centric Graph（compound class card + PUBLIC/PRIVATE section + TrailLayouter）。
   - **Entry points**: `symViewOpen(fileRel)` / `symViewActivate(symId)` / `symViewClose()`。
-  - **節點互動**: 點 center node → Code Panel 跳到定義行；點周圍節點 → 重新以該 symbol 為中心；Back 按鈕 → 導航歷史。
-  - **⚠️ DOM**: `<div id="sym-view">` 已在 `analyze_viz.py` HTML skeleton 的 `#graph-wrap` 內靜態宣告；JS 首次顯示時填入 innerHTML。
-- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1+2 新增**
-  - **用途**: Symbol View 專用樣式。`#sym-view` = `position:absolute; inset:0; display:none`，`.active` = `display:flex`。無獨立 members 側欄，Code Panel 負責程式碼顯示。
+  - **節點互動**: 節點**不可拖曳** (`cy.nodes().ungrabify()`)。click center → Code Panel；click neighbor → 重新導航；click member badge → 跳至定義行；click edge → tooltip 顯示 edgeType + ×N。
+  - **Phase 4 Bundled Edges**: edge `lineWidth = min(1.5 + log2(count), 6)px`；isBundled flag 驅動樣式；`#sym-edge-tooltip` fixed-position tooltip。
+  - **⚠️ DOM**: `<div id="sym-view">` 在 `analyze_viz.py` HTML skeleton 靜態宣告；JS 首次顯示時填入 innerHTML（含 `#sym-edge-tooltip`）。
+- 🎨 **`static/symbol_view.css`** (前端) ← **Phase 1–4**
+  - **用途**: Symbol View 專用樣式。`#sym-view` = `position:absolute; inset:0; display:none`，`.active` = `display:flex`。含 `.sym-edge-tooltip` fixed-position tooltip 樣式。
 
 ---
 
@@ -138,20 +138,23 @@ return (
 
 `analyze_viz.py` 的 `scan_file()` 會偵測 tuple 長度，6-tuple 時自動提取 `symbol_defs` 並存入 `file_symdefs`。`build_graph()` 在 Phase F 統一將所有 `symbol_defs` 組合為 `symbol_index` (dict) 和 `symbol_edges` (list)，注入最終 JSON。
 
-## 🔮 Symbol View 架構備忘 (Phase 1)
+## 🔮 Symbol View 架構備忘 (Phase 1–4)
 
 - **資料來源**: `DATA.symbol_index` (build_graph Phase F 建立) + API `/symbol-graph?job=JID&sym=SID`
-- **`/symbol-graph` 回應格式** (server.py 已更新):
+- **`/symbol-graph` 回應格式**:
   ```json
   {
-    "center": { "id", "name", "kind", "file", "line", "is_public", "children": [{id, name, kind, line, is_public}] },
+    "center": { "id", "name", "kind", "file", "line", "is_public",
+                "children": [{id, name, kind, line, end_line, is_public, access_level}] },
     "incoming": [{ "sym": {...}, "edge_type": "call|inheritance|import", "count": N }],
     "outgoing": [{ "sym": {...}, "edge_type": "...", "count": N }]
   }
   ```
-  `children` = center 的成員 (parent == center.name && file == center.file)
-- **Symbol edge types**: `call` (橘), `inheritance` (藍), `import` (綠), `member` (紫), `override` (粉), `type_usage` (黃), `include` (灰)
-- **`build_html()` 載入順序**: `viz.css` → `themes.css` → `struct_view.css` → **`symbol_view.css`** → `i18n.js` → `viz.js` → `struct_view.js` → **`symbol_view.js`**
+- **Compound node 層次**: class card → PUBLIC group → member badges；member 有 `access_level` 分 public/private。
+- **Edge 線寬**: `lineWidth = min(1.5 + log2(count), 6)`；count=1 時 1.5px，多條合併時自動加粗。
+- **不可拖曳**: `cy.nodes().ungrabify()` 在每次 render 後呼叫。
+- **Symbol edge types**: `call` (橘 #fb923c), `inheritance` (藍 #60a5fa), `import` (綠 #34d399), `member` (紫 #c084fc), `override` (粉 #f472b6), `type_usage` (黃 #fbbf24), `include` (灰 #94a3b8)
+- **`build_html()` 載入順序**: `viz.css` → `themes.css` → `struct_view.css` → **`symbol_view.css`** → `i18n.js` → `viz.js` → `struct_view.js` → `trail_layouter.js` → **`symbol_view.js`**
 
 ---
 
